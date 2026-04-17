@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "cartographer": {"version": 1, "root": "~/atlas"},
+    "editor": {"command": ""},
     "index": {"auto_update": True, "full_text": True},
     "agents": {
         "hermes": {

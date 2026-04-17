@@ -90,7 +90,9 @@ class Atlas:
             self.root / "ref",
         ]
 
-    def _upsert_managed_section(self, note: Note, section_id: str, content: str) -> None:
+    def _upsert_managed_section(
+        self, note: Note, section_id: str, content: str
+    ) -> None:
         start = f"<!-- cart:{section_id} start -->"
         end = f"<!-- cart:{section_id} end -->"
         block = f"{start}\n{content.rstrip()}\n{end}"
@@ -179,7 +181,9 @@ class Atlas:
         note.write()
         return path
 
-    def _write_section_index(self, directory: str, title: str, links: list[str] | None = None) -> Path:
+    def _write_section_index(
+        self, directory: str, title: str, links: list[str] | None = None
+    ) -> Path:
         path = self.root / directory / "index.md"
         today = date.today().isoformat()
         if path.exists():
@@ -198,7 +202,11 @@ class Atlas:
                 },
                 body=f"# {title}\n",
             )
-        section_lines = [f"- {item}" for item in links] if links else ["- populate from session imports or `cart new`."]
+        section_lines = (
+            [f"- {item}" for item in links]
+            if links
+            else ["- populate from session imports or `cart new`."]
+        )
         self._upsert_managed_section(
             note,
             f"{directory}-index-links",
@@ -256,7 +264,13 @@ class Atlas:
         ensure_hook_dir(self.root)
         created.append(str(self._write_index_note()))
         created.append(str(self._write_task_index()))
-        created.append(str(self._write_section_index("daily", "Daily", [f"[[{date.today().isoformat()}]]"])))
+        created.append(
+            str(
+                self._write_section_index(
+                    "daily", "Daily", [f"[[{date.today().isoformat()}]]"]
+                )
+            )
+        )
         created.append(str(self._write_section_index("projects", "Projects")))
         created.append(str(self._write_section_index("entities", "Entities")))
         created.append(str(self._write_section_index("ref", "Reference")))
@@ -310,7 +324,9 @@ class Atlas:
             "created": created,
             "templates": copied_templates,
             "plugins": copied_plugins,
-            "vault": str(self.root) if obsidian_bootstrap["vault"] is not None else None,
+            "vault": str(self.root)
+            if obsidian_bootstrap["vault"] is not None
+            else None,
             "external_vault": None if external_vault is None else str(external_vault),
             "obsidian": obsidian_status,
             "obsidian_written": [str(path) for path in obsidian_bootstrap["written"]],
@@ -325,14 +341,19 @@ class Atlas:
         return Index(self.root).rebuild()
 
     def _editor_command(self) -> list[str]:
-        editor = os.environ.get("EDITOR")
-        if editor:
-            return shlex.split(editor)
-        for candidate in ("vim", "vi"):
+        config_editor = self.config.get("editor", {}).get("command")
+        if config_editor:
+            return shlex.split(config_editor)
+        if shutil.which("glow"):
+            return ["glow"]
+        env_editor = os.environ.get("EDITOR")
+        if env_editor:
+            return shlex.split(env_editor)
+        for candidate in ("nvim", "vim", "vi"):
             path = shutil.which(candidate)
             if path:
                 return [path]
-        raise RuntimeError("no editor found; set $EDITOR")
+        raise RuntimeError("no editor found; set $EDITOR or configure editor.command")
 
     def open_in_editor(self, path: Path) -> None:
         if os.environ.get("CARTOGRAPHER_SKIP_EDITOR") == "1":
@@ -437,7 +458,10 @@ class Atlas:
             for path in self.root.rglob("*"):
                 if path == self.index_db_path:
                     continue
-                archive.add(path, arcname=str(Path(self.root.name) / path.relative_to(self.root)))
+                archive.add(
+                    path,
+                    arcname=str(Path(self.root.name) / path.relative_to(self.root)),
+                )
         record_operation(
             self.worklog_db_path,
             "backup atlas",
@@ -475,8 +499,12 @@ class Atlas:
             if path.is_file():
                 size += path.stat().st_size
         tasks_summary = summarize_tasks(self.root)
-        hermes_sessions = list((self.root / "agents" / "hermes" / "sessions").glob("*.md"))
-        claude_sessions = list((self.root / "agents" / "claude" / "sessions").glob("*.md"))
+        hermes_sessions = list(
+            (self.root / "agents" / "hermes" / "sessions").glob("*.md")
+        )
+        claude_sessions = list(
+            (self.root / "agents" / "claude" / "sessions").glob("*.md")
+        )
         codex_sessions = list((self.root / "agents" / "codex").glob("*.md"))
         worklog_status = Worklog(self.worklog_db_path).status()
         return {

@@ -111,7 +111,9 @@ def detect_external_vault(
 def _write_json_if_missing(path: Path, payload: object, written: list[Path]) -> None:
     if path.exists():
         return
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     written.append(path)
 
 
@@ -121,8 +123,12 @@ def bootstrap(atlas_root: Path) -> dict[str, object]:
 
     written: list[Path] = []
     _write_json_if_missing(obsidian_dir / "app.json", DEFAULT_APP_CONFIG, written)
-    _write_json_if_missing(obsidian_dir / "core-plugins.json", DEFAULT_CORE_PLUGINS, written)
-    _write_json_if_missing(obsidian_dir / "daily-notes.json", DEFAULT_DAILY_NOTES, written)
+    _write_json_if_missing(
+        obsidian_dir / "core-plugins.json", DEFAULT_CORE_PLUGINS, written
+    )
+    _write_json_if_missing(
+        obsidian_dir / "daily-notes.json", DEFAULT_DAILY_NOTES, written
+    )
     _write_json_if_missing(obsidian_dir / "workspace.json", DEFAULT_WORKSPACE, written)
 
     gitignore_path = obsidian_dir / ".gitignore"
@@ -154,8 +160,82 @@ def sync(atlas_root: Path, vault_path: Path) -> Path:
     for note_path in sorted(atlas_root.rglob("*.md")):
         if ".cartographer" in note_path.parts:
             continue
-        relative = note_path.relative_to(vault_path if note_path.is_relative_to(vault_path) else atlas_root)
+        relative = note_path.relative_to(
+            vault_path if note_path.is_relative_to(vault_path) else atlas_root
+        )
         lines.append(f"- [[{relative.as_posix()}]]")
     destination = vault_path / "_cartographer_index.md"
     destination.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return destination
+
+
+def ensure_dataview_compatible_frontmatter(
+    frontmatter: dict[str, object],
+) -> dict[str, object]:
+    dataview_fm = frontmatter.copy()
+    tags = dataview_fm.get("tags")
+    if tags and isinstance(tags, list):
+        dataview_fm["tags"] = [str(tag).replace(" ", "-").lower() for tag in tags]
+    task_count = 0
+    if dataview_fm.get("type") == "task-list":
+        task_count = int(dataview_fm.get("task_count") or 0)
+        dataview_fm["taskCount"] = task_count
+        if task_count > 0:
+            dataview_fm["tasks"] = "true"
+    if "links" in dataview_fm:
+        links = dataview_fm["links"]
+        if isinstance(links, list):
+            dataview_fm["dataview"] = "links"
+    return dataview_fm
+
+
+def write_with_dataview_compatible_frontmatter(
+    vault_path: Path,
+    note_path: Path,
+    content: str,
+    frontmatter: dict[str, object],
+) -> None:
+    from .notes import render
+
+    dataview_fm = ensure_dataview_compatible_frontmatter(frontmatter)
+    full_content = render(dataview_fm, content)
+    relative = note_path.relative_to(vault_path)
+    target = vault_path / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(full_content, encoding="utf-8")
+
+
+def sync_with_dataview(atlas_root: Path, vault_path: Path) -> dict[str, object]:
+    from .notes import Note, parse_frontmatter
+
+    bootstrap(vault_path)
+    sync_count = 0
+    for note_path in sorted(atlas_root.rglob("*.md")):
+        if ".cartographer" in note_path.parts:
+            continue
+        if not note_path.exists():
+            continue
+        try:
+            text = note_path.read_text(encoding="utf-8")
+            frontmatter, body = parse_frontmatter(text)
+            if not frontmatter:
+                continue
+            dataview_fm = ensure_dataview_compatible_frontmatter(frontmatter)
+            from .notes import render
+
+            full_content = render(dataview_fm, body)
+            relative = note_path.relative_to(
+                vault_path if note_path.is_relative_to(vault_path) else atlas_root
+            )
+            target = vault_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(full_content, encoding="utf-8")
+            sync_count += 1
+        except Exception:
+            continue
+    index_path = sync(atlas_root, vault_path)
+    return {
+        "synced": sync_count,
+        "index_path": str(index_path),
+        "output": f"synced {sync_count} notes with Dataview-compatible frontmatter",
+    }

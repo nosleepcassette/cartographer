@@ -65,9 +65,13 @@ def _extract_date(payload: dict[str, Any]) -> str:
     ]
     session = payload.get("session")
     if isinstance(session, dict):
-        candidates.extend([session.get("date"), session.get("day"), session.get("session_date")])
+        candidates.extend(
+            [session.get("date"), session.get("day"), session.get("session_date")]
+        )
     for candidate in candidates:
-        if isinstance(candidate, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate.strip()):
+        if isinstance(candidate, str) and re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}", candidate.strip()
+        ):
             return candidate.strip()
     return _today_string()
 
@@ -152,14 +156,23 @@ def _normalize_status(raw_task: dict[str, Any]) -> str:
         normalized = status.lower()
         if normalized in {"done", "completed", "complete", "closed"}:
             return "done"
-        if normalized in {"open", "todo", "pending", "active", "in_progress", "in-progress"}:
+        if normalized in {
+            "open",
+            "todo",
+            "pending",
+            "active",
+            "in_progress",
+            "in-progress",
+        }:
             return "open"
     if bool(raw_task.get("done")) or bool(raw_task.get("completed")):
         return "done"
     return "open"
 
 
-def _task_from_item(item: Any, index: int, *, arc_hint: str | None = None) -> MapsOSTask | None:
+def _task_from_item(
+    item: Any, index: int, *, arc_hint: str | None = None
+) -> MapsOSTask | None:
     if isinstance(item, str):
         title = item.strip()
         if not title:
@@ -192,7 +205,9 @@ def _task_from_item(item: Any, index: int, *, arc_hint: str | None = None) -> Ma
                 break
     due = None
     due_value = item.get("due") or item.get("due_date")
-    if isinstance(due_value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", due_value.strip()):
+    if isinstance(due_value, str) and re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", due_value.strip()
+    ):
         due = due_value.strip()
     return MapsOSTask(
         title=title,
@@ -341,7 +356,10 @@ def _ensure_daily_note(root: Path, day: str) -> Note:
 def _upsert_mapsos_section(body: str, section: str) -> str:
     payload = f"{MAPSOS_SECTION_START}\n{section.rstrip()}\n{MAPSOS_SECTION_END}"
     if MAPSOS_SECTION_START in body and MAPSOS_SECTION_END in body:
-        pattern = re.compile(re.escape(MAPSOS_SECTION_START) + r".*?" + re.escape(MAPSOS_SECTION_END), re.DOTALL)
+        pattern = re.compile(
+            re.escape(MAPSOS_SECTION_START) + r".*?" + re.escape(MAPSOS_SECTION_END),
+            re.DOTALL,
+        )
         return pattern.sub(payload, body, count=1).rstrip() + "\n"
     return body.rstrip() + "\n\n## mapsOS\n\n" + payload + "\n"
 
@@ -353,7 +371,9 @@ def _render_daily_section(payload: dict[str, Any], tasks: list[MapsOSTask]) -> s
         lines.append(f"- state: {state}")
     body_metrics = _extract_body_metrics(payload)
     if body_metrics:
-        rendered_body = ", ".join(f"{key}: {value}" for key, value in body_metrics.items())
+        rendered_body = ", ".join(
+            f"{key}: {value}" for key, value in body_metrics.items()
+        )
         lines.append(f"- body: {rendered_body}")
     arcs = _extract_labels(payload, "arcs")
     if arcs:
@@ -425,13 +445,22 @@ def _render_tasks_note(day: str, tasks: list[MapsOSTask]) -> Note:
     )
 
 
-def _render_snapshot_note(day: str, payload: dict[str, Any], tasks: list[MapsOSTask]) -> Note:
+def _render_snapshot_note(
+    day: str, payload: dict[str, Any], tasks: list[MapsOSTask]
+) -> Note:
     state = _extract_state(payload) or "unknown"
     arcs = _extract_labels(payload, "arcs")
     intentions = _extract_labels(payload, "intentions")
     body_metrics = _extract_body_metrics(payload)
-    task_lines = [f"- [{'x' if task.done else ' '}] {task.title} ({task.priority})" for task in tasks] or ["- no exported tasks"]
-    quote_lines = [f"> {quote}" for quote in _coerce_list(payload.get("quotes")) if isinstance(quote, str) and quote.strip()]
+    task_lines = [
+        f"- [{'x' if task.done else ' '}] {task.title} ({task.priority})"
+        for task in tasks
+    ] or ["- no exported tasks"]
+    quote_lines = [
+        f"> {quote}"
+        for quote in _coerce_list(payload.get("quotes"))
+        if isinstance(quote, str) and quote.strip()
+    ]
     body = (
         f"# mapsOS snapshot {day}\n\n"
         "## summary\n\n"
@@ -443,11 +472,7 @@ def _render_snapshot_note(day: str, payload: dict[str, Any], tasks: list[MapsOST
         f"- body: {', '.join(f'{key}: {value}' for key, value in body_metrics.items()) if body_metrics else 'unknown'}\n\n"
         "## tasks\n\n"
         + "\n".join(task_lines)
-        + (
-            "\n\n## quotes\n\n" + "\n".join(quote_lines)
-            if quote_lines
-            else ""
-        )
+        + ("\n\n## quotes\n\n" + "\n".join(quote_lines) if quote_lines else "")
         + "\n\n## raw\n\n```json\n"
         + json.dumps(payload, indent=2, ensure_ascii=True)
         + "\n```\n"
@@ -573,7 +598,9 @@ def sync_mapsos_payload(
 
     if sync_daily:
         daily_note = _ensure_daily_note(root, day)
-        daily_note.body = _upsert_mapsos_section(daily_note.body, _render_daily_section(payload, tasks))
+        daily_note.body = _upsert_mapsos_section(
+            daily_note.body, _render_daily_section(payload, tasks)
+        )
         daily_note.frontmatter["modified"] = _today_string()
         daily_note.write(ensure_blocks=True)
         written.append(daily_note.path)
@@ -611,7 +638,11 @@ def ingest_mapsos_intake(root: Path, path: str | Path) -> dict[str, Any]:
     result = sync_mapsos_payload(root, parsed.payload)
     learnings_written = _write_learning_items(root, parsed.learnings)
     intake_index_path = _upsert_intake_index(root, parsed)
-    all_paths = result["paths"] + [str(intake_index_path)] + [str(path) for path in learnings_written]
+    all_paths = (
+        result["paths"]
+        + [str(intake_index_path)]
+        + [str(path) for path in learnings_written]
+    )
     unique_paths = list(dict.fromkeys(all_paths))
     return {
         "count": 1,
@@ -631,7 +662,10 @@ def ingest_mapsos_exports(root: Path, paths: list[Path]) -> dict[str, Any]:
         payload = load_mapsos_payload(str(export_path))
         payload.setdefault("source_type", "mapsos-export")
         payload.setdefault("source_path", str(export_path))
-        payload.setdefault("source_session", _extract_string(payload.get("session_id")) or export_path.stem)
+        payload.setdefault(
+            "source_session",
+            _extract_string(payload.get("session_id")) or export_path.stem,
+        )
         results.append(sync_mapsos_payload(root, payload))
     all_paths: list[str] = []
     task_count = 0
@@ -673,7 +707,11 @@ def default_intake_paths(*, since: str | None = None) -> list[Path]:
     candidates = sorted(directory.glob("*.md"))
     if since is None:
         return candidates
-    return [path for path in candidates if re.search(r"\d{4}-\d{2}-\d{2}", path.name) and path.name[:10] >= since]
+    return [
+        path
+        for path in candidates
+        if re.search(r"\d{4}-\d{2}-\d{2}", path.name) and path.name[:10] >= since
+    ]
 
 
 def default_export_paths(*, latest: int | None = None) -> list[Path]:
@@ -693,3 +731,82 @@ def synced_mapsos_tasks(root: Path) -> list[Any]:
     if not path.exists():
         return []
     return parse_tasks_in_file(path)
+
+
+def sync_arc_updates_from_mapsos(root: Path) -> dict[str, Any]:
+    hints_dir = root / ".cartographer" / "mapsos-hints"
+    if not hints_dir.exists():
+        return {"synced": 0, "output": "no mapsOS hints found"}
+    import json as _json
+
+    synced_count = 0
+    for hint_file in sorted(hints_dir.glob("*.json")):
+        try:
+            hint_data = _json.loads(hint_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project = hint_data.get("project")
+        if not project:
+            continue
+        active_path = root / "tasks" / "active.md"
+        if not active_path.exists():
+            continue
+        note = Note.from_file(active_path)
+        slug_project = _slugify(project)
+        if (
+            f"project: {slug_project}" in note.body
+            or f"project: {project}" in note.body
+        ):
+            continue
+        synced_count += 1
+        hint_file.unlink()
+    return {
+        "synced": synced_count,
+        "output": f"synced {synced_count} task completion hint(s) to mapsOS",
+    }
+
+
+def import_arc_from_mapsos_export(
+    root: Path, export_data: dict[str, Any]
+) -> dict[str, Any]:
+    arc_label = (
+        export_data.get("arc") or export_data.get("project") or export_data.get("label")
+    )
+    if not arc_label:
+        return {"imported": 0, "output": "no arc label found in export"}
+    arc_tasks = export_data.get("tasks") or export_data.get("arc_tasks") or []
+    if not arc_tasks:
+        return {"imported": 0, "output": "no tasks found in arc export"}
+    active_path = root / "tasks" / "active.md"
+    if not active_path.exists():
+        from .tasks import ensure_active_task_file
+
+        ensure_active_task_file(root)
+    note = Note.from_file(active_path)
+    imported_count = 0
+    for task_item in arc_tasks:
+        task = _task_from_item(task_item, imported_count, arc_hint=arc_label)
+        if task is None:
+            continue
+        task_id = _stable_task_id(task)
+        block_lines = [
+            f'<!-- cart:block id="{task_id}" type="task" source="mapsos" -->',
+            f"- [{'x' if task.done else ' '}] {task.title}",
+            "  status: open" if not task.done else "  status: done",
+            f"  priority: {task.priority}",
+            f"  project: {_slugify(arc_label)}",
+            f"  arc: {arc_label}",
+        ]
+        if task.due:
+            block_lines.append(f"  due: {task.due}")
+        block_lines.append("<!-- /cart:block -->")
+        note.body = note.body.rstrip() + "\n\n" + "\n".join(block_lines) + "\n"
+        imported_count += 1
+    if imported_count > 0:
+        note.frontmatter["modified"] = _today_string()
+        note.write()
+    return {
+        "imported": imported_count,
+        "arc": arc_label,
+        "output": f"imported {imported_count} task(s) from mapsOS arc '{arc_label}'",
+    }

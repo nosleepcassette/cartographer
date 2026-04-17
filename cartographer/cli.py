@@ -35,7 +35,13 @@ from .plugins import (
     run_plugin,
 )
 from .external_import import parse_chatgpt_export, parse_claude_web_export
-from .session_import import _today_string, default_session_paths, import_imported_session, import_session, import_sessions
+from .session_import import (
+    _today_string,
+    default_session_paths,
+    import_imported_session,
+    import_session,
+    import_sessions,
+)
 from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
 from .vimwiki import patch_vimrc
@@ -64,7 +70,9 @@ def coming_soon(message: str) -> None:
 
 
 def resolve_query_paths(atlas: Atlas, expr: str) -> list[str]:
-    if "type:task" in expr or any(token in expr for token in ("priority:", "project:", "due:")):
+    if "type:task" in expr or any(
+        token in expr for token in ("priority:", "project:", "due:")
+    ):
         return sorted({str(task.path) for task in query_tasks(atlas.root, expr)})
     return ensure_index_current(atlas).query(expr)
 
@@ -87,7 +95,9 @@ def main() -> None:
 @main.command()
 @click.argument("path", required=False, default="~/atlas")
 @click.option("--no-vimwiki", is_flag=True, help="Skip vimwiki patching during init.")
-@click.option("--no-obsidian", is_flag=True, help="Skip atlas-local Obsidian bootstrap.")
+@click.option(
+    "--no-obsidian", is_flag=True, help="Skip atlas-local Obsidian bootstrap."
+)
 def init(path: str, no_vimwiki: bool, no_obsidian: bool) -> None:
     atlas = Atlas(root=path)
     result = atlas.init(
@@ -123,7 +133,9 @@ def status() -> None:
     tasks = info["tasks"]
     priorities = tasks["by_priority"]
     worklog = info["worklog"]
-    click.echo(f"atlas: {info['root']} ({info['note_count']} notes, {info['atlas_size']})")
+    click.echo(
+        f"atlas: {info['root']} ({info['note_count']} notes, {info['atlas_size']})"
+    )
     click.echo(f"index: rebuilt {last_rebuild_text}")
     click.echo(
         "tasks: "
@@ -362,7 +374,9 @@ def index_status() -> None:
     if status_info["last_rebuild"] is not None:
         click.echo(
             "last_rebuild: "
-            + datetime.fromtimestamp(status_info["last_rebuild"]).isoformat(timespec="seconds")
+            + datetime.fromtimestamp(status_info["last_rebuild"]).isoformat(
+                timespec="seconds"
+            )
         )
 
 
@@ -379,7 +393,9 @@ def learn(parts: tuple[str, ...]) -> None:
     atlas = get_atlas()
     tokens = list(parts)
     if not tokens:
-        raise click.ClickException("provide learning text or a learn mode: confirm, reject, pending")
+        raise click.ClickException(
+            "provide learning text or a learn mode: confirm, reject, pending"
+        )
 
     mode = tokens[0]
     if mode == "pending":
@@ -393,7 +409,9 @@ def learn(parts: tuple[str, ...]) -> None:
         for item in pending:
             source_agent = item.attrs.get("source_agent") or item.agent or "unknown"
             learned_on = item.attrs.get("date") or "unknown"
-            click.echo(f"{item.block_id} | {source_agent} | {item.topic} | {learned_on} | {item.content}")
+            click.echo(
+                f"{item.block_id} | {source_agent} | {item.topic} | {learned_on} | {item.content}"
+            )
         return
 
     if mode in {"confirm", "reject"}:
@@ -404,9 +422,19 @@ def learn(parts: tuple[str, ...]) -> None:
         parsed = parser.parse_args(tokens[1:])
         try:
             result = (
-                confirm_learnings(atlas.root, topic=parsed.topic, block_id=parsed.block_id, agent=parsed.agent)
+                confirm_learnings(
+                    atlas.root,
+                    topic=parsed.topic,
+                    block_id=parsed.block_id,
+                    agent=parsed.agent,
+                )
                 if mode == "confirm"
-                else reject_learnings(atlas.root, topic=parsed.topic, block_id=parsed.block_id, agent=parsed.agent)
+                else reject_learnings(
+                    atlas.root,
+                    topic=parsed.topic,
+                    block_id=parsed.block_id,
+                    agent=parsed.agent,
+                )
             )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
@@ -456,7 +484,9 @@ def agent_ingest(parts: tuple[str, ...]) -> None:
     try:
         session_data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise click.ClickException(f"session file is not valid JSON: {source_path}") from exc
+        raise click.ClickException(
+            f"session file is not valid JSON: {source_path}"
+        ) from exc
     result = run_plugin(
         atlas.root,
         "agent-ingest",
@@ -503,7 +533,11 @@ def summarize(
         paths = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
     else:
         raise click.ClickException("provide a query or pipe note paths on stdin")
-    notes = [load_note_payload(Path(path).expanduser()) for path in paths if Path(path).exists()]
+    notes = [
+        load_note_payload(Path(path).expanduser())
+        for path in paths
+        if Path(path).exists()
+    ]
     result = run_plugin(
         atlas.root,
         "summarize",
@@ -517,14 +551,25 @@ def summarize(
     if write_path:
         apply_writes(
             atlas.root,
-            [{"path": write_path, "content": output + ("\n" if not output.endswith("\n") else "")}],
+            [
+                {
+                    "path": write_path,
+                    "content": output + ("\n" if not output.endswith("\n") else ""),
+                }
+            ],
             plugin_name="summarize",
         )
     click.echo(output)
 
 
 @main.command("daily-brief")
-@click.option("--format", "output_format", type=click.Choice(["markdown", "plain"]), default="markdown", show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["markdown", "plain"]),
+    default="markdown",
+    show_default=True,
+)
 @click.option("--output")
 def daily_brief(output_format: str, output: str | None) -> None:
     atlas = get_atlas()
@@ -544,13 +589,26 @@ def vimwiki_sync() -> None:
 
 
 @main.command("obsidian-sync")
-def obsidian_sync() -> None:
+@click.option(
+    "--dataview",
+    "use_dataview",
+    is_flag=True,
+    help="Sync with Dataview-compatible frontmatter.",
+)
+def obsidian_sync(use_dataview: bool) -> None:
     atlas = get_atlas()
     vault = atlas.config.get("obsidian", {}).get("vault")
     if not vault:
         raise click.ClickException("no obsidian vault configured")
-    destination = obsidian_sync_impl(atlas.root, Path(str(vault)).expanduser())
-    click.echo(destination)
+    vault_path = Path(str(vault)).expanduser()
+    if use_dataview:
+        from .obsidian import sync_with_dataview
+
+        result = sync_with_dataview(atlas.root, vault_path)
+        click.echo(result["output"])
+    else:
+        destination = obsidian_sync_impl(atlas.root, vault_path)
+        click.echo(destination)
 
 
 def _resolve_session_import_paths(
@@ -577,7 +635,9 @@ def _run_session_import(
     force: bool = False,
 ) -> None:
     atlas = get_atlas()
-    selected_paths = _resolve_session_import_paths(source_type, paths, latest, import_all)
+    selected_paths = _resolve_session_import_paths(
+        source_type, paths, latest, import_all
+    )
     if not selected_paths:
         raise click.ClickException(f"no {source_type} session files found")
     result = import_sessions(atlas.root, source_type, selected_paths, force=force)
@@ -614,7 +674,11 @@ def _mapsos_intake_paths(
     since: str | None,
 ) -> list[Path]:
     if paths:
-        return [Path(path).expanduser() for path in paths if Path(path).expanduser().exists()]
+        return [
+            Path(path).expanduser()
+            for path in paths
+            if Path(path).expanduser().exists()
+        ]
     configured = atlas.config.get("mapsos", {}).get("intake_dir")
     if configured:
         directory = Path(str(configured)).expanduser()
@@ -640,19 +704,35 @@ def session_import() -> None:
 @session_import.command("claude")
 @click.argument("paths", nargs=-1)
 @click.option("--latest", default=1, type=int, show_default=True)
-@click.option("--all", "import_all", is_flag=True, help="Import all matching Claude sessions.")
-@click.option("--force", is_flag=True, help="Re-import sessions even if already present in atlas.")
-def session_import_claude(paths: tuple[str, ...], latest: int, import_all: bool, force: bool) -> None:
-    _run_session_import("claude", paths, latest=latest, import_all=import_all, force=force)
+@click.option(
+    "--all", "import_all", is_flag=True, help="Import all matching Claude sessions."
+)
+@click.option(
+    "--force", is_flag=True, help="Re-import sessions even if already present in atlas."
+)
+def session_import_claude(
+    paths: tuple[str, ...], latest: int, import_all: bool, force: bool
+) -> None:
+    _run_session_import(
+        "claude", paths, latest=latest, import_all=import_all, force=force
+    )
 
 
 @session_import.command("hermes")
 @click.argument("paths", nargs=-1)
 @click.option("--latest", default=1, type=int, show_default=True)
-@click.option("--all", "import_all", is_flag=True, help="Import all matching Hermes sessions.")
-@click.option("--force", is_flag=True, help="Re-import sessions even if already present in atlas.")
-def session_import_hermes(paths: tuple[str, ...], latest: int, import_all: bool, force: bool) -> None:
-    _run_session_import("hermes", paths, latest=latest, import_all=import_all, force=force)
+@click.option(
+    "--all", "import_all", is_flag=True, help="Import all matching Hermes sessions."
+)
+@click.option(
+    "--force", is_flag=True, help="Re-import sessions even if already present in atlas."
+)
+def session_import_hermes(
+    paths: tuple[str, ...], latest: int, import_all: bool, force: bool
+) -> None:
+    _run_session_import(
+        "hermes", paths, latest=latest, import_all=import_all, force=force
+    )
 
 
 @main.command("bootstrap-populate")
@@ -725,7 +805,9 @@ def mapsos() -> None:
 @click.argument("source", required=False, default="-")
 @click.option("--daily/--no-daily", "sync_daily", default=True, show_default=True)
 @click.option("--tasks/--no-tasks", "sync_tasks", default=True, show_default=True)
-@click.option("--snapshot/--no-snapshot", "sync_snapshot", default=True, show_default=True)
+@click.option(
+    "--snapshot/--no-snapshot", "sync_snapshot", default=True, show_default=True
+)
 def mapsos_ingest(
     source: str,
     sync_daily: bool,
@@ -734,13 +816,19 @@ def mapsos_ingest(
 ) -> None:
     atlas = get_atlas()
     if source == "-" and sys.stdin.isatty():
-        raise click.ClickException("provide a JSON file path or pipe mapsOS JSON on stdin")
+        raise click.ClickException(
+            "provide a JSON file path or pipe mapsOS JSON on stdin"
+        )
     try:
-        payload = load_mapsos_payload(source, None if sys.stdin.isatty() else sys.stdin.read())
+        payload = load_mapsos_payload(
+            source, None if sys.stdin.isatty() else sys.stdin.read()
+        )
     except FileNotFoundError as exc:
         raise click.ClickException(f"mapsOS payload not found: {source}") from exc
     except json.JSONDecodeError as exc:
-        raise click.ClickException(f"mapsOS payload is not valid JSON: {source}") from exc
+        raise click.ClickException(
+            f"mapsOS payload is not valid JSON: {source}"
+        ) from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     result = sync_mapsos_payload(
@@ -758,26 +846,36 @@ def mapsos_ingest(
 
 @mapsos.command("ingest-intake")
 @click.argument("paths", nargs=-1)
-@click.option("--all", "import_all", is_flag=True, help="Import all markdown intakes in the configured intake dir.")
+@click.option(
+    "--all",
+    "import_all",
+    is_flag=True,
+    help="Import all markdown intakes in the configured intake dir.",
+)
 @click.option("--since", help="Import intake files on or after YYYY-MM-DD.")
-def mapsos_ingest_intake(paths: tuple[str, ...], import_all: bool, since: str | None) -> None:
+def mapsos_ingest_intake(
+    paths: tuple[str, ...], import_all: bool, since: str | None
+) -> None:
     atlas = get_atlas()
-    selected_paths = _mapsos_intake_paths(atlas, paths, import_all=import_all, since=since)
+    selected_paths = _mapsos_intake_paths(
+        atlas, paths, import_all=import_all, since=since
+    )
     if not selected_paths:
         raise click.ClickException("no mapsOS intake markdown files found")
     results = [ingest_mapsos_intake(atlas.root, path) for path in selected_paths]
     atlas.refresh_index()
     total_learnings = sum(int(result["learning_count"]) for result in results)
     click.echo(
-        f"mapsOS intake: ingested {len(results)} file(s), "
-        f"{total_learnings} learnings"
+        f"mapsOS intake: ingested {len(results)} file(s), {total_learnings} learnings"
     )
     for result in results:
         click.echo(result["output"])
 
 
 @mapsos.command("ingest-exports")
-@click.option("--latest", "latest_only", is_flag=True, help="Only ingest the most recent export.")
+@click.option(
+    "--latest", "latest_only", is_flag=True, help="Only ingest the most recent export."
+)
 def mapsos_ingest_exports(latest_only: bool) -> None:
     atlas = get_atlas()
     selected_paths = _mapsos_export_paths(atlas, latest=1 if latest_only else None)
@@ -790,15 +888,143 @@ def mapsos_ingest_exports(latest_only: bool) -> None:
         click.echo(path)
 
 
+@mapsos.command("sync-arcs")
+def mapsos_sync_arcs() -> None:
+    """Sync completed arc tasks back to mapsOS."""
+    atlas = get_atlas()
+    from .mapsos import sync_arc_updates_from_mapsos
+
+    result = sync_arc_updates_from_mapsos(atlas.root)
+    click.echo(result["output"])
+
+
+@mapsos.command("import-arc")
+@click.argument("export_file", required=False, default="-")
+def mapsos_import_arc(export_file: str) -> None:
+    """Import arc tasks from a mapsOS export JSON file."""
+    atlas = get_atlas()
+    import json as _json
+
+    if export_file == "-" and sys.stdin.isatty():
+        raise click.ClickException(
+            "provide a JSON file path or pipe mapsOS export JSON on stdin"
+        )
+    try:
+        raw = (
+            sys.stdin.read()
+            if export_file == "-"
+            else Path(export_file).expanduser().read_text(encoding="utf-8")
+        )
+        export_data = _json.loads(raw)
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"export file not found: {export_file}") from exc
+    except _json.JSONDecodeError as exc:
+        raise click.ClickException(f"invalid JSON: {exc}") from exc
+    from .mapsos import import_arc_from_mapsos_export
+
+    result = import_arc_from_mapsos_export(atlas.root, export_data)
+    atlas.refresh_index()
+    click.echo(result["output"])
+
+
 @mapsos.command("patterns")
 @click.option("--since", help="Only include entries on or after YYYY-MM-DD.")
-@click.option("--field", type=click.Choice(["state", "sleep", "energy", "pain", "arcs"]), help="Summarize just one field.")
+@click.option(
+    "--field",
+    type=click.Choice(["state", "sleep", "energy", "pain", "arcs"]),
+    help="Summarize just one field.",
+)
 def mapsos_patterns(since: str | None, field: str | None) -> None:
     from .patterns import entries_since, load_state_log, summarize_patterns
 
     atlas = get_atlas()
     entries = entries_since(load_state_log(atlas.root), since)
     click.echo(summarize_patterns(entries, field=field))
+
+
+@main.command("export-tasks")
+@click.option(
+    "--format",
+    "output_format",
+    default="taskwarrior",
+    type=click.Choice(["taskwarrior"]),
+    show_default=True,
+)
+@click.option("--query", default="status:open", help="Task query expression.")
+@click.option("--output", "-o", help="Output file path (default: stdout).")
+def export_tasks(output_format: str, query: str, output: str | None) -> None:
+    """Export tasks to external formats (taskwarrior)."""
+    atlas = get_atlas()
+    tasks = query_tasks(atlas.root, query)
+    if output_format == "taskwarrior":
+        lines = []
+        for task in tasks:
+            attrs = [f"proj:{task.project}"] if task.project else []
+            if task.due:
+                attrs.append(f"due:{task.due}")
+            priority_map = {"P0": "H", "P1": "M", "P2": "L", "P3": ""}
+            tw_priority = priority_map.get(task.priority, "")
+            tw_status = "completed" if task.done else "pending"
+            tw_tags = " ".join(f"+{attr}" for attr in attrs)
+            line = f"{tw_priority} {tw_status} {tw_tags} {task.text}"
+            lines.append(line)
+        content = "\n".join(lines) + "\n"
+    else:
+        raise click.ClickException(f"unsupported format: {output_format}")
+    if output:
+        out_path = Path(output).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        click.echo(f"exported {len(tasks)} tasks to {out_path}")
+    else:
+        click.echo(content, nl=False)
+
+
+@main.command("export")
+@click.argument("note_id")
+@click.option(
+    "--resolve-transclusions",
+    is_flag=True,
+    help="Resolve ![[note#block]] transclusions.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown",
+    type=click.Choice(["markdown", "html"]),
+    show_default=True,
+)
+@click.option("--output", "-o", help="Output file path (default: stdout).")
+def export_note(
+    note_id: str, resolve_transclusions: bool, output_format: str, output: str | None
+) -> None:
+    """Export a note with optional transclusion resolution."""
+    from .transclusion import export_note_with_transclusions
+
+    atlas = get_atlas()
+    if resolve_transclusions:
+        result = export_note_with_transclusions(note_id, atlas.root, output_format)
+        if not result.get("success"):
+            errors = result.get("errors", ["unknown error"])
+            raise click.ClickException(f"export failed: {errors[0]}")
+        content = result["body"]
+    else:
+        index = ensure_index_current(atlas)
+        note_path = index.find_note_path(note_id)
+        if note_path is None:
+            raise click.ClickException(f"note not found: {note_id}")
+        content = note_path.read_text(encoding="utf-8")
+        if output_format == "html":
+            from .transclusion import _markdown_to_html
+
+            content = _markdown_to_html(content)
+    if output:
+        out_path = Path(output).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        click.echo(f"exported to {out_path}")
+    else:
+        click.echo(content, nl=False)
 
 
 @main.group()
@@ -845,9 +1071,17 @@ def plugin_run(name: str, args: tuple[str, ...]) -> None:
 # cart graph — graph export
 # ---------------------------------------------------------------------------
 
+
 @main.command("graph")
-@click.option("--export", "export_path", default=None, help="Path for JSON export (default: ~/atlas/graph-export.json).")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json"]), show_default=True)
+@click.option(
+    "--export",
+    "export_path",
+    default=None,
+    help="Path for JSON export (default: ~/atlas/graph-export.json).",
+)
+@click.option(
+    "--format", "fmt", default="json", type=click.Choice(["json"]), show_default=True
+)
 def graph_export(export_path: str | None, fmt: str) -> None:
     """Export the atlas note graph as a JSON file (nodes + edges)."""
     import sqlite3 as _sqlite3
@@ -877,12 +1111,14 @@ def graph_export(export_path: str | None, fmt: str) -> None:
             tags = json.loads(row["tags"]) if row["tags"] else []
         except Exception:
             tags = []
-        nodes.append({
-            "id": row["id"],
-            "title": row["title"] or row["id"],
-            "type": row["type"] or "note",
-            "tags": tags,
-        })
+        nodes.append(
+            {
+                "id": row["id"],
+                "title": row["title"] or row["id"],
+                "type": row["type"] or "note",
+                "tags": tags,
+            }
+        )
 
     edges = [{"source": r["from_note"], "target": r["to_note"]} for r in ref_rows]
 
@@ -894,9 +1130,15 @@ def graph_export(export_path: str | None, fmt: str) -> None:
         "edges": edges,
     }
 
-    out_path = Path(export_path).expanduser() if export_path else atlas.root / "graph-export.json"
+    out_path = (
+        Path(export_path).expanduser()
+        if export_path
+        else atlas.root / "graph-export.json"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     click.echo(f"graph exported: {out_path} ({len(nodes)} nodes, {len(edges)} edges)")
 
 
@@ -904,10 +1146,10 @@ def graph_export(export_path: str | None, fmt: str) -> None:
 # cart import — external platform exports
 # ---------------------------------------------------------------------------
 
+
 @main.group("import")
 def import_group() -> None:
     """import session history from external platforms (ChatGPT, Claude.ai)."""
-
 
 
 def _external_import_sessions(
@@ -917,6 +1159,7 @@ def _external_import_sessions(
     force: bool,
 ) -> "dict[str, Any]":
     from .session_import import _unique
+
     imported: list = []
     skipped: list = []
     written: list = []
@@ -927,12 +1170,22 @@ def _external_import_sessions(
         else:
             imported.append(result)
             written.extend(result["written"])
-    return {"count": len(imported), "skipped": len(skipped), "written": _unique(written), "sessions": imported}
+    return {
+        "count": len(imported),
+        "skipped": len(skipped),
+        "written": _unique(written),
+        "sessions": imported,
+    }
 
 
 @import_group.command("chatgpt")
 @click.argument("export_file", type=click.Path(exists=True))
-@click.option("--latest", default=None, type=int, help="Only import the N most recent conversations.")
+@click.option(
+    "--latest",
+    default=None,
+    type=int,
+    help="Only import the N most recent conversations.",
+)
 @click.option("--force", is_flag=True, help="Re-import even if already in atlas.")
 def import_chatgpt(export_file: str, latest: int | None, force: bool) -> None:
     """Import from a ChatGPT conversations.json export file."""
@@ -959,7 +1212,12 @@ def import_chatgpt(export_file: str, latest: int | None, force: bool) -> None:
 
 @import_group.command("claude-web")
 @click.argument("export_file", type=click.Path(exists=True))
-@click.option("--latest", default=None, type=int, help="Only import the N most recent conversations.")
+@click.option(
+    "--latest",
+    default=None,
+    type=int,
+    help="Only import the N most recent conversations.",
+)
 @click.option("--force", is_flag=True, help="Re-import even if already in atlas.")
 def import_claude_web(export_file: str, latest: int | None, force: bool) -> None:
     """Import from a Claude.ai conversations.json export file."""

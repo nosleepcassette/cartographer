@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,27 @@ from .blocks import Block, insert_missing_block_ids, parse_blocks
 
 FRONTMATTER_PATTERN = re.compile(r"\A---\n(?P<frontmatter>.*?)\n---\n?", re.DOTALL)
 WIKILINK_PATTERN = re.compile(r"!?\[\[([^\]]+)\]\]")
+
+LOCK_TIMEOUT = 10.0
+LOCK_POLL_INTERVAL = 0.1
+
+
+def _acquire_lock(path: Path) -> Path:
+    lock_dir = path.parent / ".cartographer" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{path.name}.lock"
+    start_time = time.time()
+    while lock_path.exists():
+        if time.time() - start_time > LOCK_TIMEOUT:
+            raise RuntimeError(f"lock timeout acquiring lock for {path}")
+        time.sleep(LOCK_POLL_INTERVAL)
+    lock_path.write_text(str(os.getpid()), encoding="utf-8")
+    return lock_path
+
+
+def _release_lock(lock_path: Path) -> None:
+    if lock_path.exists():
+        lock_path.unlink()
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -78,7 +101,11 @@ class Note:
             self.body = insert_missing_block_ids(self.body)
         self.blocks = parse_blocks(self.body)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            render(self.frontmatter, self.body),
-            encoding="utf-8",
-        )
+        lock_path = _acquire_lock(self.path)
+        try:
+            self.path.write_text(
+                render(self.frontmatter, self.body),
+                encoding="utf-8",
+            )
+        finally:
+            _release_lock(lock_path)

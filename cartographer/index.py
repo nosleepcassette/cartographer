@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import shlex
 import sqlite3
 import time
@@ -11,6 +12,29 @@ from typing import Any
 
 from .config import load_config
 from .notes import Note, extract_wikilinks
+
+
+MAX_RETRIES = 5
+BASE_DELAY = 0.05
+MAX_DELAY = 5.0
+
+
+def _retry_with_backoff(operation: str, func: callable) -> Any:
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return func()
+        except sqlite3.OperationalError as e:
+            last_error = e
+            if "database is locked" not in str(e).lower():
+                raise
+            delay = min(BASE_DELAY * (2**attempt) + random.uniform(0, 0.1), MAX_DELAY)
+            time.sleep(delay)
+        except Exception:
+            raise
+    raise sqlite3.OperationalError(
+        f"database locked after {MAX_RETRIES} retries: {operation}"
+    ) from last_error
 
 
 SCHEMA = """
@@ -53,7 +77,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id, title, body);
 
 
 def _slugify_note_id(value: str) -> str:
-    return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "note"
+    return (
+        "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
+        or "note"
+    )
 
 
 def _canonical_note_id(note: Note, path: Path) -> str:
@@ -78,13 +105,18 @@ class Index:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
     @contextmanager
     def _connection(self):
-        connection = self._connect()
+        def get_connection():
+            return self._connect()
+
+        connection = _retry_with_backoff("connect", get_connection)
         try:
             with connection:
                 yield connection
@@ -102,11 +134,16 @@ class Index:
     def _ignored(self, path: Path) -> bool:
         config = load_config(self.root)
         ignore = config.get("ignore", {})
-        ignored_dirs = set(ignore.get("dirs", [])) if isinstance(ignore, dict) else set()
+        ignored_dirs = (
+            set(ignore.get("dirs", [])) if isinstance(ignore, dict) else set()
+        )
         ignored_extensions = (
             set(ignore.get("extensions", [])) if isinstance(ignore, dict) else set()
         )
-        return any(part in ignored_dirs for part in path.parts) or path.suffix in ignored_extensions
+        return (
+            any(part in ignored_dirs for part in path.parts)
+            or path.suffix in ignored_extensions
+        )
 
     def iter_note_paths(self) -> list[Path]:
         note_paths: list[Path] = []
@@ -149,7 +186,9 @@ class Index:
                     tags = []
                 if not isinstance(links, list):
                     links = []
-                links = [str(link) for link in links if isinstance(link, (str, int, float))]
+                links = [
+                    str(link) for link in links if isinstance(link, (str, int, float))
+                ]
                 modified = path.stat().st_mtime
                 word_count = len(note.body.split())
 
@@ -341,7 +380,9 @@ class Index:
 
     def status(self) -> dict[str, Any]:
         with self._connection() as connection:
-            note_row = connection.execute("SELECT COUNT(*) AS count FROM notes").fetchone()
+            note_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM notes"
+            ).fetchone()
             block_row = connection.execute(
                 "SELECT COUNT(*) AS count FROM blocks"
             ).fetchone()

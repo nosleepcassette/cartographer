@@ -42,7 +42,9 @@ def task_files(atlas_root: Path) -> list[Path]:
     return sorted(directory.rglob("*.md"))
 
 
-def _parse_task_block(path: Path, block_id: str, attrs: dict[str, str], content: str) -> Task | None:
+def _parse_task_block(
+    path: Path, block_id: str, attrs: dict[str, str], content: str
+) -> Task | None:
     lines = [line.rstrip() for line in content.strip().splitlines() if line.strip()]
     if not lines:
         return None
@@ -162,7 +164,9 @@ def mark_done(atlas_root: Path, task_id: str) -> Task:
             if match.group("id") != task_id:
                 return match.group(0)
             attrs = match.group("attrs")
-            lines = [line.rstrip() for line in match.group("content").strip().splitlines()]
+            lines = [
+                line.rstrip() for line in match.group("content").strip().splitlines()
+            ]
             updated_lines: list[str] = []
             status_updated = False
             for index, line in enumerate(lines):
@@ -192,8 +196,31 @@ def mark_done(atlas_root: Path, task_id: str) -> Task:
             continue
         note.frontmatter["modified"] = date.today().isoformat()
         note.write()
-        return next(task for task in parse_tasks_in_file(path) if task.id == task_id)
+        task = next(task for task in parse_tasks_in_file(path) if task.id == task_id)
+        _write_mapsos_hint(atlas_root, task)
+        return task
     raise FileNotFoundError(f"task not found: {task_id}")
+
+
+def _write_mapsos_hint(atlas_root: Path, task: Task) -> None:
+    if not task.project:
+        return
+    hints_dir = atlas_root / ".cartographer" / "mapsos-hints"
+    hints_dir.mkdir(parents=True, exist_ok=True)
+    hint_file = hints_dir / f"{task.id}.json"
+    import json as _json
+
+    hint_file.write_text(
+        _json.dumps(
+            {
+                "task_id": task.id,
+                "project": task.project,
+                "completed": task.done,
+                "completed_at": date.today().isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def query_tasks(atlas_root: Path, expression: str) -> list[Task]:

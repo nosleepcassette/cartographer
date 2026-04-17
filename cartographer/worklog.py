@@ -1,11 +1,35 @@
 from __future__ import annotations
 
+import random
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+
+MAX_RETRIES = 5
+BASE_DELAY = 0.05
+MAX_DELAY = 5.0
+
+
+def _retry_with_backoff(operation: str, func: callable) -> Any:
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return func()
+        except sqlite3.OperationalError as e:
+            last_error = e
+            if "database is locked" not in str(e).lower():
+                raise
+            delay = min(BASE_DELAY * (2**attempt) + random.uniform(0, 0.1), MAX_DELAY)
+            time.sleep(delay)
+        except Exception:
+            raise
+    raise sqlite3.OperationalError(
+        f"database locked after {MAX_RETRIES} retries: {operation}"
+    ) from last_error
 
 
 SCHEMA = """
@@ -47,13 +71,18 @@ class Worklog:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
     @contextmanager
     def _connection(self):
-        connection = self._connect()
+        def get_connection():
+            return self._connect()
+
+        connection = _retry_with_backoff("connect", get_connection)
         try:
             with connection:
                 yield connection
