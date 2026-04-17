@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import atlas_root, load_config, save_config
+from .agent_memory import ensure_master_summary_note
 from .hooks import ensure_hook_dir
 from .index import Index
 from .notes import Note
@@ -78,6 +79,7 @@ class Atlas:
             self.root / "agents" / "hermes" / "learnings",
             self.root / "agents" / "hermes" / "sessions",
             self.root / "agents" / "codex",
+            self.root / "agents" / "mapsOS",
             self.root / "entities",
             self.root / "tasks",
             self.root / "ref",
@@ -168,6 +170,9 @@ class Atlas:
         created.append(str(self._write_index_note()))
         created.append(str(self._write_task_index()))
         created.append(str(self._write_gitignore()))
+        master_summary_path = ensure_master_summary_note(self.root)
+        if str(master_summary_path) not in created:
+            created.append(str(master_summary_path))
 
         git_state = "existing"
         if not (self.root / ".git").exists():
@@ -181,9 +186,12 @@ class Atlas:
 
         vimwiki_status = "skipped"
         backups: list[str] = []
+        backup_warnings: list[str] = []
         skip_vimwiki = os.environ.get("CARTOGRAPHER_SKIP_VIMWIKI_PATCH") == "1"
         if not skip_vimwiki and self.config.get("vimwiki", {}).get("sync", True):
-            backups = [str(path) for path in backup_vimwiki_assets()]
+            backup_summary = backup_vimwiki_assets()
+            backups = [str(path) for path in backup_summary.backups]
+            backup_warnings = backup_summary.warnings
             vimwiki_status = patch_vimrc(Path.home() / ".vimrc", self.root)
 
         worklog = Worklog(self.worklog_db_path)
@@ -203,6 +211,7 @@ class Atlas:
             "git": git_state,
             "vimwiki": vimwiki_status,
             "backups": backups,
+            "backup_warnings": backup_warnings,
             "index": index_result,
         }
 

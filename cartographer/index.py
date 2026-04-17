@@ -4,6 +4,7 @@ import json
 import shlex
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id, title, body);
 """
 
 
+def _slugify_note_id(value: str) -> str:
+    return "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-") or "note"
+
+
+def _canonical_note_id(note: Note, path: Path) -> str:
+    note_type = str(note.frontmatter.get("type") or "note")
+    agent = note.frontmatter.get("agent")
+    if note_type == "master-summary":
+        return "master-summary"
+    if note_type == "agent-summary" and isinstance(agent, str) and agent.strip():
+        return f"{_slugify_note_id(agent)}-summary"
+    raw_id = note.frontmatter.get("id")
+    if raw_id is not None and str(raw_id).strip():
+        return str(raw_id)
+    return path.stem
+
+
 class Index:
     def __init__(self, root: Path):
         self.root = root
@@ -64,8 +82,17 @@ class Index:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(SCHEMA)
             try:
                 connection.executescript(FTS_SCHEMA)
@@ -95,7 +122,7 @@ class Index:
         note_count = 0
         block_count = 0
         ref_count = 0
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 DELETE FROM notes;
@@ -112,7 +139,7 @@ class Index:
                     note = Note.from_file(path)
                 except Exception:
                     continue
-                note_id = str(note.frontmatter.get("id") or path.stem)
+                note_id = _canonical_note_id(note, path)
                 title = str(note.frontmatter.get("title") or path.stem)
                 note_type = str(note.frontmatter.get("type") or "note")
                 status = note.frontmatter.get("status")
@@ -187,7 +214,7 @@ class Index:
         return self.rebuild()
 
     def last_rebuild(self) -> float | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT value FROM meta WHERE key = 'last_rebuild'"
             ).fetchone()
@@ -267,12 +294,12 @@ class Index:
             statement += " WHERE " + " AND ".join(clauses)
         statement += " ORDER BY n.path ASC"
 
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(statement, params).fetchall()
         return [str(row["path"]) for row in rows]
 
     def backlinks(self, note_id: str) -> list[str]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT DISTINCT n.path
@@ -286,7 +313,7 @@ class Index:
         return [str(row["path"]) for row in rows]
 
     def block_backlinks(self, note_id: str, block_id: str) -> list[str]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             rows = connection.execute(
                 """
                 SELECT DISTINCT n.path
@@ -300,7 +327,7 @@ class Index:
         return [str(row["path"]) for row in rows]
 
     def find_note_path(self, note_id: str) -> Path | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT path FROM notes WHERE id = ? LIMIT 1",
                 (note_id,),
@@ -313,7 +340,7 @@ class Index:
         return None
 
     def status(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             note_row = connection.execute("SELECT COUNT(*) AS count FROM notes").fetchone()
             block_row = connection.execute(
                 "SELECT COUNT(*) AS count FROM blocks"

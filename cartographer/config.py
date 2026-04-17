@@ -30,6 +30,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "obsidian": {"vault": "~/vaults"},
     "sync": {"method": "git"},
     "daily": {"mode": "bidirectional"},
+    "mapsos": {
+        "tasks_file": "tasks/mapsos.md",
+        "snapshot_dir": "agents/mapsOS",
+    },
 }
 
 

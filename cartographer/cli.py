@@ -10,6 +10,7 @@ import click
 from .agent_memory import append_learning, gc_learnings
 from .atlas import Atlas
 from .index import Index
+from .mapsos import load_mapsos_payload, sync_mapsos_payload
 from .notes import Note
 from .obsidian import sync as obsidian_sync_impl
 from .plugins import (
@@ -73,6 +74,8 @@ def init(path: str) -> None:
     click.echo(f"atlas: {result['root']}")
     click.echo(f"git: {result['git']}")
     click.echo(f"vimwiki: {result['vimwiki']}")
+    for warning in result.get("backup_warnings", []):
+        click.echo(f"warning: {warning}", err=True)
     if result["vault"]:
         click.echo(f"obsidian: detected {result['vault']}")
     click.echo(
@@ -427,6 +430,46 @@ def obsidian_sync() -> None:
         raise click.ClickException("no obsidian vault configured")
     destination = obsidian_sync_impl(atlas.root, Path(str(vault)).expanduser())
     click.echo(destination)
+
+
+@main.group()
+def mapsos() -> None:
+    """mapsOS bridge commands."""
+
+
+@mapsos.command("ingest")
+@click.argument("source", required=False, default="-")
+@click.option("--daily/--no-daily", "sync_daily", default=True, show_default=True)
+@click.option("--tasks/--no-tasks", "sync_tasks", default=True, show_default=True)
+@click.option("--snapshot/--no-snapshot", "sync_snapshot", default=True, show_default=True)
+def mapsos_ingest(
+    source: str,
+    sync_daily: bool,
+    sync_tasks: bool,
+    sync_snapshot: bool,
+) -> None:
+    atlas = get_atlas()
+    if source == "-" and sys.stdin.isatty():
+        raise click.ClickException("provide a JSON file path or pipe mapsOS JSON on stdin")
+    try:
+        payload = load_mapsos_payload(source, None if sys.stdin.isatty() else sys.stdin.read())
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"mapsOS payload not found: {source}") from exc
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"mapsOS payload is not valid JSON: {source}") from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    result = sync_mapsos_payload(
+        atlas.root,
+        payload,
+        sync_daily=sync_daily,
+        sync_tasks=sync_tasks,
+        sync_snapshot=sync_snapshot,
+    )
+    atlas.refresh_index()
+    click.echo(result["output"])
+    for path in result["paths"]:
+        click.echo(path)
 
 
 @main.group()

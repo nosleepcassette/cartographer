@@ -47,6 +47,10 @@ def summary_path(root: Path, agent: str) -> Path:
     return agent_root(root, agent) / "SUMMARY.md"
 
 
+def master_summary_path(root: Path) -> Path:
+    return root / "agents" / "MASTER_SUMMARY.md"
+
+
 def _load_note_from_text(path: Path, text: str) -> Note:
     frontmatter, body = parse_frontmatter(text)
     return Note(path=path, frontmatter=frontmatter, body=body)
@@ -60,7 +64,9 @@ def _ensure_note(
     title: str,
     note_type: str,
     extra_frontmatter: dict[str, Any] | None = None,
+    note_id: str | None = None,
     heading: str | None = None,
+    body: str | None = None,
 ) -> Note:
     if relative_path in overlay:
         return _load_note_from_text(root / relative_path, overlay[relative_path])
@@ -69,7 +75,7 @@ def _ensure_note(
         return Note.from_file(path)
     today = today_string()
     frontmatter: dict[str, Any] = {
-        "id": slugify(Path(relative_path).stem),
+        "id": note_id or slugify(Path(relative_path).stem),
         "title": title,
         "type": note_type,
         "created": today,
@@ -77,8 +83,7 @@ def _ensure_note(
     }
     if extra_frontmatter:
         frontmatter.update(extra_frontmatter)
-    body = f"# {heading or title}\n"
-    return Note(path=path, frontmatter=frontmatter, body=body)
+    return Note(path=path, frontmatter=frontmatter, body=body or f"# {heading or title}\n")
 
 
 def _set_overlay(root: Path, relative_path: str, note: Note, overlay: dict[str, str]) -> None:
@@ -333,14 +338,19 @@ def update_summary_overlay(
     learnings: list[LearningItem],
 ) -> str:
     relative_path = str(Path("agents") / agent / "SUMMARY.md")
+    summary_id = f"{slugify(agent)}-summary"
     note = _ensure_note(
         root,
         relative_path,
         overlay,
         title=f"{agent} summary",
         note_type="agent-summary",
+        note_id=summary_id,
         extra_frontmatter={"agent": agent, "tags": [agent, "summary"]},
     )
+    note.frontmatter["id"] = summary_id
+    note.frontmatter["agent"] = agent
+    note.frontmatter["type"] = "agent-summary"
     sessions = sorted((session_dir(root, agent)).glob("*.md"))
     session_names = [path.stem for path in sessions[-4:]] + [Path(session_reference).stem]
     unique_session_names = list(dict.fromkeys(session_names))
@@ -360,6 +370,79 @@ def update_summary_overlay(
     )
     _set_overlay(root, relative_path, note, overlay)
     return relative_path
+
+
+def _default_master_summary_body() -> str:
+    return (
+        "# maps — master context\n\n"
+        "## identity\n\n"
+        "## current situation\n\n"
+        "## active projects\n\n"
+        "## technical stack\n\n"
+        "## preferences + patterns\n\n"
+        "## open questions\n\n"
+        "## recent decisions\n\n"
+        "## agent notes\n"
+    )
+
+
+def update_master_summary_overlay(
+    root: Path,
+    overlay: dict[str, str],
+    *,
+    contributing_agent: str | None = None,
+    generated_by: str | None = None,
+) -> str:
+    relative_path = str(Path("agents") / "MASTER_SUMMARY.md")
+    note = _ensure_note(
+        root,
+        relative_path,
+        overlay,
+        title="Master Summary",
+        note_type="master-summary",
+        note_id="master-summary",
+        extra_frontmatter={
+            "updated": today_string(),
+            "version": 1,
+            "contributing_agents": [],
+            "generated_by": generated_by or "hermes",
+        },
+        heading="maps — master context",
+        body=_default_master_summary_body(),
+    )
+    note.frontmatter["id"] = "master-summary"
+    note.frontmatter.setdefault("title", "Master Summary")
+    note.frontmatter["type"] = "master-summary"
+    note.frontmatter.setdefault("version", 1)
+    note.frontmatter.setdefault("created", today_string())
+    note.frontmatter["updated"] = today_string()
+    if generated_by and not note.frontmatter.get("generated_by"):
+        note.frontmatter["generated_by"] = generated_by
+
+    raw_agents = note.frontmatter.get("contributing_agents", [])
+    contributing_agents = [
+        str(agent_name).strip()
+        for agent_name in raw_agents
+        if isinstance(agent_name, str) and str(agent_name).strip()
+    ] if isinstance(raw_agents, list) else []
+    if contributing_agent and contributing_agent not in contributing_agents:
+        contributing_agents.append(contributing_agent)
+    contributing_agents = sorted(dict.fromkeys(contributing_agents))
+    note.frontmatter["contributing_agents"] = contributing_agents
+    note.frontmatter["links"] = [f"{slugify(agent_name)}-summary" for agent_name in contributing_agents]
+    if not note.body.strip():
+        note.body = _default_master_summary_body()
+    _set_overlay(root, relative_path, note, overlay)
+    return relative_path
+
+
+def ensure_master_summary_note(root: Path) -> Path:
+    overlay: dict[str, str] = {}
+    relative_path = update_master_summary_overlay(root, overlay)
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(overlay[relative_path], encoding="utf-8")
+    return path
 
 
 def build_agent_ingest_result(root: Path, agent: str, source_path: str, session_data: Any) -> dict[str, Any]:
@@ -393,6 +476,12 @@ def build_agent_ingest_result(root: Path, agent: str, source_path: str, session_
         session_reference=session_reference,
         summary_text=summary_text,
         learnings=learnings,
+    )
+    update_master_summary_overlay(
+        root,
+        overlay,
+        contributing_agent=agent,
+        generated_by="hermes" if agent == "hermes" else agent,
     )
     writes = [{"path": path, "content": content} for path, content in overlay.items()]
     return {

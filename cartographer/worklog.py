@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,14 +51,23 @@ class Worklog:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(SCHEMA)
 
     def start_session(self) -> WorklogSession:
         session_id = f"session-{time.strftime('%Y%m%d_%H%M%S')}-{uuid.uuid4().hex[:6]}"
         started = time.time()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 "INSERT INTO sessions (id, started, ended, summary) VALUES (?, ?, NULL, '')",
                 (session_id, started),
@@ -70,7 +80,7 @@ class Worklog:
         return WorklogSession(id=session_id, started=started)
 
     def current_session_id(self) -> str | None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             row = connection.execute(
                 "SELECT value FROM state WHERE key = 'current_session'"
             ).fetchone()
@@ -85,7 +95,7 @@ class Worklog:
     def add_task(self, session_id: str, description: str) -> str:
         task_id = f"w{uuid.uuid4().hex[:8]}"
         now = time.time()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO tasks (id, session_id, description, status, result, created, completed)
@@ -96,7 +106,7 @@ class Worklog:
         return task_id
 
     def complete_task(self, task_id: str, *, result: str = "") -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE tasks
@@ -107,7 +117,7 @@ class Worklog:
             )
 
     def fail_task(self, task_id: str, *, result: str = "") -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE tasks
@@ -118,7 +128,7 @@ class Worklog:
             )
 
     def end_session(self, session_id: str, *, summary: str = "") -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             if summary:
                 connection.execute(
                     """
@@ -145,7 +155,7 @@ class Worklog:
         session_id = self.ensure_session()
         timestamp = time.strftime("%H:%M:%S")
         line = f"[{timestamp}] {message}"
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute(
                 """
                 UPDATE sessions
@@ -160,7 +170,7 @@ class Worklog:
         return session_id
 
     def status(self) -> dict[str, object]:
-        with self._connect() as connection:
+        with self._connection() as connection:
             in_progress = connection.execute(
                 """
                 SELECT id, session_id, description, created
