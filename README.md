@@ -229,6 +229,37 @@ This is the core promise of the project: context windows close, but the graph st
 
 ---
 
+## Agent Skills
+
+For AI agents working with cartographer/atlas, we publish skill definitions:
+
+| Skill | Description | Gist |
+|-------|-------------|------|
+| **Cartographer Init** | Initialize atlas directory, install CLI, run status check | [View Gist](https://gist.github.com/nosleepcassette/96f39bb9637dba100a9f4e4f66900f3e) |
+| **Cartographer Query** | Search syntax for tag, status, type, links, text queries | [View Gist](https://gist.github.com/nosleepcassette/05374920e0c2f976f02999532208df1f) |
+| **Cartographer Summary** | Generate and maintain MASTER_SUMMARY.md from context sources | [View Gist](https://gist.github.com/nosleepcassette/e1f9a62546752bebd7afca62a9023f83) |
+| **Cartographer Todo** | Task management with P0-P3 priorities, project linking | [View Gist](https://gist.github.com/nosleepcassette/7983da390c33fb91ad8d904e55de671c) |
+
+These skills encode:
+- CLI commands and workflows
+- Query syntax and composable patterns
+- Master summary generation protocol
+- Task block format and integration with mapsOS
+
+To use in Hermes Agent: place in `~/.hermes/skills/cartographer*/`
+
+To use in Claude Code: add to CLAUDE.md or import via MCP.
+
+---
+
+## Community Skills & Plugins
+
+**TODO:** Community repository for sharing cartographer plugins, import adapters, query templates, and agent integrations.
+
+If you've built something with cartographer — an import adapter, a query template, a plugin — we want to surface it.
+
+---
+
 ## design rules
 
 1. **Files are the API.** Delete cartographer and your files still make sense.
