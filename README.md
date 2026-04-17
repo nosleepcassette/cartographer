@@ -1,75 +1,45 @@
 # cartographer
 
-**cartographer** is a local-first knowledge filesystem and agent memory layer.
+> Your agents should know how you're actually doing - and remember everything they learn.
 
-Plain Markdown files. Git-native history. Queryable notes. Block-addressable text.
+Local-first knowledge filesystem and agent memory layer.
+
+Plain Markdown. Git history. Queryable graph. Block-addressable text.
 Agents and humans write to the same substrate. Nothing is trapped in an app.
 
-This is the thing that maps your knowledge.
-The directory it maps is the **atlas**.
+---
+
+Someone on Discord, after seeing an early scope sheet, wrote:
+*"maybe under an orchestrator project (atlas?)"*
+
+They arrived at the architecture without knowing it already existed.
+That's the idea.
+
+**atlas** is the substrate. cartographer is what builds and queries it.
+mapsOS is what keeps it honest about how you're actually doing.
 
 ---
 
-## the pitch
+## why this is different
 
-If you've ever:
+Most knowledge tools ignore AI entirely. Most AI tools ignore your history.
+cartographer assumes both exist and treats them as first-class:
 
-- Switched note apps and lost your tags/links/backlinks
-- Wanted agents to remember things without a SaaS subscription
-- Needed to query your own brain from the terminal
-- Been burned by proprietary lock-in on your own thoughts
-
-cartographer is the direction of travel.
-
-**Files are the API.** Delete cartographer tomorrow and your notes are still readable Markdown. Git is the database. SQLite is an index, not a prison.
-
----
-
-## what makes this different
-
-### 1. agents are first-class citizens
-
-Most knowledge tools pretend AI doesn't exist. cartographer assumes:
-
-- Multiple AI agents will read and write to the same knowledge base
-- Sessions should be ingested, not siloed
-- Learnings deserve durable files, not invisible context windows
-- Agents should be able to query their own memory
-
-Built-in flows for Hermes, Claude Code, Codex, and any agent that can write Markdown.
-
-### 2. block-addressable by default
-
-Every paragraph gets a block ID. Transclude with `[[note-id#block-id]]`. Your files stay Obsidian-readable while cartographer gives you something stronger than page links.
-
-### 3. imports are idempotent
-
-Run imports as many times as you want. Session deduplication is built in. No duplicates, no manual cleanup.
-
-### 4. the daily brief
-
-`cart daily-brief` generates session context from your atlas:
-- Open tasks by priority
-- Active projects with last-touched dates
-- Recent patterns and learnings
-- Things you might have forgotten
-
-### 5. mapsOS integration
-
-cartographer is the memory layer for [mapsOS](https://github.com/nosleepcassette/mapsOS):
-- Ingest qualitative state exports
-- Track arcs and patterns
-- Surface survival mode context
-- Bridge personal analytics to agent memory
+- **Agent memory persists.** Session import turns context windows into a growing graph. `cart daily-brief` seeds tomorrow's session from everything that happened today.
+- **Files are the API.** Delete cartographer. Your notes are still readable Markdown with YAML frontmatter. Git is the database. SQLite is an index, not a prison.
+- **Block-addressable by default.** `[[note-id#block-id]]` transclusion. Backlinks tracked automatically. The relational layer Obsidian promised but never fully delivered.
+- **Imports are idempotent.** Run `cart session-import` a hundred times. Zero duplicates. Just an always-current graph.
+- **Built for neurodivergent workflows.** Qualitative state tracking, capacity-aware context, honest about when you're not okay. Paired with mapsOS. Configurable for any brain.
+- **Plugin economy.** stdin/stdout JSON contract. If it speaks that, it joins. The long-term goal is Vim-scale extensibility.
 
 ---
 
 ## current status
 
-**Phase 3 shipped.** The closed loop is live:
+**Phase 4 is live.** The closed loop is local and usable:
 
-```
-session → export → cart ingest → atlas update → daily brief → next session
+```text
+session -> export -> cart ingest -> atlas update -> daily brief -> next session
 ```
 
 ### implemented
@@ -78,21 +48,23 @@ session → export → cart ingest → atlas update → daily brief → next ses
 - Markdown notes with YAML frontmatter
 - SQLite indexing for full-text search
 - Block insertion and addressing
+- Block transclusion rendering in the atlas TUI
 - Task CRUD with priorities
 - Plugin system (JSON stdin/stdout)
-- Session import: Claude Code, Hermes (deduped)
+- Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai conversation exports
 - Graph export: all notes as nodes, all links as edges (JSON)
-- mapsOS bridge: ingest exports, synthesize patterns
+- Textual atlas TUI (`cart tui`) with graph navigation, note rendering, backlinks, tasks overlay, and mapsOS handoff
+- mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
 - Learning audit loop
 
 ### still moving
 
-- Concurrent write protection
+- Concurrent write protection under heavier multi-agent load
 - Model-backed summary backends
-- Richer mapsOS bidirectional sync
-- Transclusion rendering
+- Richer shared-atlas and multi-user workflows
+- Deeper mapsOS task write-back
 
 ---
 
@@ -140,9 +112,10 @@ Three equivalent entrypoints: `cart`, `cartog`, `cartographer`.
 ## quickstart
 
 ```zsh
-cart init                    # create ~/atlas, install templates, init git
-cart status                  # system health check
-cart daily-brief             # generate session context
+cart init
+cart status
+cart daily-brief
+cart tui
 cart session-import claude --latest 1
 ```
 
@@ -155,6 +128,7 @@ cart session-import claude --latest 1
 ```zsh
 cart init [path]
 cart status
+cart tui
 cart backup
 cart index rebuild
 ```
@@ -192,16 +166,13 @@ cart todo query 'priority:P0 status:open'
 ```zsh
 cart session-import claude --latest 5
 cart session-import hermes --all
-cart session-import claude --force   # re-import even if indexed
+cart session-import claude --force
 ```
 
 ### external import
 
 ```zsh
-# ChatGPT: Settings → Data controls → Export
 cart import chatgpt ~/Downloads/conversations.json
-
-# Claude.ai: Settings → Account → Export
 cart import claude-web ~/Downloads/conversations.json
 ```
 
@@ -210,10 +181,10 @@ Both support `--latest N` and `--force`. All imports are deduped.
 ### graph export
 
 ```zsh
-cart graph --export    # writes ~/atlas/graph-export.json
+cart graph --export
 ```
 
-Output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}` — feed into D3, Gephi, Obsidian Graph, etc.
+Output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}`.
 
 ### mapsOS bridge
 
@@ -316,22 +287,27 @@ export CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1
 
 cartographer uses Markdown plus HTML comment block markers. Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail.
 
+### developers
+
+See `DEVELOPERS.md` for the plugin contract, extension points, and what to build on top of the atlas substrate.
+
 ---
 
 ## what this is not
 
 - Not a SaaS notes app
 - Not a proprietary memory store
-- Not a visual knowledge graph first (but `cart graph --export` gives you one)
-- Not pretending phase 4 is shipped
+- Not a visual knowledge graph first, even though `cart graph --export` gives you one
+- Not pretending the surface area is finished
 
 ---
 
 ## repository map
 
-- `SPEC.md` — product spec and locked decisions
-- `AGENT_ONBOARDING.md` — context for any agent joining the system
-- `CART_PHASE3_SPEC.md` — phase 3 implementation record
+- `SPEC.md` - product spec and locked decisions
+- `AGENT_ONBOARDING.md` - context for any agent joining the system
+- `CART_PHASE3_SPEC.md` - phase 3 implementation record
+- `DEVELOPERS.md` - extension points and developer-facing framing
 
 ---
 

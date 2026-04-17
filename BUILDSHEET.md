@@ -62,17 +62,19 @@ someone independently arrived at the architecture. Lead with this.
 | # | task | status | file(s) |
 |---|------|--------|---------|
 | 1 | BUILDSHEET.md | ✓ done | this file |
-| 2 | cart TUI — Textual app | ⬜ pending | cartographer/tui.py |
-| 3 | cart tui CLI command | ⬜ pending | cartographer/cli.py |
-| 4 | textual dep in pyproject.toml | ⬜ pending | pyproject.toml |
-| 5 | mapsOS cart_bridge.py | ⬜ pending | ~/dev/mapsOS/environments/cart_bridge.py |
-| 6 | mapsOS TUI cart strip | ⬜ pending | ~/dev/mapsOS/environments/tui.py |
-| 7 | cart mapsos write-back commands | ⬜ pending | cartographer/mapsos.py + cli.py |
-| 8 | mapsOS config schema generalization | ⬜ pending | ~/dev/mapsOS/environments/maps_os_config.py + .yaml |
-| 9 | cartographer README rewrite | ⬜ pending | README.md |
-| 10 | mapsOS README rewrite | ⬜ pending | ~/dev/mapsOS/README.md |
-| 11 | developer CTA doc | ⬜ pending | DEVELOPERS.md |
-| 12 | commit + push both repos | ⬜ pending | — |
+| 2 | cart TUI — Textual app | ✓ done | cartographer/tui.py |
+| 3 | cart tui CLI command | ✓ done | cartographer/cli.py |
+| 4 | textual dep in pyproject.toml | ✓ done | pyproject.toml |
+| 5 | mapsOS cart_bridge.py | ✓ done | ~/dev/mapsOS/environments/cart_bridge.py |
+| 6 | mapsOS TUI cart strip | ✓ done | ~/dev/mapsOS/environments/tui.py |
+| 7 | cart mapsos write-back commands | deferred | cartographer/mapsos.py + cli.py |
+| 8 | mapsOS config schema generalization | ✓ done | ~/dev/mapsOS/environments/maps_os_config.py + .yaml |
+| 9 | cartographer README rewrite | ✓ done | README.md |
+| 10 | mapsOS README rewrite | ✓ done | ~/dev/mapsOS/README.md |
+| 11 | developer CTA doc | ✓ done | DEVELOPERS.md |
+| 12 | commit + push both repos | not done | — |
+
+Task 7 remained deferred on purpose because `OPENCODE_IMPL_SPEC.md` explicitly lists `cart mapsos push-tasks` in the "WHAT TO DEFER" section for this pass.
 
 ---
 

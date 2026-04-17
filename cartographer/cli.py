@@ -152,6 +152,24 @@ def status() -> None:
     click.echo(f"worklog: {len(worklog['in_progress'])} in-progress tasks")
 
 
+@main.command("tui")
+def tui_command() -> None:
+    """Launch the atlas TUI."""
+    try:
+        from .tui import CartTUI
+    except ModuleNotFoundError as exc:
+        missing_root = (exc.name or "").split(".", 1)[0]
+        if missing_root in {"textual", "rich", "markdown_it", "mdit_py_plugins"}:
+            raise click.ClickException(
+                "TUI dependencies are missing in the active `cart` environment. "
+                "If you installed via pipx, run: `pipx install -e /Users/maps/dev/cartographer --force` "
+                "or `pipx inject cartographer textual`."
+            ) from exc
+        raise
+    app = CartTUI()
+    app.run()
+
+
 @main.command()
 def backup() -> None:
     atlas = get_atlas()
