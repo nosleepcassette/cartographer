@@ -31,7 +31,7 @@ The point is not a prettier notes app. The point is a filesystem that can hold:
 - entity knowledge
 - agent session logs
 - distilled learnings
-- future mapsOS sync
+- mapsOS sync
 
 ## current status
 
@@ -51,10 +51,11 @@ This repo is past "spec only." It has a working local implementation.
 - agent memory flows: `cart learn`, `cart agent-ingest`, `cart agent-gc`
 - vimwiki patching support
 - basic Obsidian coexistence
+- mapsOS bridge via `cart mapsos ingest`
 
 **Still rough / still moving**
 
-- no formal test suite yet
+- lightweight regression tests for backup behavior and mapsOS ingest
 - synthesis is still mostly deterministic/local, not fully model-backed
 - transclusion/export are not done
 - concurrent write protection is not done
@@ -84,23 +85,28 @@ Hermes, Codex, Claude, OpenCode, and future agents should be able to write:
 
 You should be able to ask:
 
-- what notes mention Chris?
-- what blocks point at `hopeagent#b001`?
+- what notes mention the launch plan?
+- what blocks point at `project-alpha#b001`?
 - what open tasks are P0?
 - what did Hermes learn this week?
 
 And get file paths back, fast, pipeable, Unix-style.
 
-### 4. future mapsOS bridge
+### 4. mapsOS bridge
 
-cartographer is also the obvious long-term landing zone for:
+cartographer now has an initial mapsOS ingest path and is still the long-term landing zone for:
 
 - mapsOS dailies
 - mapsOS task exports
 - mood/intake references
 - synthesis across life tracking + project tracking + agent memory
 
-That bridge is planned, not finished.
+Current bridge surface:
+
+- `cart mapsos ingest export.json`
+- syncs a mapsOS payload into `daily/YYYY-MM-DD.md`
+- writes exported tasks to `tasks/mapsos.md`
+- writes a state snapshot to `agents/mapsOS/YYYY-MM-DD.md`
 
 ## design rules
 
@@ -141,21 +147,21 @@ Notes are Markdown with YAML frontmatter.
 
 ```markdown
 ---
-id: hopeagent
-title: HopeAgent
+id: project-alpha
+title: Project Alpha
 type: project
 status: active
-tags: [nhi, twilio, python]
-links: [chris, nhi-org]
+tags: [automation, voice, python]
+links: [team-notes, launch-plan]
 auto_blocks: true
 created: 2026-04-16
 modified: 2026-04-16
 ---
 
-# HopeAgent
+# Project Alpha
 
 <!-- cart:block id="b001" -->
-Conversational loop is still blocked on voicemail content.
+The release checklist is still blocked on approval copy.
 <!-- /cart:block -->
 ```
 
@@ -228,31 +234,31 @@ cart index status
 
 ```zsh
 cart new note "Voice System"
-cart new project "HopeAgent"
+cart new project "Project Alpha"
 cart new daily 2026-04-16
-cart open hopeagent
-cart edit hopeagent
+cart open project-alpha
+cart edit project-alpha
 ```
 
 ### query + graph-ish lookup
 
 ```zsh
 cart query 'tag:project status:active'
-cart query 'links:chris'
+cart query 'links:launch-plan'
 cart query 'modified:>2026-04-01'
-cart query 'text:"HopeAgent"'
-cart query 'block-ref:hopeagent#b001'
-cart backlinks hopeagent
-cart backlinks --block hopeagent#b001
+cart query 'text:"Project Alpha"'
+cart query 'block-ref:project-alpha#b001'
+cart backlinks project-alpha
+cart backlinks --block project-alpha#b001
 ```
 
 ### tasks
 
 ```zsh
 cart todo list
-cart todo add "finish conversational loop" -p P0 --project hopeagent --due 2026-04-20
+cart todo add "finish release checklist" -p P0 --project project-alpha --due 2026-04-20
 cart todo done t123abc
-cart todo query 'project:hopeagent status:open'
+cart todo query 'project:project-alpha status:open'
 ```
 
 ### worklog
@@ -266,10 +272,17 @@ cart worklog complete w1234567 --result "done"
 ### agent memory
 
 ```zsh
-cart learn "Chris is still the blocker on voicemail content" --topic hopeagent --agent hermes --entity Chris
+cart learn "Release copy is still waiting on review" --topic project-alpha --agent hermes --entity reviewer
 cart agent-ingest hermes session.json
 cart agent-gc --threshold 0.30
 cart summarize 'type:project status:active'
+```
+
+### mapsOS bridge
+
+```zsh
+cart mapsos ingest export.json
+cat export.json | cart mapsos ingest -
 ```
 
 ### plugins
@@ -291,8 +304,8 @@ Input:
   "args": { "max_words": 300, "model": "hermes" },
   "notes": [
     {
-      "id": "hopeagent",
-      "frontmatter": { "title": "HopeAgent", "type": "project" },
+      "id": "project-alpha",
+      "frontmatter": { "title": "Project Alpha", "type": "project" },
       "content": "..."
     }
   ]
@@ -366,7 +379,7 @@ You can point Obsidian directly at `~/atlas`.
 - better import adapters for Claude/OpenCode sessions
 - confirmation/rejection flows for memory
 - safer concurrent writes
-- mapsOS bridge
+- richer mapsOS sync and bidirectional flows
 - export / transclusion
 
 ### later
