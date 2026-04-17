@@ -5,10 +5,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cartographer.agent_memory import build_agent_ingest_result
+from cartographer.agent_memory import (
+    append_learning,
+    build_agent_ingest_result,
+    confirm_learnings,
+    pending_learning_blocks,
+    reject_learnings,
+)
 from cartographer.atlas import Atlas
 from cartographer.index import Index
 from cartographer.notes import Note
+from cartographer.plugins import apply_writes
 
 
 class AgentMemorySummaryTests(unittest.TestCase):
@@ -89,6 +96,62 @@ class AgentMemorySummaryTests(unittest.TestCase):
             hermes_note = Note.from_file(hermes_summary_path)
             self.assertEqual(hermes_note.frontmatter.get("id"), "hermes-summary")
             self.assertEqual(hermes_note.frontmatter.get("type"), "agent-summary")
+
+    def test_learning_provenance_and_confirm_reject_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            atlas_root = Path(tempdir) / "atlas"
+            self._init_atlas(atlas_root)
+
+            result = append_learning(
+                atlas_root,
+                agent="hermes",
+                topic="mapsos-patterns",
+                text="Sleep disruption precedes depleted states.",
+                confidence=0.72,
+                source="mapsos-intake",
+                source_session="session_20260416_214759",
+                source_agent="hermes",
+                learned_on="2026-04-16",
+            )
+            apply_writes(atlas_root, result["writes"], plugin_name="learn")
+
+            pending = pending_learning_blocks(atlas_root)
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0].attrs.get("source_session"), "session_20260416_214759")
+            self.assertEqual(pending[0].attrs.get("source_agent"), "hermes")
+
+            confirmed = confirm_learnings(atlas_root, topic="mapsos-patterns")
+            apply_writes(atlas_root, confirmed["writes"], plugin_name="learn-confirm")
+
+            pending_after_confirm = pending_learning_blocks(atlas_root)
+            self.assertEqual(len(pending_after_confirm), 0)
+
+            learning_text = (atlas_root / "agents" / "hermes" / "learnings" / "mapsos-patterns.md").read_text(encoding="utf-8")
+            self.assertIn('confirmed="1"', learning_text)
+            self.assertIn('confidence="1.00"', learning_text)
+            self.assertIn('confidence_label="confirmed"', learning_text)
+
+            second = append_learning(
+                atlas_root,
+                agent="hermes",
+                topic="mapsos-patterns",
+                text="Invoice pressure is clustering with depleted states.",
+                confidence=0.60,
+                source="mapsos-intake",
+                source_session="session_20260417_090000",
+                source_agent="hermes",
+                learned_on="2026-04-17",
+            )
+            apply_writes(atlas_root, second["writes"], plugin_name="learn")
+            pending = pending_learning_blocks(atlas_root)
+            self.assertEqual(len(pending), 1)
+
+            rejected = reject_learnings(atlas_root, block_id=pending[0].block_id)
+            apply_writes(atlas_root, rejected["writes"], plugin_name="learn-reject")
+
+            rejected_text = (atlas_root / "agents" / "hermes" / "learnings" / "mapsos-patterns.md").read_text(encoding="utf-8")
+            self.assertIn('rejected="1"', rejected_text)
+            self.assertIn('confidence_label="rejected"', rejected_text)
 
 
 if __name__ == "__main__":

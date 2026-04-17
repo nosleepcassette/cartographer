@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import sys
+
+from cartographer.daily_brief import build_daily_brief
 
 
 def main() -> None:
     payload = json.load(sys.stdin)
-    notes = payload.get("notes", [])
-    items: list[str] = []
-    for note in notes[:10]:
-        title = note.get("frontmatter", {}).get("title") or note.get("id") or "untitled"
-        snippet = " ".join(str(note.get("content", "")).split()[:18])
-        items.append(f"- {title}: {snippet}".rstrip(": "))
-    output = "# daily brief\n\n" + ("\n".join(items) if items else "- no notes provided")
+    atlas_root = Path(os.environ["CARTOGRAPHER_ROOT"]).expanduser()
+    args = payload.get("args", {})
+    output_format = str(args.get("format", "markdown"))
+    output = build_daily_brief(atlas_root, format=output_format)
     json.dump({"output": output, "writes": [], "errors": []}, sys.stdout)
 
 

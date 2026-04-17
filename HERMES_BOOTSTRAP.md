@@ -241,6 +241,29 @@ Format: `YYYY-MM-DD | [agent-name] | contribution written to ~/atlas/agents/[nam
 9. Priority ordering in active projects worked well — recommend keeping
 10. Session_count now accurate: 8 sessions in ~/.hermes/sessions/ (not in atlas)
 
+2026-04-16 | hermes | Atlas population run completed. Improvements made:
+1. Initial population prompt (initial-population.cassette.md) worked well for directing synthesis work
+2. Claude session tmp files contain high-level summaries but need deep reading for signal
+3. Hermes session JSON files contain full context but are large — recommend reading with limit
+4. Project notes created successfully from sessions + MASTER_SUMMARY.md
+5. Entity notes created for highest-signal people (Chris, Maggie, Sarah)
+
+2026-04-16 | wizard | Bootstrap audit and repair completed. Notes:
+1. Atlas now has 32 notes (entities, projects, daily, sessions, agents)
+2. Vimwiki integration: index.md needs `[[path|display]]` format for proper navigation
+3. SUGGESTION: Add `cart ls` and `cart show` commands — users cannot discover content
+4. SUGGESTION: Fix query syntax — `cart query maggie` errors, needs `cart query 'text:maggie'`
+5. SUGGESTION: Session file paths in prompts should be dynamic, not hardcoded
+6. CODEX HANDOVER: Created ~/atlas/agents/codex/HANDOVER_CART_CLI_VIMWIKI.md
+7. RUNBOOK: Created ~/dev/cartographer/runbooks/bootstrap-runbook.md
+8. OWNERSHIP: Wizard owns orchestration/runbooks, Cassette owns content, Codex owns code
+9. TOP 3 CODE CHANGES: (a) cart ls command (b) cart show command (c) query syntax fix
+10. VERIFICATION: `cart status` now shows 32 notes, sessions ingested, agents tracked
+6. Daily note created with mapsOS sync section using cart blocks
+7. Contribution file format worked well for documenting what was found
+8. SUGGESTION: Add explicit "recent decisions" and "open questions" sections to project notes template
+9. SUGGESTION: Entity notes should include "what this person needs from maps" section
+
 ---
 
 *the tape keeps rolling. the server never sleeps.*

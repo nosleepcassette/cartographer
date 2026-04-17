@@ -50,8 +50,12 @@ This repo is past "spec only." It has a working local implementation.
 - built-in plugins: `summarize`, `daily-brief`, `agent-ingest`
 - agent memory flows: `cart learn`, `cart agent-ingest`, `cart agent-gc`
 - vimwiki patching support
-- basic Obsidian coexistence
-- mapsOS bridge via `cart mapsos ingest`
+- atlas-local Obsidian bootstrap
+- mapsOS bridge via `cart mapsos ingest`, `cart mapsos ingest-intake`, and `cart mapsos ingest-exports`
+- mapsOS state-log + trend synthesis via `cart mapsos patterns`
+- atlas session brief generation via `cart daily-brief`
+- learning audit loop via `cart learn confirm`, `cart learn reject`, and `cart learn pending`
+- entity backlink cleanup via `cart entities clean-imports`
 
 **Still rough / still moving**
 
@@ -104,9 +108,15 @@ cartographer now has an initial mapsOS ingest path and is still the long-term la
 Current bridge surface:
 
 - `cart mapsos ingest export.json`
+- `cart mapsos ingest-intake ~/dev/mapsOS/intakes/2026-04-13_full_intake.md`
+- `cart mapsos ingest-exports --latest`
+- `cart mapsos patterns`
+- `cart daily-brief`
 - syncs a mapsOS payload into `daily/YYYY-MM-DD.md`
 - writes exported tasks to `tasks/mapsos.md`
 - writes a state snapshot to `agents/mapsOS/YYYY-MM-DD.md`
+- appends `agents/mapsOS/state-log.md`
+- writes extracted learnings under `agents/mapsOS/learnings/`
 
 ## design rules
 
@@ -224,6 +234,7 @@ cart init /tmp/cartographer-demo
 
 ```zsh
 cart init [path]
+cart init [path] --no-vimwiki --no-obsidian
 cart status
 cart backup
 cart index rebuild
@@ -236,7 +247,9 @@ cart index status
 cart new note "Voice System"
 cart new project "Project Alpha"
 cart new daily 2026-04-16
+cart ls --type project --limit 10
 cart open project-alpha
+cart show master-summary
 cart edit project-alpha
 ```
 
@@ -272,7 +285,13 @@ cart worklog complete w1234567 --result "done"
 ### agent memory
 
 ```zsh
+cart session-import claude --latest 1
+cart session-import hermes --latest 1
+cart bootstrap-populate
 cart learn "Release copy is still waiting on review" --topic project-alpha --agent hermes --entity reviewer
+cart learn pending
+cart learn confirm project-alpha
+cart learn reject --block l123abc
 cart agent-ingest hermes session.json
 cart agent-gc --threshold 0.30
 cart summarize 'type:project status:active'
@@ -283,6 +302,11 @@ cart summarize 'type:project status:active'
 ```zsh
 cart mapsos ingest export.json
 cat export.json | cart mapsos ingest -
+cart mapsos ingest-intake ~/dev/mapsOS/intakes/2026-04-13_full_intake.md
+cart mapsos ingest-exports --latest
+cart mapsos patterns --field state
+cart entities clean-imports
+cart daily-brief --output ~/atlas/daily/brief-$(date +%F).md
 ```
 
 ### plugins
@@ -377,7 +401,6 @@ You can point Obsidian directly at `~/atlas`.
 - stronger provenance for learnings
 - model-backed summary backends
 - better import adapters for Claude/OpenCode sessions
-- confirmation/rejection flows for memory
 - safer concurrent writes
 - richer mapsOS sync and bidirectional flows
 - export / transclusion

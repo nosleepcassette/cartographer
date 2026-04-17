@@ -16,8 +16,12 @@ class LearningItem:
     topic: str
     text: str
     confidence: float = 0.85
+    confidence_label: str | None = None
     confirmed: int = 0
+    rejected: int = 0
     source: str = "manual"
+    source_session: str | None = None
+    source_agent: str | None = None
     date: str = ""
     entity: str | None = None
 
@@ -138,11 +142,24 @@ def normalize_learning_item(
         topic=str(item.get("topic") or item.get("category") or default_topic),
         text=str(text).strip(),
         confidence=confidence_value,
+        confidence_label=None if item.get("confidence_label") is None else str(item["confidence_label"]),
         confirmed=confirmed_value,
+        rejected=int(item.get("rejected", 0) or 0),
         source=str(item.get("source") or default_source),
+        source_session=None if item.get("source_session") is None else str(item["source_session"]),
+        source_agent=None if item.get("source_agent") is None else str(item["source_agent"]),
         date=str(item.get("date") or item_date),
         entity=None if item.get("entity") is None else str(item["entity"]),
     )
+
+
+def extract_source_session_id(session_data: Any, *, fallback: str) -> str:
+    if isinstance(session_data, dict):
+        for key in ("session_id", "id", "uuid"):
+            value = session_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return fallback
 
 
 def extract_summary(session_data: Any) -> str:
@@ -283,15 +300,31 @@ def append_learning_overlay(
             "tags": [agent, "learning", slugify(item.topic)],
         },
     )
+    source_agent = item.source_agent or agent
+    for match in BLOCK_PATTERN.finditer(note.body):
+        attrs = parse_block_attrs(match.group("attrs"))
+        if attrs.get("type") != "learning":
+            continue
+        if match.group("content").strip() != item.text.strip():
+            continue
+        if (attrs.get("source_session") or "") != (item.source_session or ""):
+            continue
+        if (attrs.get("source_agent") or source_agent) != source_agent:
+            continue
+        return relative_path
     block = render_attr_block(
         generate_block_id("l"),
         item.text,
         {
             "type": "learning",
             "confidence": f"{item.confidence:.2f}",
+            "confidence_label": item.confidence_label,
             "source": item.source,
+            "source_session": item.source_session,
+            "source_agent": source_agent,
             "date": item.date,
             "confirmed": str(item.confirmed),
+            "rejected": str(item.rejected),
             "entity": None if item.entity is None else slugify(item.entity),
         },
     )
@@ -447,6 +480,7 @@ def ensure_master_summary_note(root: Path) -> Path:
 
 def build_agent_ingest_result(root: Path, agent: str, source_path: str, session_data: Any) -> dict[str, Any]:
     learnings = extract_learning_items(session_data, source=f"{agent}-session")
+    session_reference_hint = extract_source_session_id(session_data, fallback=Path(source_path).stem)
     entities = extract_entities(session_data, learnings)
     session_reference, session_content = build_session_note_write(
         root,
@@ -459,6 +493,8 @@ def build_agent_ingest_result(root: Path, agent: str, source_path: str, session_
     overlay: dict[str, str] = {session_reference: session_content}
     summary_text = extract_summary(session_data)
     for item in learnings:
+        item.source_agent = agent
+        item.source_session = session_reference_hint
         append_learning_overlay(root, overlay, agent=agent, item=item)
     for entity_name in entities:
         update_entity_overlay(
@@ -504,6 +540,10 @@ def append_learning(
     source: str = "manual",
     confirmed: int = 0,
     entity: str | None = None,
+    source_session: str | None = None,
+    source_agent: str | None = None,
+    confidence_label: str | None = None,
+    learned_on: str | None = None,
 ) -> dict[str, Any]:
     overlay: dict[str, str] = {}
     append_learning_overlay(
@@ -514,10 +554,13 @@ def append_learning(
             topic=topic,
             text=text,
             confidence=confidence,
+            confidence_label=confidence_label,
             source=source,
             confirmed=confirmed,
-            date=today_string(),
+            date=learned_on or today_string(),
             entity=entity,
+            source_session=source_session,
+            source_agent=source_agent or agent,
         ),
     )
     return {"writes": [{"path": path, "content": content} for path, content in overlay.items()]}
@@ -529,6 +572,17 @@ class LearningBlockInfo:
     block_id: str
     content: str
     attrs: dict[str, str]
+
+    @property
+    def agent(self) -> str:
+        try:
+            return self.path.parts[-3]
+        except IndexError:
+            return ""
+
+    @property
+    def topic(self) -> str:
+        return self.path.stem
 
 
 def iter_learning_blocks(root: Path, agent: str | None = None) -> list[LearningBlockInfo]:
@@ -557,6 +611,108 @@ def iter_learning_blocks(root: Path, agent: str | None = None) -> list[LearningB
                 )
             )
     return items
+
+
+def pending_learning_blocks(root: Path, *, agent: str | None = None) -> list[LearningBlockInfo]:
+    return [
+        item
+        for item in iter_learning_blocks(root, agent=agent)
+        if item.attrs.get("confirmed") != "1" and item.attrs.get("rejected") != "1"
+    ]
+
+
+def _rewrite_learning_blocks(
+    root: Path,
+    *,
+    agent: str | None,
+    predicate: Any,
+    mutate: Any,
+) -> dict[str, Any]:
+    target_paths = sorted((root / "agents").glob("*/learnings/*.md")) if agent is None else sorted(learnings_dir(root, agent).glob("*.md"))
+    writes: list[dict[str, str]] = []
+    changed_blocks = 0
+    for path in target_paths:
+        text = path.read_text(encoding="utf-8")
+        frontmatter, body = parse_frontmatter(text)
+        changed = False
+
+        def replace(match: re.Match[str]) -> str:
+            nonlocal changed, changed_blocks
+            attrs = parse_block_attrs(match.group("attrs"))
+            content = match.group("content").strip()
+            info = LearningBlockInfo(path=path, block_id=match.group("id"), content=content, attrs=attrs)
+            if attrs.get("type") != "learning" or not predicate(info):
+                return match.group(0)
+            updated_attrs = mutate(dict(attrs))
+            changed = True
+            changed_blocks += 1
+            return render_attr_block(match.group("id"), content, updated_attrs)
+
+        new_body = BLOCK_PATTERN.sub(replace, body)
+        if not changed:
+            continue
+        note = Note(path=path, frontmatter=frontmatter, body=new_body)
+        writes.append(
+            {
+                "path": str(path.relative_to(root)),
+                "content": render(note.frontmatter, note.body),
+            }
+        )
+    return {"writes": writes, "updated": changed_blocks}
+
+
+def confirm_learnings(
+    root: Path,
+    *,
+    topic: str | None = None,
+    block_id: str | None = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    if topic is None and block_id is None:
+        raise ValueError("confirm requires a topic or --block id")
+    normalized_topic = None if topic is None else slugify(topic)
+    return _rewrite_learning_blocks(
+        root,
+        agent=agent,
+        predicate=lambda info: (
+            (block_id is not None and info.block_id == block_id)
+            or (normalized_topic is not None and info.topic == normalized_topic)
+        ),
+        mutate=lambda attrs: {
+            **attrs,
+            "confirmed": "1",
+            "rejected": "0",
+            "confidence": "1.00",
+            "confidence_label": "confirmed",
+        },
+    )
+
+
+def reject_learnings(
+    root: Path,
+    *,
+    topic: str | None = None,
+    block_id: str | None = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    if topic is None and block_id is None:
+        raise ValueError("reject requires a topic or --block id")
+    normalized_topic = None if topic is None else slugify(topic)
+    return _rewrite_learning_blocks(
+        root,
+        agent=agent,
+        predicate=lambda info: (
+            (block_id is not None and info.block_id == block_id)
+            or (normalized_topic is not None and info.topic == normalized_topic)
+        ),
+        mutate=lambda attrs: {
+            **attrs,
+            "confirmed": "0",
+            "rejected": "1",
+            "confidence": "0.00",
+            "confidence_label": "rejected",
+        },
+    )
 
 
 def decay_confidence(confidence: float, learned_on: str, confirmed: int) -> float:
@@ -602,6 +758,10 @@ def gc_learnings(root: Path, *, threshold: float, agent: str | None = None) -> d
                 confirmed = int(attrs.get("confirmed", "0"))
             except ValueError:
                 confirmed = 0
+            if attrs.get("rejected") == "1":
+                removed += 1
+                changed = True
+                return ""
             decayed = decay_confidence(confidence, attrs.get("date", today_string()), confirmed)
             if decayed < threshold:
                 removed += 1

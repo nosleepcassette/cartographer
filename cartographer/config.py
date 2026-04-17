@@ -27,12 +27,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "extensions": [".DS_Store"],
     },
     "vimwiki": {"sync": True},
-    "obsidian": {"vault": "~/vaults"},
+    "obsidian": {
+        "enabled": True,
+        "vault": "~/vaults",
+        "external_vault": "",
+    },
     "sync": {"method": "git"},
     "daily": {"mode": "bidirectional"},
     "mapsos": {
         "tasks_file": "tasks/mapsos.md",
         "snapshot_dir": "agents/mapsOS",
+        "state_log": "agents/mapsOS/state-log.md",
+        "intake_index": "agents/mapsOS/intake-index.md",
+        "intake_dir": "~/dev/mapsOS/intakes",
+        "export_dir": "~/.mapsOS/exports",
     },
 }
 

@@ -15,7 +15,8 @@ from .agent_memory import ensure_master_summary_note
 from .hooks import ensure_hook_dir
 from .index import Index
 from .notes import Note
-from .obsidian import detect_vault
+from .obsidian import bootstrap as bootstrap_obsidian
+from .obsidian import detect_external_vault
 from .plugins import sync_builtin_plugins
 from .tasks import summarize_tasks
 from .templates import sync_builtin_templates, render_template
@@ -75,42 +76,87 @@ class Atlas:
             self.root / "daily",
             self.root / "projects",
             self.root / "agents",
+            self.root / "agents" / "claude",
+            self.root / "agents" / "claude" / "sessions",
             self.root / "agents" / "hermes",
             self.root / "agents" / "hermes" / "learnings",
             self.root / "agents" / "hermes" / "sessions",
             self.root / "agents" / "codex",
+            self.root / "agents" / "codex" / "sessions",
             self.root / "agents" / "mapsOS",
+            self.root / "agents" / "mapsOS" / "learnings",
             self.root / "entities",
             self.root / "tasks",
             self.root / "ref",
         ]
 
+    def _upsert_managed_section(self, note: Note, section_id: str, content: str) -> None:
+        start = f"<!-- cart:{section_id} start -->"
+        end = f"<!-- cart:{section_id} end -->"
+        block = f"{start}\n{content.rstrip()}\n{end}"
+        pattern = re.compile(
+            rf"{re.escape(start)}.*?{re.escape(end)}",
+            re.DOTALL,
+        )
+        if pattern.search(note.body):
+            note.body = pattern.sub(block, note.body)
+            return
+        note.body = note.body.rstrip()
+        if note.body:
+            note.body += "\n\n"
+        note.body += block + "\n"
+
     def _write_index_note(self) -> Path:
         path = self.root / "index.md"
-        if path.exists():
-            return path
         today = date.today().isoformat()
-        note = Note(
-            path=path,
-            frontmatter={
-                "id": "index",
-                "title": "Atlas",
-                "type": "index",
-                "tags": ["atlas"],
-                "links": [],
-                "created": today,
-                "modified": today,
-            },
-            body=(
-                "# Atlas\n\n"
-                "## sections\n\n"
-                "- [[daily]]\n"
-                "- [[projects]]\n"
-                "- [[entities]]\n"
-                "- [[tasks]]\n"
-                "- [[ref]]\n"
-            ),
+        if path.exists():
+            note = Note.from_file(path)
+        else:
+            note = Note(
+                path=path,
+                frontmatter={
+                    "id": "index",
+                    "title": "Atlas",
+                    "type": "index",
+                    "tags": ["atlas"],
+                    "links": [],
+                    "created": today,
+                    "modified": today,
+                },
+                body="# Atlas\n",
+            )
+        note.body = re.sub(
+            r"## sections\n\n- \[\[daily\]\]\n- \[\[projects\]\]\n- \[\[entities\]\]\n- \[\[tasks\]\]\n- \[\[ref\]\]\n?",
+            "",
+            note.body,
+            count=1,
+        ).strip()
+        if note.body:
+            note.body += "\n"
+        else:
+            note.body = "# Atlas\n"
+        links = [
+            f"- [[daily/index]]",
+            "- [[projects/index]]",
+            "- [[entities/index]]",
+            "- [[tasks/active]]",
+            "- [[ref/index]]",
+            "- [[agents/MASTER_SUMMARY]]",
+        ]
+        self._upsert_managed_section(
+            note,
+            "atlas-index-links",
+            "## sections\n\n" + "\n".join(links),
         )
+        note.frontmatter["links"] = [
+            "daily-index",
+            "projects-index",
+            "entities-index",
+            "tasks-active",
+            "ref-index",
+            "master-summary",
+        ]
+        note.frontmatter["modified"] = today
         note.write()
         return path
 
@@ -133,6 +179,36 @@ class Atlas:
         note.write()
         return path
 
+    def _write_section_index(self, directory: str, title: str, links: list[str] | None = None) -> Path:
+        path = self.root / directory / "index.md"
+        today = date.today().isoformat()
+        if path.exists():
+            note = Note.from_file(path)
+        else:
+            note = Note(
+                path=path,
+                frontmatter={
+                    "id": f"{directory}-index",
+                    "title": title,
+                    "type": "index",
+                    "tags": [directory],
+                    "links": [],
+                    "created": today,
+                    "modified": today,
+                },
+                body=f"# {title}\n",
+            )
+        section_lines = [f"- {item}" for item in links] if links else ["- populate from session imports or `cart new`."]
+        self._upsert_managed_section(
+            note,
+            f"{directory}-index-links",
+            "## entries\n\n" + "\n".join(section_lines),
+        )
+        note.frontmatter["links"] = [item.strip("[]") for item in links or []]
+        note.frontmatter["modified"] = today
+        note.write()
+        return path
+
     def _write_gitignore(self) -> Path:
         path = self.root / ".gitignore"
         required_lines = [
@@ -150,7 +226,12 @@ class Atlas:
         path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return path
 
-    def init(self) -> dict[str, Any]:
+    def init(
+        self,
+        *,
+        setup_vimwiki: bool | None = None,
+        setup_obsidian: bool | None = None,
+    ) -> dict[str, Any]:
         created: list[str] = []
         for directory in self._default_directories():
             if not directory.exists():
@@ -158,10 +239,16 @@ class Atlas:
             directory.mkdir(parents=True, exist_ok=True)
 
         self.config["cartographer"]["root"] = str(self.root)
-        vault = detect_vault(self.config)
-        if vault is not None:
-            self.config.setdefault("obsidian", {})
-            self.config["obsidian"]["vault"] = str(vault)
+        self.config.setdefault("vimwiki", {})
+        self.config.setdefault("obsidian", {})
+        if setup_vimwiki is not None:
+            self.config["vimwiki"]["sync"] = bool(setup_vimwiki)
+        if setup_obsidian is not None:
+            self.config["obsidian"]["enabled"] = bool(setup_obsidian)
+
+        external_vault = detect_external_vault(self.config, atlas_root=self.root)
+        if external_vault is not None:
+            self.config["obsidian"]["external_vault"] = str(external_vault)
         save_config(self.config, root=self.root)
 
         copied_templates = [str(path) for path in sync_builtin_templates(self.root)]
@@ -169,6 +256,10 @@ class Atlas:
         ensure_hook_dir(self.root)
         created.append(str(self._write_index_note()))
         created.append(str(self._write_task_index()))
+        created.append(str(self._write_section_index("daily", "Daily", [f"[[{date.today().isoformat()}]]"])))
+        created.append(str(self._write_section_index("projects", "Projects")))
+        created.append(str(self._write_section_index("entities", "Entities")))
+        created.append(str(self._write_section_index("ref", "Reference")))
         created.append(str(self._write_gitignore()))
         master_summary_path = ensure_master_summary_note(self.root)
         if str(master_summary_path) not in created:
@@ -193,6 +284,18 @@ class Atlas:
             backups = [str(path) for path in backup_summary.backups]
             backup_warnings = backup_summary.warnings
             vimwiki_status = patch_vimrc(Path.home() / ".vimrc", self.root)
+        elif skip_vimwiki:
+            vimwiki_status = "skipped by env"
+        else:
+            vimwiki_status = "opted out"
+
+        obsidian_status = "opted out"
+        obsidian_bootstrap = {"vault": None, "settings_dir": None, "written": []}
+        if self.config.get("obsidian", {}).get("enabled", True):
+            obsidian_bootstrap = bootstrap_obsidian(self.root)
+            self.config["obsidian"]["vault"] = str(self.root)
+            obsidian_status = "bootstrapped"
+            save_config(self.config, root=self.root)
 
         worklog = Worklog(self.worklog_db_path)
         session = worklog.start_session()
@@ -207,7 +310,10 @@ class Atlas:
             "created": created,
             "templates": copied_templates,
             "plugins": copied_plugins,
-            "vault": None if vault is None else str(vault),
+            "vault": str(self.root) if obsidian_bootstrap["vault"] is not None else None,
+            "external_vault": None if external_vault is None else str(external_vault),
+            "obsidian": obsidian_status,
+            "obsidian_written": [str(path) for path in obsidian_bootstrap["written"]],
             "git": git_state,
             "vimwiki": vimwiki_status,
             "backups": backups,
@@ -370,6 +476,7 @@ class Atlas:
                 size += path.stat().st_size
         tasks_summary = summarize_tasks(self.root)
         hermes_sessions = list((self.root / "agents" / "hermes" / "sessions").glob("*.md"))
+        claude_sessions = list((self.root / "agents" / "claude" / "sessions").glob("*.md"))
         codex_sessions = list((self.root / "agents" / "codex").glob("*.md"))
         worklog_status = Worklog(self.worklog_db_path).status()
         return {
@@ -379,6 +486,7 @@ class Atlas:
             "index": index_status,
             "tasks": tasks_summary,
             "agents": {
+                "claude_sessions": len(claude_sessions),
                 "hermes_sessions": len(hermes_sessions),
                 "codex_sessions": len(codex_sessions),
             },

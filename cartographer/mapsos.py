@@ -8,7 +8,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .agent_memory import LearningItem, append_learning
+from .intake_parser import ParsedMapsOSIntake, parse_mapsos_intake
 from .notes import Note
+from .patterns import StateLogEntry, load_state_log, render_state_log_note
 from .tasks import parse_tasks_in_file
 from .templates import render_template
 
@@ -30,6 +33,14 @@ class MapsOSTask:
     @property
     def done(self) -> bool:
         return self.status == "done"
+
+
+def default_intake_dir() -> Path:
+    return Path.home() / "dev" / "mapsOS" / "intakes"
+
+
+def default_export_dir() -> Path:
+    return Path.home() / ".mapsOS" / "exports"
 
 
 def _today_string() -> str:
@@ -54,13 +65,7 @@ def _extract_date(payload: dict[str, Any]) -> str:
     ]
     session = payload.get("session")
     if isinstance(session, dict):
-        candidates.extend(
-            [
-                session.get("date"),
-                session.get("day"),
-                session.get("session_date"),
-            ]
-        )
+        candidates.extend([session.get("date"), session.get("day"), session.get("session_date")])
     for candidate in candidates:
         if isinstance(candidate, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate.strip()):
             return candidate.strip()
@@ -159,11 +164,7 @@ def _task_from_item(item: Any, index: int, *, arc_hint: str | None = None) -> Ma
         title = item.strip()
         if not title:
             return None
-        return MapsOSTask(
-            title=title,
-            source_id=f"task-{index}",
-            arc=arc_hint,
-        )
+        return MapsOSTask(title=title, source_id=f"task-{index}", arc=arc_hint)
     if not isinstance(item, dict):
         return None
     title = None
@@ -235,9 +236,8 @@ def normalize_mapsos_tasks(payload: dict[str, Any]) -> list[MapsOSTask]:
     tasks: list[MapsOSTask] = []
     for index, (item, arc_hint) in enumerate(_iter_mapsos_task_items(payload), start=1):
         task = _task_from_item(item, index, arc_hint=arc_hint)
-        if task is None:
-            continue
-        tasks.append(task)
+        if task is not None:
+            tasks.append(task)
     return tasks
 
 
@@ -253,6 +253,52 @@ def _extract_state(payload: dict[str, Any]) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
+
+
+def _extract_body_metrics(payload: dict[str, Any]) -> dict[str, str]:
+    metrics: dict[str, str] = {}
+    for key in ("sleep", "energy", "pain"):
+        value = _extract_string(payload.get(key))
+        if value:
+            metrics[key] = value
+    body = payload.get("body")
+    if isinstance(body, dict):
+        for key in ("sleep", "energy", "pain"):
+            value = _extract_string(body.get(key))
+            if value:
+                metrics[key] = value
+    session = payload.get("session")
+    if isinstance(session, dict):
+        nested_body = session.get("body")
+        if isinstance(nested_body, dict):
+            for key in ("sleep", "energy", "pain"):
+                value = _extract_string(nested_body.get(key))
+                if value:
+                    metrics[key] = value
+        for key in ("sleep", "energy", "pain"):
+            value = _extract_string(session.get(key))
+            if value:
+                metrics[key] = value
+    return metrics
+
+
+def _extract_source_kind(payload: dict[str, Any]) -> str:
+    source_type = _extract_string(payload.get("source_type"))
+    return source_type or "mapsos-export"
+
+
+def _extract_source_session(payload: dict[str, Any]) -> str:
+    for key in ("source_session", "session_id"):
+        value = _extract_string(payload.get(key))
+        if value:
+            return value
+    session = payload.get("session")
+    if isinstance(session, dict):
+        for key in ("source_session", "session_id"):
+            value = _extract_string(session.get(key))
+            if value:
+                return value
+    return f"mapsos-{_extract_date(payload)}"
 
 
 def _extract_labels(payload: dict[str, Any], *keys: str) -> list[str]:
@@ -295,10 +341,7 @@ def _ensure_daily_note(root: Path, day: str) -> Note:
 def _upsert_mapsos_section(body: str, section: str) -> str:
     payload = f"{MAPSOS_SECTION_START}\n{section.rstrip()}\n{MAPSOS_SECTION_END}"
     if MAPSOS_SECTION_START in body and MAPSOS_SECTION_END in body:
-        pattern = re.compile(
-            re.escape(MAPSOS_SECTION_START) + r".*?" + re.escape(MAPSOS_SECTION_END),
-            re.DOTALL,
-        )
+        pattern = re.compile(re.escape(MAPSOS_SECTION_START) + r".*?" + re.escape(MAPSOS_SECTION_END), re.DOTALL)
         return pattern.sub(payload, body, count=1).rstrip() + "\n"
     return body.rstrip() + "\n\n## mapsOS\n\n" + payload + "\n"
 
@@ -308,6 +351,10 @@ def _render_daily_section(payload: dict[str, Any], tasks: list[MapsOSTask]) -> s
     state = _extract_state(payload)
     if state:
         lines.append(f"- state: {state}")
+    body_metrics = _extract_body_metrics(payload)
+    if body_metrics:
+        rendered_body = ", ".join(f"{key}: {value}" for key, value in body_metrics.items())
+        lines.append(f"- body: {rendered_body}")
     arcs = _extract_labels(payload, "arcs")
     if arcs:
         lines.append(f"- arcs: {', '.join(arcs)}")
@@ -382,10 +429,9 @@ def _render_snapshot_note(day: str, payload: dict[str, Any], tasks: list[MapsOST
     state = _extract_state(payload) or "unknown"
     arcs = _extract_labels(payload, "arcs")
     intentions = _extract_labels(payload, "intentions")
-    task_lines = [
-        f"- [{'x' if task.done else ' '}] {task.title} ({task.priority})"
-        for task in tasks
-    ] or ["- no exported tasks"]
+    body_metrics = _extract_body_metrics(payload)
+    task_lines = [f"- [{'x' if task.done else ' '}] {task.title} ({task.priority})" for task in tasks] or ["- no exported tasks"]
+    quote_lines = [f"> {quote}" for quote in _coerce_list(payload.get("quotes")) if isinstance(quote, str) and quote.strip()]
     body = (
         f"# mapsOS snapshot {day}\n\n"
         "## summary\n\n"
@@ -393,9 +439,15 @@ def _render_snapshot_note(day: str, payload: dict[str, Any], tasks: list[MapsOST
         "## state\n\n"
         f"- state: {state}\n"
         f"- arcs: {', '.join(arcs) if arcs else 'none'}\n"
-        f"- intentions: {', '.join(intentions) if intentions else 'none'}\n\n"
+        f"- intentions: {', '.join(intentions) if intentions else 'none'}\n"
+        f"- body: {', '.join(f'{key}: {value}' for key, value in body_metrics.items()) if body_metrics else 'unknown'}\n\n"
         "## tasks\n\n"
         + "\n".join(task_lines)
+        + (
+            "\n\n## quotes\n\n" + "\n".join(quote_lines)
+            if quote_lines
+            else ""
+        )
         + "\n\n## raw\n\n```json\n"
         + json.dumps(payload, indent=2, ensure_ascii=True)
         + "\n```\n"
@@ -415,6 +467,96 @@ def _render_snapshot_note(day: str, payload: dict[str, Any], tasks: list[MapsOST
         },
         body=body,
     )
+
+
+def _state_log_entry_for_payload(payload: dict[str, Any]) -> StateLogEntry:
+    body = _extract_body_metrics(payload)
+    return StateLogEntry(
+        day=_extract_date(payload),
+        state=_extract_state(payload) or "unknown",
+        sleep=body.get("sleep", "unknown"),
+        energy=body.get("energy", "unknown"),
+        pain=body.get("pain", "unknown"),
+        arcs_active=_extract_labels(payload, "arcs"),
+        source=_extract_source_kind(payload),
+    )
+
+
+def _write_state_log(root: Path, payload: dict[str, Any]) -> Path:
+    entries = load_state_log(root)
+    new_entry = _state_log_entry_for_payload(payload)
+    by_day = {entry.day: entry for entry in entries}
+    by_day[new_entry.day] = new_entry
+    note = render_state_log_note(sorted(by_day.values(), key=lambda entry: entry.day))
+    note.path = root / note.path
+    note.write()
+    return note.path
+
+
+def _upsert_intake_index(root: Path, parsed: ParsedMapsOSIntake) -> Path:
+    path = root / "agents" / "mapsOS" / "intake-index.md"
+    today = _today_string()
+    line = (
+        f"- {parsed.date} — [[mapsos-{parsed.date}]] — {parsed.path.name}"
+        f" — state: {parsed.payload.get('state', 'unknown')}"
+    )
+    if path.exists():
+        note = Note.from_file(path)
+    else:
+        note = Note(
+            path=path,
+            frontmatter={
+                "id": "mapsos-intake-index",
+                "title": "mapsOS Intake Index",
+                "type": "index",
+                "created": today,
+                "modified": today,
+            },
+            body="# mapsOS intake index\n\n## intakes\n",
+        )
+    existing_lines = [row.rstrip() for row in note.body.splitlines()]
+    filtered = [row for row in existing_lines if parsed.path.name not in row]
+    if "## intakes" not in filtered:
+        filtered.extend(["# mapsOS intake index", "", "## intakes"])
+    if filtered and filtered[-1]:
+        filtered.append("")
+    filtered.append(line)
+    note.body = "\n".join(filtered).rstrip() + "\n"
+    note.frontmatter["modified"] = today
+    note.write()
+    return path
+
+
+def _apply_learning_writes(root: Path, writes: list[dict[str, Any]]) -> list[Path]:
+    written: list[Path] = []
+    for write in writes:
+        relative_path = Path(str(write["path"]))
+        destination = root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(write["content"]), encoding="utf-8")
+        written.append(destination)
+    return written
+
+
+def _write_learning_items(root: Path, items: list[LearningItem]) -> list[Path]:
+    written: list[Path] = []
+    for item in items:
+        result = append_learning(
+            root,
+            agent="mapsOS",
+            topic=item.topic,
+            text=item.text,
+            confidence=item.confidence,
+            confidence_label=item.confidence_label,
+            source=item.source,
+            entity=item.entity,
+            source_session=item.source_session,
+            source_agent=item.source_agent or "mapsOS",
+            learned_on=item.date,
+        )
+        written.extend(_apply_learning_writes(root, result["writes"]))
+    deduped = list(dict.fromkeys(written))
+    return deduped
 
 
 def sync_mapsos_payload(
@@ -448,15 +590,65 @@ def sync_mapsos_payload(
         snapshot_note.write(ensure_blocks=True)
         written.append(snapshot_note.path)
 
+    written.append(_write_state_log(root, payload))
+
     open_tasks = [task for task in tasks if not task.done]
+    unique_paths = list(dict.fromkeys(written))
     return {
         "date": day,
-        "paths": [str(path) for path in written],
+        "paths": [str(path) for path in unique_paths],
         "task_count": len(tasks),
         "open_task_count": len(open_tasks),
         "output": (
-            f"mapsOS ingest {day}: wrote {len(written)} files, "
+            f"mapsOS ingest {day}: wrote {len(unique_paths)} files, "
             f"{len(tasks)} tasks ({len(open_tasks)} open)"
+        ),
+    }
+
+
+def ingest_mapsos_intake(root: Path, path: str | Path) -> dict[str, Any]:
+    parsed = parse_mapsos_intake(path)
+    result = sync_mapsos_payload(root, parsed.payload)
+    learnings_written = _write_learning_items(root, parsed.learnings)
+    intake_index_path = _upsert_intake_index(root, parsed)
+    all_paths = result["paths"] + [str(intake_index_path)] + [str(path) for path in learnings_written]
+    unique_paths = list(dict.fromkeys(all_paths))
+    return {
+        "count": 1,
+        "date": parsed.date,
+        "paths": unique_paths,
+        "learning_count": len(parsed.learnings),
+        "output": (
+            f"mapsOS intake {parsed.path.name}: wrote {len(unique_paths)} files, "
+            f"{result['task_count']} tasks, {len(parsed.learnings)} learnings"
+        ),
+    }
+
+
+def ingest_mapsos_exports(root: Path, paths: list[Path]) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for export_path in paths:
+        payload = load_mapsos_payload(str(export_path))
+        payload.setdefault("source_type", "mapsos-export")
+        payload.setdefault("source_path", str(export_path))
+        payload.setdefault("source_session", _extract_string(payload.get("session_id")) or export_path.stem)
+        results.append(sync_mapsos_payload(root, payload))
+    all_paths: list[str] = []
+    task_count = 0
+    open_task_count = 0
+    for result in results:
+        all_paths.extend(result["paths"])
+        task_count += int(result["task_count"])
+        open_task_count += int(result["open_task_count"])
+    unique_paths = list(dict.fromkeys(all_paths))
+    return {
+        "count": len(results),
+        "paths": unique_paths,
+        "task_count": task_count,
+        "open_task_count": open_task_count,
+        "output": (
+            f"mapsOS exports: ingested {len(results)} file(s), "
+            f"{task_count} tasks ({open_task_count} open)"
         ),
     }
 
@@ -472,6 +664,28 @@ def load_mapsos_payload(source: str, stdin_text: str | None = None) -> dict[str,
     if not isinstance(decoded, dict):
         raise ValueError("mapsOS payload must decode to a JSON object or array")
     return decoded
+
+
+def default_intake_paths(*, since: str | None = None) -> list[Path]:
+    directory = default_intake_dir()
+    if not directory.exists():
+        return []
+    candidates = sorted(directory.glob("*.md"))
+    if since is None:
+        return candidates
+    return [path for path in candidates if re.search(r"\d{4}-\d{2}-\d{2}", path.name) and path.name[:10] >= since]
+
+
+def default_export_paths(*, latest: int | None = None) -> list[Path]:
+    directory = default_export_dir()
+    if not directory.exists():
+        return []
+    candidates = sorted(directory.glob("*.json"))
+    if latest is None:
+        return candidates
+    if latest <= 0:
+        return []
+    return candidates[-latest:]
 
 
 def synced_mapsos_tasks(root: Path) -> list[Any]:

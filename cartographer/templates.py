@@ -17,7 +17,7 @@ TEMPLATE_FILES = {
     "entity": "note.md.j2",
 }
 
-BUILTIN_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+BUILTIN_TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "jinja"
 
 
 def atlas_template_dir(atlas_root: Path) -> Path:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import datetime
@@ -7,10 +8,24 @@ from pathlib import Path
 
 import click
 
-from .agent_memory import append_learning, gc_learnings
+from .agent_memory import (
+    append_learning,
+    confirm_learnings,
+    gc_learnings,
+    pending_learning_blocks,
+    reject_learnings,
+)
 from .atlas import Atlas
+from .daily_brief import build_daily_brief
 from .index import Index
-from .mapsos import load_mapsos_payload, sync_mapsos_payload
+from .mapsos import (
+    default_export_paths,
+    default_intake_paths,
+    ingest_mapsos_exports,
+    ingest_mapsos_intake,
+    load_mapsos_payload,
+    sync_mapsos_payload,
+)
 from .notes import Note
 from .obsidian import sync as obsidian_sync_impl
 from .plugins import (
@@ -19,6 +34,8 @@ from .plugins import (
     parse_plugin_args,
     run_plugin,
 )
+from .session_import import default_session_paths, import_sessions
+from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
 from .vimwiki import patch_vimrc
 from .worklog import Worklog
@@ -68,16 +85,24 @@ def main() -> None:
 
 @main.command()
 @click.argument("path", required=False, default="~/atlas")
-def init(path: str) -> None:
+@click.option("--no-vimwiki", is_flag=True, help="Skip vimwiki patching during init.")
+@click.option("--no-obsidian", is_flag=True, help="Skip atlas-local Obsidian bootstrap.")
+def init(path: str, no_vimwiki: bool, no_obsidian: bool) -> None:
     atlas = Atlas(root=path)
-    result = atlas.init()
+    result = atlas.init(
+        setup_vimwiki=not no_vimwiki,
+        setup_obsidian=not no_obsidian,
+    )
     click.echo(f"atlas: {result['root']}")
     click.echo(f"git: {result['git']}")
     click.echo(f"vimwiki: {result['vimwiki']}")
+    click.echo(f"obsidian: {result['obsidian']}")
     for warning in result.get("backup_warnings", []):
         click.echo(f"warning: {warning}", err=True)
     if result["vault"]:
-        click.echo(f"obsidian: detected {result['vault']}")
+        click.echo(f"obsidian vault: {result['vault']}")
+    if result.get("external_vault"):
+        click.echo(f"obsidian external vault: {result['external_vault']}")
     click.echo(
         "index: "
         f"{result['index']['notes']} notes, {result['index']['blocks']} blocks, {result['index']['refs']} refs"
@@ -106,6 +131,7 @@ def status() -> None:
     )
     click.echo(
         "agents: "
+        f"claude {info['agents']['claude_sessions']} sessions, "
         f"hermes {info['agents']['hermes_sessions']} sessions, "
         f"codex {info['agents']['codex_sessions']} sessions"
     )
@@ -156,6 +182,24 @@ def open(note_id: str) -> None:
     _open_note(note_id)
 
 
+@main.command("ls")
+@click.option("--type", "note_type", help="Filter by note type.")
+@click.option("--limit", default=20, type=int, show_default=True)
+def ls_notes(note_type: str | None, limit: int) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    if note_type:
+        paths = [Path(path) for path in index.query(f"type:{note_type}")]
+    else:
+        paths = index.iter_note_paths()
+    for path in paths[:limit]:
+        note = Note.from_file(path)
+        note_id = str(note.frontmatter.get("id") or path.stem)
+        title = str(note.frontmatter.get("title") or path.stem)
+        rendered_type = str(note.frontmatter.get("type") or "note")
+        click.echo(f"{note_id:28} {rendered_type:14} {title}")
+
+
 @main.command()
 @click.argument("note_id")
 def edit(note_id: str) -> None:
@@ -170,6 +214,24 @@ def query(expression: tuple[str, ...]) -> None:
     results = resolve_query_paths(atlas, expr)
     for result in results:
         click.echo(result)
+
+
+@main.command()
+@click.argument("note_id")
+def show(note_id: str) -> None:
+    atlas = get_atlas()
+    path = atlas.resolve_note_path(note_id)
+    if path is None:
+        index = ensure_index_current(atlas)
+        partial_matches = [
+            candidate
+            for candidate in index.iter_note_paths()
+            if note_id.lower() in candidate.stem.lower()
+        ]
+        if not partial_matches:
+            raise click.ClickException(f"note not found: {note_id}")
+        path = partial_matches[0]
+    click.echo(path.read_text(encoding="utf-8"), nl=False)
 
 
 @main.command()
@@ -303,31 +365,76 @@ def index_status() -> None:
         )
 
 
-@main.command("learn")
-@click.argument("text")
-@click.option("--topic", default="general", show_default=True)
-@click.option("--agent", default="hermes", show_default=True)
-@click.option("--confidence", default=0.85, type=float, show_default=True)
-@click.option("--entity")
-def learn(
-    text: str,
-    topic: str,
-    agent: str,
-    confidence: float,
-    entity: str | None,
-) -> None:
+@main.command(
+    "learn",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    },
+)
+@click.argument("parts", nargs=-1, type=click.UNPROCESSED)
+def learn(parts: tuple[str, ...]) -> None:
+    """Add learnings, or run confirm/reject/pending via `cart learn <mode>`."""
     atlas = get_atlas()
+    tokens = list(parts)
+    if not tokens:
+        raise click.ClickException("provide learning text or a learn mode: confirm, reject, pending")
+
+    mode = tokens[0]
+    if mode == "pending":
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--agent")
+        parsed = parser.parse_args(tokens[1:])
+        pending = pending_learning_blocks(atlas.root, agent=parsed.agent)
+        if not pending:
+            click.echo("no pending learnings")
+            return
+        for item in pending:
+            source_agent = item.attrs.get("source_agent") or item.agent or "unknown"
+            learned_on = item.attrs.get("date") or "unknown"
+            click.echo(f"{item.block_id} | {source_agent} | {item.topic} | {learned_on} | {item.content}")
+        return
+
+    if mode in {"confirm", "reject"}:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("topic", nargs="?")
+        parser.add_argument("--block", dest="block_id")
+        parser.add_argument("--agent")
+        parsed = parser.parse_args(tokens[1:])
+        try:
+            result = (
+                confirm_learnings(atlas.root, topic=parsed.topic, block_id=parsed.block_id, agent=parsed.agent)
+                if mode == "confirm"
+                else reject_learnings(atlas.root, topic=parsed.topic, block_id=parsed.block_id, agent=parsed.agent)
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if result["writes"]:
+            apply_writes(atlas.root, result["writes"], plugin_name=f"learn-{mode}")
+            atlas.refresh_index()
+        click.echo(f"{mode}ed {result['updated']} learning block(s)")
+        return
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--topic", default="general")
+    parser.add_argument("--agent", default="hermes")
+    parser.add_argument("--confidence", default=0.85, type=float)
+    parser.add_argument("--entity")
+    parsed, remaining = parser.parse_known_args(tokens)
+    text = " ".join(remaining).strip()
+    if not text:
+        raise click.ClickException("provide learning text")
     result = append_learning(
         atlas.root,
-        agent=agent,
-        topic=topic,
+        agent=parsed.agent,
+        topic=parsed.topic,
         text=text,
-        confidence=confidence,
-        entity=entity,
+        confidence=parsed.confidence,
+        entity=parsed.entity,
     )
     applied = apply_writes(atlas.root, result["writes"], plugin_name="learn")
     atlas.refresh_index()
-    click.echo(f"learned {topic} -> {applied[0]}")
+    click.echo(f"learned {parsed.topic} -> {applied[0]}")
 
 
 @main.command("agent-ingest")
@@ -415,6 +522,19 @@ def summarize(
     click.echo(output)
 
 
+@main.command("daily-brief")
+@click.option("--format", "output_format", type=click.Choice(["markdown", "plain"]), default="markdown", show_default=True)
+@click.option("--output")
+def daily_brief(output_format: str, output: str | None) -> None:
+    atlas = get_atlas()
+    rendered = build_daily_brief(atlas.root, format=output_format)
+    if output:
+        destination = Path(output).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(rendered, encoding="utf-8")
+    click.echo(rendered, nl=False)
+
+
 @main.command("vimwiki-sync")
 def vimwiki_sync() -> None:
     atlas = get_atlas()
@@ -430,6 +550,160 @@ def obsidian_sync() -> None:
         raise click.ClickException("no obsidian vault configured")
     destination = obsidian_sync_impl(atlas.root, Path(str(vault)).expanduser())
     click.echo(destination)
+
+
+def _resolve_session_import_paths(
+    source_type: str,
+    paths: tuple[str, ...],
+    latest: int,
+    import_all: bool,
+) -> list[Path]:
+    if paths:
+        resolved = [Path(path).expanduser() for path in paths]
+    elif import_all:
+        resolved = default_session_paths(source_type, latest=None)
+    else:
+        resolved = default_session_paths(source_type, latest=latest)
+    return [path for path in resolved if path.exists()]
+
+
+def _run_session_import(
+    source_type: str,
+    paths: tuple[str, ...],
+    *,
+    latest: int,
+    import_all: bool,
+) -> None:
+    atlas = get_atlas()
+    selected_paths = _resolve_session_import_paths(source_type, paths, latest, import_all)
+    if not selected_paths:
+        raise click.ClickException(f"no {source_type} session files found")
+    result = import_sessions(atlas.root, source_type, selected_paths)
+    atlas.refresh_index()
+    click.echo(f"imported {result['count']} {source_type} session(s)")
+    for session in result["sessions"]:
+        click.echo(f"{session['source']} -> {session['session_note']}")
+
+
+def _mapsos_export_paths(atlas: Atlas, *, latest: int | None = None) -> list[Path]:
+    configured = atlas.config.get("mapsos", {}).get("export_dir")
+    if configured:
+        directory = Path(str(configured)).expanduser()
+        if not directory.exists():
+            return []
+        candidates = sorted(directory.glob("*.json"))
+        if latest is None:
+            return candidates
+        return candidates[-latest:] if latest > 0 else []
+    return default_export_paths(latest=latest)
+
+
+def _mapsos_intake_paths(
+    atlas: Atlas,
+    paths: tuple[str, ...],
+    *,
+    import_all: bool,
+    since: str | None,
+) -> list[Path]:
+    if paths:
+        return [Path(path).expanduser() for path in paths if Path(path).expanduser().exists()]
+    configured = atlas.config.get("mapsos", {}).get("intake_dir")
+    if configured:
+        directory = Path(str(configured)).expanduser()
+        if not directory.exists():
+            return []
+        candidates = sorted(directory.glob("*.md"))
+        if since is not None:
+            return [path for path in candidates if path.name[:10] >= since]
+        if import_all:
+            return candidates
+        return candidates[-1:] if candidates else []
+    candidates = default_intake_paths(since=since if import_all or since else None)
+    if since is not None or import_all:
+        return candidates
+    return candidates[-1:] if candidates else []
+
+
+@main.group("session-import")
+def session_import() -> None:
+    """import Claude or Hermes session files into atlas surfaces."""
+
+
+@session_import.command("claude")
+@click.argument("paths", nargs=-1)
+@click.option("--latest", default=1, type=int, show_default=True)
+@click.option("--all", "import_all", is_flag=True, help="Import all matching Claude sessions.")
+def session_import_claude(paths: tuple[str, ...], latest: int, import_all: bool) -> None:
+    _run_session_import("claude", paths, latest=latest, import_all=import_all)
+
+
+@session_import.command("hermes")
+@click.argument("paths", nargs=-1)
+@click.option("--latest", default=1, type=int, show_default=True)
+@click.option("--all", "import_all", is_flag=True, help="Import all matching Hermes sessions.")
+def session_import_hermes(paths: tuple[str, ...], latest: int, import_all: bool) -> None:
+    _run_session_import("hermes", paths, latest=latest, import_all=import_all)
+
+
+@main.command("bootstrap-populate")
+@click.option("--claude-latest", default=2, type=int, show_default=True)
+@click.option("--hermes-latest", default=4, type=int, show_default=True)
+@click.option("--mapsos-latest", default=1, type=int, show_default=True)
+@click.option("--no-claude", is_flag=True, help="Skip Claude session imports.")
+@click.option("--no-hermes", is_flag=True, help="Skip Hermes session imports.")
+@click.option("--no-mapsos", is_flag=True, help="Skip mapsOS export imports.")
+def bootstrap_populate(
+    claude_latest: int,
+    hermes_latest: int,
+    mapsos_latest: int,
+    no_claude: bool,
+    no_hermes: bool,
+    no_mapsos: bool,
+) -> None:
+    atlas = get_atlas()
+    imported = 0
+    if not no_claude:
+        claude_paths = default_session_paths("claude", latest=claude_latest)
+        if claude_paths:
+            result = import_sessions(atlas.root, "claude", claude_paths)
+            imported += int(result["count"])
+            click.echo(f"claude: imported {result['count']} session(s)")
+        else:
+            click.echo("claude: no session files found")
+    if not no_hermes:
+        hermes_paths = default_session_paths("hermes", latest=hermes_latest)
+        if hermes_paths:
+            result = import_sessions(atlas.root, "hermes", hermes_paths)
+            imported += int(result["count"])
+            click.echo(f"hermes: imported {result['count']} session(s)")
+        else:
+            click.echo("hermes: no session files found")
+    if not no_mapsos:
+        export_paths = _mapsos_export_paths(atlas, latest=mapsos_latest)
+        if export_paths:
+            result = ingest_mapsos_exports(atlas.root, export_paths)
+            imported += int(result["count"])
+            click.echo(f"mapsOS: ingested {result['count']} export(s)")
+        else:
+            click.echo("mapsOS: no export files found")
+    atlas.refresh_index()
+    click.echo(f"bootstrap-populate: imported {imported} session(s)")
+
+
+@main.group()
+def entities() -> None:
+    """entity note maintenance."""
+
+
+@entities.command("clean-imports")
+def entities_clean_imports() -> None:
+    atlas = get_atlas()
+    result = clean_entity_imports(atlas.root)
+    if result["updated"]:
+        atlas.refresh_index()
+    click.echo(f"cleaned {result['updated']} entity note(s)")
+    for path in result["paths"]:
+        click.echo(path)
 
 
 @main.group()
@@ -470,6 +744,51 @@ def mapsos_ingest(
     click.echo(result["output"])
     for path in result["paths"]:
         click.echo(path)
+
+
+@mapsos.command("ingest-intake")
+@click.argument("paths", nargs=-1)
+@click.option("--all", "import_all", is_flag=True, help="Import all markdown intakes in the configured intake dir.")
+@click.option("--since", help="Import intake files on or after YYYY-MM-DD.")
+def mapsos_ingest_intake(paths: tuple[str, ...], import_all: bool, since: str | None) -> None:
+    atlas = get_atlas()
+    selected_paths = _mapsos_intake_paths(atlas, paths, import_all=import_all, since=since)
+    if not selected_paths:
+        raise click.ClickException("no mapsOS intake markdown files found")
+    results = [ingest_mapsos_intake(atlas.root, path) for path in selected_paths]
+    atlas.refresh_index()
+    total_learnings = sum(int(result["learning_count"]) for result in results)
+    click.echo(
+        f"mapsOS intake: ingested {len(results)} file(s), "
+        f"{total_learnings} learnings"
+    )
+    for result in results:
+        click.echo(result["output"])
+
+
+@mapsos.command("ingest-exports")
+@click.option("--latest", "latest_only", is_flag=True, help="Only ingest the most recent export.")
+def mapsos_ingest_exports(latest_only: bool) -> None:
+    atlas = get_atlas()
+    selected_paths = _mapsos_export_paths(atlas, latest=1 if latest_only else None)
+    if not selected_paths:
+        raise click.ClickException("no mapsOS export files found")
+    result = ingest_mapsos_exports(atlas.root, selected_paths)
+    atlas.refresh_index()
+    click.echo(result["output"])
+    for path in result["paths"]:
+        click.echo(path)
+
+
+@mapsos.command("patterns")
+@click.option("--since", help="Only include entries on or after YYYY-MM-DD.")
+@click.option("--field", type=click.Choice(["state", "sleep", "energy", "pain", "arcs"]), help="Summarize just one field.")
+def mapsos_patterns(since: str | None, field: str | None) -> None:
+    from .patterns import entries_since, load_state_log, summarize_patterns
+
+    atlas = get_atlas()
+    entries = entries_since(load_state_log(atlas.root), since)
+    click.echo(summarize_patterns(entries, field=field))
 
 
 @main.group()
