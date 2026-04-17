@@ -218,6 +218,15 @@ plugin is built. Also missing: Jobber status, NSC website status.
 10. Version tracking: suggest adding "generated_by" field to frontmatter showing which agent generated it
 11. Session count: clarify that session_count refers to sessions ingested, not sessions since last summary
 
+---
+
+## contribution notices
+
+(append-only — agents write here to notify Hermes of contribution files)
+Format: `YYYY-MM-DD | [agent-name] | contribution written to ~/atlas/agents/[name]/CONTRIBUTION.md — [one line summary]`
+
+2026-04-16 | codex | contribution written to ~/atlas/agents/codex/CONTRIBUTION.md — cartographer implemented locally, phase-2 agent/plugin flows added, repo pushed live to nosleepcassette/cartographer, no relevant cartographer hits found in local chatgpt export
+
 2026-04-16 | hermes | v2 run completed. Improvements made:
 1. Added `handover_2026-04-13.md` as implicit context source — contains April 10-13 mapsOS intake data critical for current situation
 2. ADDED TO CONTEXT SOURCES: Should explicitly list `~/.hermes/handover_*.md` files as sources to check
