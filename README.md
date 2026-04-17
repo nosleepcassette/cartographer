@@ -34,6 +34,18 @@ cartographer assumes both exist and treats them as first-class:
 
 ---
 
+## what shipped in this push
+
+This is the release where atlas starts to feel like a real operating surface instead of just a filesystem plus commands.
+
+- **A real atlas interface.** `cart tui` gives you a Textual TUI with a structured graph pane, note pane, transclusion rendering, backlinks, tasks overlay, and vim-style movement.
+- **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
+- **State is visible inside memory now.** The atlas TUI reads the latest mapsOS export directly and shows current qualitative state, active arcs, and open P0 load in the state strip.
+- **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
+- **The developer framing is explicit.** This repo is not just "my notes tool." It is infrastructure for agents, plugins, shared memory, and weird local-first systems that need durable context.
+
+---
+
 ## current status
 
 **Phase 4 is live.** The closed loop is local and usable:
@@ -194,6 +206,27 @@ cart mapsos patterns --field state
 cart daily-brief
 ```
 
+Inside the TUIs:
+
+- `cart tui` -> `m` launches mapsOS
+- `maps` -> `C` launches cartographer
+- quitting mapsOS ingests the latest export back into the atlas when `cart` is available
+
+---
+
+## atlas loop
+
+```text
+agent session
+  -> session import
+  -> atlas note + links + tasks + learnings
+  -> mapsOS export ingested as qualitative state
+  -> daily brief
+  -> next session starts from real memory instead of zero
+```
+
+This is the core promise of the project: context windows close, but the graph stays.
+
 ---
 
 ## design rules
@@ -290,6 +323,17 @@ cartographer uses Markdown plus HTML comment block markers. Point Obsidian at `~
 ### developers
 
 See `DEVELOPERS.md` for the plugin contract, extension points, and what to build on top of the atlas substrate.
+
+Short version:
+
+- Build agent plugins that read atlas context and write durable memory back.
+- Build domain-specific atlas stacks for research, teams, therapy, operations, or neurodivergent life management.
+- Build new surfaces on top of the files-and-graph layer instead of starting from another silo.
+
+Repos:
+
+- cartographer: <https://github.com/nosleepcassette/cartographer>
+- mapsOS: <https://github.com/nosleepcassette/mapsOS>
 
 ---
 
