@@ -765,8 +765,56 @@ def _update_task_surface(root: Path, imported: ImportedSession, session_note: Pa
     return note.path
 
 
-def import_session(root: Path, source_type: str, path: Path) -> dict[str, Any]:
+def import_imported_session(root: Path, imported: ImportedSession, *, force: bool = False) -> dict[str, Any]:
+    """Write an already-parsed ImportedSession into the atlas. Skips if already present unless force."""
+    session_note_path = root / imported.relative_session_path
+    if not force and session_note_path.exists():
+        return {
+            "source": str(imported.source_path),
+            "agent": imported.agent,
+            "session_note": str(session_note_path),
+            "written": [],
+            "projects": [],
+            "entities": [],
+            "request_count": 0,
+            "summary": imported.summary,
+            "skipped": True,
+        }
+    session_note = _update_session_note(root, imported)
+    summary_note = _update_agent_summary(root, imported, session_note)
+    daily_note = _update_daily_surface(root, imported, session_note)
+    task_surface = _update_task_surface(root, imported, session_note)
+    project_paths = _update_project_surfaces(root, imported, session_note)
+    entity_paths = _update_entity_surfaces(root, imported, session_note)
+    written = [session_note, summary_note, daily_note, task_surface] + project_paths + entity_paths
+    return {
+        "source": str(imported.source_path),
+        "agent": imported.agent,
+        "session_note": str(session_note),
+        "written": [str(item) for item in written],
+        "projects": imported.projects,
+        "entities": imported.entities,
+        "request_count": len(imported.requests),
+        "summary": imported.summary,
+        "skipped": False,
+    }
+
+
+def import_session(root: Path, source_type: str, path: Path, *, force: bool = False) -> dict[str, Any]:
     imported = parse_session_file(source_type, path)
+    session_note_path = root / imported.relative_session_path
+    if not force and session_note_path.exists():
+        return {
+            "source": str(path),
+            "agent": imported.agent,
+            "session_note": str(session_note_path),
+            "written": [],
+            "projects": [],
+            "entities": [],
+            "request_count": 0,
+            "summary": imported.summary,
+            "skipped": True,
+        }
     session_note = _update_session_note(root, imported)
     summary_note = _update_agent_summary(root, imported, session_note)
     daily_note = _update_daily_surface(root, imported, session_note)
@@ -783,18 +831,25 @@ def import_session(root: Path, source_type: str, path: Path) -> dict[str, Any]:
         "entities": imported.entities,
         "request_count": len(imported.requests),
         "summary": imported.summary,
+        "skipped": False,
     }
 
 
-def import_sessions(root: Path, source_type: str, paths: list[Path]) -> dict[str, Any]:
+def import_sessions(root: Path, source_type: str, paths: list[Path], *, force: bool = False) -> dict[str, Any]:
     imported_results: list[dict[str, Any]] = []
+    skipped_results: list[dict[str, Any]] = []
     written: list[str] = []
     for path in paths:
-        result = import_session(root, source_type, path)
-        imported_results.append(result)
-        written.extend(result["written"])
+        result = import_session(root, source_type, path, force=force)
+        if result.get("skipped"):
+            skipped_results.append(result)
+        else:
+            imported_results.append(result)
+            written.extend(result["written"])
     return {
         "count": len(imported_results),
+        "skipped": len(skipped_results),
         "written": _unique(written),
         "sessions": imported_results,
+        "skipped_sessions": skipped_results,
     }

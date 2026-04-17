@@ -34,7 +34,8 @@ from .plugins import (
     parse_plugin_args,
     run_plugin,
 )
-from .session_import import default_session_paths, import_sessions
+from .external_import import parse_chatgpt_export, parse_claude_web_export
+from .session_import import _today_string, default_session_paths, import_imported_session, import_session, import_sessions
 from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
 from .vimwiki import patch_vimrc
@@ -573,16 +574,23 @@ def _run_session_import(
     *,
     latest: int,
     import_all: bool,
+    force: bool = False,
 ) -> None:
     atlas = get_atlas()
     selected_paths = _resolve_session_import_paths(source_type, paths, latest, import_all)
     if not selected_paths:
         raise click.ClickException(f"no {source_type} session files found")
-    result = import_sessions(atlas.root, source_type, selected_paths)
+    result = import_sessions(atlas.root, source_type, selected_paths, force=force)
     atlas.refresh_index()
-    click.echo(f"imported {result['count']} {source_type} session(s)")
+    skipped = result.get("skipped", 0)
+    click.echo(
+        f"imported {result['count']} {source_type} session(s)"
+        + (f", skipped {skipped} already-imported" if skipped else "")
+    )
     for session in result["sessions"]:
         click.echo(f"{session['source']} -> {session['session_note']}")
+    if skipped and not force:
+        click.echo("  (use --force to re-import skipped sessions)")
 
 
 def _mapsos_export_paths(atlas: Atlas, *, latest: int | None = None) -> list[Path]:
@@ -633,16 +641,18 @@ def session_import() -> None:
 @click.argument("paths", nargs=-1)
 @click.option("--latest", default=1, type=int, show_default=True)
 @click.option("--all", "import_all", is_flag=True, help="Import all matching Claude sessions.")
-def session_import_claude(paths: tuple[str, ...], latest: int, import_all: bool) -> None:
-    _run_session_import("claude", paths, latest=latest, import_all=import_all)
+@click.option("--force", is_flag=True, help="Re-import sessions even if already present in atlas.")
+def session_import_claude(paths: tuple[str, ...], latest: int, import_all: bool, force: bool) -> None:
+    _run_session_import("claude", paths, latest=latest, import_all=import_all, force=force)
 
 
 @session_import.command("hermes")
 @click.argument("paths", nargs=-1)
 @click.option("--latest", default=1, type=int, show_default=True)
 @click.option("--all", "import_all", is_flag=True, help="Import all matching Hermes sessions.")
-def session_import_hermes(paths: tuple[str, ...], latest: int, import_all: bool) -> None:
-    _run_session_import("hermes", paths, latest=latest, import_all=import_all)
+@click.option("--force", is_flag=True, help="Re-import sessions even if already present in atlas.")
+def session_import_hermes(paths: tuple[str, ...], latest: int, import_all: bool, force: bool) -> None:
+    _run_session_import("hermes", paths, latest=latest, import_all=import_all, force=force)
 
 
 @main.command("bootstrap-populate")
@@ -829,6 +839,149 @@ def plugin_run(name: str, args: tuple[str, ...]) -> None:
     errors = result.get("errors") or []
     for error in errors:
         click.echo(str(error), err=True)
+
+
+# ---------------------------------------------------------------------------
+# cart graph — graph export
+# ---------------------------------------------------------------------------
+
+@main.command("graph")
+@click.option("--export", "export_path", default=None, help="Path for JSON export (default: ~/atlas/graph-export.json).")
+@click.option("--format", "fmt", default="json", type=click.Choice(["json"]), show_default=True)
+def graph_export(export_path: str | None, fmt: str) -> None:
+    """Export the atlas note graph as a JSON file (nodes + edges)."""
+    import sqlite3 as _sqlite3
+
+    atlas = get_atlas()
+    db_path = atlas.root / ".cartographer" / "index.db"
+    if not db_path.exists():
+        atlas.refresh_index()
+    if not db_path.exists():
+        raise click.ClickException("atlas index not found — run `cart status` first")
+
+    con = _sqlite3.connect(str(db_path))
+    con.row_factory = _sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT id, title, type, tags, links FROM notes ORDER BY type, id"
+        ).fetchall()
+        ref_rows = con.execute(
+            "SELECT DISTINCT from_note, to_note FROM block_refs WHERE from_note != to_note"
+        ).fetchall()
+    finally:
+        con.close()
+
+    nodes = []
+    for row in rows:
+        try:
+            tags = json.loads(row["tags"]) if row["tags"] else []
+        except Exception:
+            tags = []
+        nodes.append({
+            "id": row["id"],
+            "title": row["title"] or row["id"],
+            "type": row["type"] or "note",
+            "tags": tags,
+        })
+
+    edges = [{"source": r["from_note"], "target": r["to_note"]} for r in ref_rows]
+
+    payload = {
+        "generated": _today_string(),
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+    out_path = Path(export_path).expanduser() if export_path else atlas.root / "graph-export.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    click.echo(f"graph exported: {out_path} ({len(nodes)} nodes, {len(edges)} edges)")
+
+
+# ---------------------------------------------------------------------------
+# cart import — external platform exports
+# ---------------------------------------------------------------------------
+
+@main.group("import")
+def import_group() -> None:
+    """import session history from external platforms (ChatGPT, Claude.ai)."""
+
+
+
+def _external_import_sessions(
+    sessions: list,
+    atlas_root: "Path",
+    *,
+    force: bool,
+) -> "dict[str, Any]":
+    from .session_import import _unique
+    imported: list = []
+    skipped: list = []
+    written: list = []
+    for sess in sessions:
+        result = import_imported_session(atlas_root, sess, force=force)
+        if result.get("skipped"):
+            skipped.append(result)
+        else:
+            imported.append(result)
+            written.extend(result["written"])
+    return {"count": len(imported), "skipped": len(skipped), "written": _unique(written), "sessions": imported}
+
+
+@import_group.command("chatgpt")
+@click.argument("export_file", type=click.Path(exists=True))
+@click.option("--latest", default=None, type=int, help="Only import the N most recent conversations.")
+@click.option("--force", is_flag=True, help="Re-import even if already in atlas.")
+def import_chatgpt(export_file: str, latest: int | None, force: bool) -> None:
+    """Import from a ChatGPT conversations.json export file."""
+    path = Path(export_file).expanduser()
+    try:
+        sessions = parse_chatgpt_export(path)
+    except Exception as exc:
+        raise click.ClickException(f"failed to parse ChatGPT export: {exc}") from exc
+    if latest is not None and latest > 0:
+        sessions = sessions[-latest:]
+    atlas = get_atlas()
+    result = _external_import_sessions(sessions, atlas.root, force=force)
+    atlas.refresh_index()
+    skipped = result.get("skipped", 0)
+    click.echo(
+        f"imported {result['count']} ChatGPT conversation(s)"
+        + (f", skipped {skipped} already-imported" if skipped else "")
+    )
+    for sess in result["sessions"]:
+        click.echo(f"  {sess['source']} -> {sess['session_note']}")
+    if skipped and not force:
+        click.echo("  (use --force to re-import skipped)")
+
+
+@import_group.command("claude-web")
+@click.argument("export_file", type=click.Path(exists=True))
+@click.option("--latest", default=None, type=int, help="Only import the N most recent conversations.")
+@click.option("--force", is_flag=True, help="Re-import even if already in atlas.")
+def import_claude_web(export_file: str, latest: int | None, force: bool) -> None:
+    """Import from a Claude.ai conversations.json export file."""
+    path = Path(export_file).expanduser()
+    try:
+        sessions = parse_claude_web_export(path)
+    except Exception as exc:
+        raise click.ClickException(f"failed to parse Claude.ai export: {exc}") from exc
+    if latest is not None and latest > 0:
+        sessions = sessions[-latest:]
+    atlas = get_atlas()
+    result = _external_import_sessions(sessions, atlas.root, force=force)
+    atlas.refresh_index()
+    skipped = result.get("skipped", 0)
+    click.echo(
+        f"imported {result['count']} Claude.ai conversation(s)"
+        + (f", skipped {skipped} already-imported" if skipped else "")
+    )
+    for sess in result["sessions"]:
+        click.echo(f"  {sess['source']} -> {sess['session_note']}")
+    if skipped and not force:
+        click.echo("  (use --force to re-import skipped)")
 
 
 if __name__ == "__main__":
