@@ -32,52 +32,63 @@ The point is not a prettier notes app. The point is a filesystem that can hold:
 - agent session logs
 - distilled learnings
 - mapsOS sync
+- imported conversation history from any platform
 
 ## current status
 
-This repo is past "spec only." It has a working local implementation.
+Phase 3 is shipped. The closed loop is live.
 
-**Implemented now**
+```
+mapsOS session → structured export → cart ingest → atlas update → daily brief → next session start
+```
+
+**Implemented**
 
 - atlas initialization under `~/atlas` or `CARTOGRAPHER_ROOT`
 - Markdown note creation from templates
 - block insertion for `auto_blocks: true` notes
 - SQLite indexing for notes, blocks, and backlinks
-- query and backlink commands
+- full-text search and field queries
 - Markdown task CRUD
 - worklog database
 - plugin runner with JSON stdin/stdout contract
 - built-in plugins: `summarize`, `daily-brief`, `agent-ingest`
 - agent memory flows: `cart learn`, `cart agent-ingest`, `cart agent-gc`
+- session import: `cart session-import claude` and `cart session-import hermes`
+  - deduped by default — re-running skips already-indexed sessions
+  - `--force` to overwrite
+- external import pipeline: `cart import chatgpt` and `cart import claude-web`
+  - parses ChatGPT bulk export (`conversations.json`)
+  - parses Claude.ai bulk export (`conversations.json`)
+- graph export: `cart graph --export` — all notes as nodes, all links as edges (JSON)
+- mapsOS bridge: `cart mapsos ingest`, `cart mapsos ingest-intake`, `cart mapsos ingest-exports`
+- mapsOS trend synthesis: `cart mapsos patterns`
+- session brief generation: `cart daily-brief`
+- learning audit loop: `cart learn confirm`, `cart learn reject`, `cart learn pending`
+- entity backlink cleanup: `cart entities clean-imports`
 - vimwiki patching support
 - atlas-local Obsidian bootstrap
-- mapsOS bridge via `cart mapsos ingest`, `cart mapsos ingest-intake`, and `cart mapsos ingest-exports`
-- mapsOS state-log + trend synthesis via `cart mapsos patterns`
-- atlas session brief generation via `cart daily-brief`
-- learning audit loop via `cart learn confirm`, `cart learn reject`, and `cart learn pending`
-- entity backlink cleanup via `cart entities clean-imports`
 
-**Still rough / still moving**
+**Still moving**
 
-- lightweight regression tests for backup behavior and mapsOS ingest
-- synthesis is still mostly deterministic/local, not fully model-backed
-- transclusion/export are not done
-- concurrent write protection is not done
-- hooks exist, but the ecosystem around them is still early
+- concurrent write protection
+- model-backed summary backends
+- richer mapsOS bidirectional sync
+- transclusion / export surface
 
-Ship style is still: move fast and break things.
+## live atlas stats (2026-04-17)
+
+274 notes. 232 sessions ingested (Claude Code, Hermes, Codex). 1546 link edges.
 
 ## project scope
 
-cartographer is trying to cover four layers at once:
-
 ### 1. personal knowledge filesystem
 
-Projects, notes, dailies, references, entities, and tasks all live as files in one atlas.
+Projects, notes, dailies, references, entities, and tasks — all files, one atlas.
 
 ### 2. agent memory substrate
 
-Hermes, Codex, Claude, OpenCode, and future agents should be able to write:
+Hermes, Codex, Claude, OpenCode, and future agents write:
 
 - session logs
 - summaries
@@ -87,36 +98,35 @@ Hermes, Codex, Claude, OpenCode, and future agents should be able to write:
 
 ### 3. terminal-native query surface
 
-You should be able to ask:
+```zsh
+cart query 'tag:project status:active'
+cart query 'text:hopeagent'
+cart backlinks chris
+```
 
-- what notes mention the launch plan?
-- what blocks point at `project-alpha#b001`?
-- what open tasks are P0?
-- what did Hermes learn this week?
+File paths back, fast, pipeable, Unix-style.
 
-And get file paths back, fast, pipeable, Unix-style.
+### 4. external import pipeline
 
-### 4. mapsOS bridge
+Import full conversation history from any platform:
 
-cartographer now has an initial mapsOS ingest path and is still the long-term landing zone for:
+```zsh
+cart import chatgpt ~/Downloads/conversations.json
+cart import claude-web ~/Downloads/conversations.json
+cart session-import claude --all
+cart session-import hermes --all
+```
 
-- mapsOS dailies
-- mapsOS task exports
-- mood/intake references
-- synthesis across life tracking + project tracking + agent memory
+All imports are deduped. Run them as many times as you want.
 
-Current bridge surface:
+### 5. mapsOS bridge
 
-- `cart mapsos ingest export.json`
-- `cart mapsos ingest-intake ~/dev/mapsOS/intakes/2026-04-13_full_intake.md`
-- `cart mapsos ingest-exports --latest`
-- `cart mapsos patterns`
-- `cart daily-brief`
-- syncs a mapsOS payload into `daily/YYYY-MM-DD.md`
-- writes exported tasks to `tasks/mapsos.md`
-- writes a state snapshot to `agents/mapsOS/YYYY-MM-DD.md`
-- appends `agents/mapsOS/state-log.md`
-- writes extracted learnings under `agents/mapsOS/learnings/`
+```zsh
+maps export                                   # from inside mapsOS TUI
+cart mapsos ingest-exports --latest           # pull into atlas
+cart mapsos patterns --field state            # trend summary
+cart daily-brief                              # atlas-derived session brief
+```
 
 ## design rules
 
@@ -126,10 +136,9 @@ Current bridge surface:
 4. **Agents are first-class writers.**
 5. **Plugins are just programs.** If it reads stdin and writes stdout JSON, it can join.
 6. **Blocks matter.** Paragraph-level addressability is not optional fluff.
+7. **Imports are idempotent.** Re-running never creates duplicates.
 
 ## atlas shape
-
-The default atlas looks like this:
 
 ```text
 ~/atlas/
@@ -144,7 +153,10 @@ The default atlas looks like this:
 ├── daily/
 ├── projects/
 ├── agents/
+│   ├── claude/
+│   │   └── sessions/
 │   ├── hermes/
+│   │   └── sessions/
 │   └── codex/
 ├── entities/
 ├── tasks/
@@ -176,50 +188,29 @@ The release checklist is still blocked on approval copy.
 ```
 
 Block refs use `[[note-id#block-id]]`.
-That keeps the files Obsidian-readable while still giving cartographer something stronger than page links.
+Files stay Obsidian-readable while cartographer gets something stronger than page links.
 
 ## install
 
-Requirements:
-
-- Python `>=3.11`
-- `pipx` recommended
-
-Install locally:
+Requirements: Python `>=3.11`, `pipx` recommended.
 
 ```zsh
 cd ~/dev/cartographer
 pipx install -e .
 ```
 
-You get three equivalent entrypoints:
-
-```zsh
-cart
-cartog
-cartographer
-```
+Three equivalent entrypoints: `cart`, `cartog`, `cartographer`.
 
 ## quickstart
 
-### initialize a real atlas
-
 ```zsh
-cart init
+cart init                    # create ~/atlas, install templates, init git
+cart status                  # system health check
+cart daily-brief             # atlas-derived session context
+cart session-import claude --latest 1
 ```
 
-This will:
-
-- create `~/atlas`
-- create `.cartographer/config.toml`
-- install built-in templates and plugins
-- initialize a git repo in the atlas if needed
-- optionally patch vimwiki config
-- create the initial index + worklog databases
-
-### initialize a disposable atlas
-
-Useful for smoke tests:
+For a disposable test atlas:
 
 ```zsh
 export CARTOGRAPHER_ROOT=/tmp/cartographer-demo
@@ -248,12 +239,13 @@ cart new note "Voice System"
 cart new project "Project Alpha"
 cart new daily 2026-04-16
 cart ls --type project --limit 10
+cart ls --type entity
 cart open project-alpha
 cart show master-summary
 cart edit project-alpha
 ```
 
-### query + graph-ish lookup
+### query + backlinks
 
 ```zsh
 cart query 'tag:project status:active'
@@ -264,6 +256,15 @@ cart query 'block-ref:project-alpha#b001'
 cart backlinks project-alpha
 cart backlinks --block project-alpha#b001
 ```
+
+### graph export
+
+```zsh
+cart graph --export                           # ~/atlas/graph-export.json
+cart graph --export /path/to/output.json
+```
+
+Output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}` — feed into d3, gephi, etc.
 
 ### tasks
 
@@ -282,13 +283,36 @@ cart worklog log "rebuilt atlas after import"
 cart worklog complete w1234567 --result "done"
 ```
 
-### agent memory
+### session import (Claude Code + Hermes)
 
 ```zsh
-cart session-import claude --latest 1
+cart session-import claude --latest 1         # latest session, skip if already indexed
+cart session-import claude --latest 5
+cart session-import claude --all              # all sessions, deduped
+cart session-import claude --force            # re-import even if already indexed
 cart session-import hermes --latest 1
-cart bootstrap-populate
-cart learn "Release copy is still waiting on review" --topic project-alpha --agent hermes --entity reviewer
+cart session-import hermes --all
+cart bootstrap-populate                       # seed atlas from recent sessions across all agents
+```
+
+### external import (ChatGPT, Claude.ai)
+
+```zsh
+# ChatGPT: Settings → Data controls → Export data → conversations.json
+cart import chatgpt ~/Downloads/conversations.json
+cart import chatgpt ~/Downloads/conversations.json --latest 10
+
+# Claude.ai: Settings → Account → Export data → conversations.json
+cart import claude-web ~/Downloads/conversations.json
+cart import claude-web ~/Downloads/conversations.json --latest 10
+
+# Both support --force to re-import skipped sessions
+```
+
+### agent memory + learnings
+
+```zsh
+cart learn "Release copy is still waiting on review" --topic project-alpha --agent hermes
 cart learn pending
 cart learn confirm project-alpha
 cart learn reject --block l123abc
@@ -303,9 +327,12 @@ cart summarize 'type:project status:active'
 cart mapsos ingest export.json
 cat export.json | cart mapsos ingest -
 cart mapsos ingest-intake ~/dev/mapsOS/intakes/2026-04-13_full_intake.md
+cart mapsos ingest-intake --all
 cart mapsos ingest-exports --latest
+cart mapsos patterns
 cart mapsos patterns --field state
 cart entities clean-imports
+cart daily-brief
 cart daily-brief --output ~/atlas/daily/brief-$(date +%F).md
 ```
 
@@ -318,7 +345,7 @@ cart plugin run summarize max_words=120 < payload.json
 
 ## plugin contract
 
-Plugins are normal executables inside `.cartographer/plugins/`.
+Plugins are executables inside `.cartographer/plugins/`.
 
 Input:
 
@@ -327,11 +354,7 @@ Input:
   "command": "summarize",
   "args": { "max_words": 300, "model": "hermes" },
   "notes": [
-    {
-      "id": "project-alpha",
-      "frontmatter": { "title": "Project Alpha", "type": "project" },
-      "content": "..."
-    }
+    { "id": "project-alpha", "frontmatter": {}, "content": "..." }
   ]
 }
 ```
@@ -341,31 +364,33 @@ Output:
 ```json
 {
   "output": "...",
-  "writes": [
-    { "path": "agents/hermes/SUMMARY.md", "content": "..." }
-  ],
+  "writes": [{ "path": "agents/hermes/SUMMARY.md", "content": "..." }],
   "errors": []
 }
 ```
 
-This is deliberately boring. Boring is good here.
-It means Python, shell, Lua, or anything else can plug in without ceremony.
+Python, shell, Lua, anything that reads stdin and writes stdout JSON can plug in.
 
 ## agent workflow
 
 cartographer is opinionated about one thing:
 agents should contribute to files, not to invisible memory only.
 
-Current patterns in this repo:
+Patterns in this repo:
 
-- Hermes owns `MASTER_SUMMARY.md` integration
-- other agents contribute via contribution files
-- session logs can be ingested into durable notes
-- learnings get their own topic files
-- entities get backlinks from session memory
+- Hermes owns `MASTER_SUMMARY.md` synthesis
+- agents contribute via contribution files under `agents/<name>/`
+- session logs are ingested into durable, queryable notes
+- learnings get their own topic files with provenance
+- entities accumulate backlinks from every session that mentions them
 
-The goal is simple:
-if an agent learns something durable, it should leave a trace a human can inspect.
+If an agent learns something durable, it leaves a trace a human can inspect.
+
+### onboarding a new agent
+
+Read `AGENT_ONBOARDING.md` in this repo. It covers the full system, all projects,
+all people, current priorities, and agent protocol. Any agent that reads it and runs
+`cart daily-brief` is fully context-loaded.
 
 ## integrations
 
@@ -373,44 +398,14 @@ if an agent learns something durable, it should leave a trace a human can inspec
 
 `cart init` can patch `~/.vimrc` to make the atlas the primary wiki.
 
-Backups happen first.
-If you want a safer first run, use:
-
 ```zsh
-export CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1
+export CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1   # skip if you don't want this
 ```
 
 ### obsidian
 
-cartographer uses normal Markdown plus HTML comment block markers, so Obsidian can coexist with it.
-
-You can point Obsidian directly at `~/atlas`.
-`.cartographer/` stays implementation detail.
-
-## roadmap
-
-### now
-
-- make the local core solid
-- keep atlas files readable
-- keep agent memory durable
-- iterate on query + ingestion flows
-
-### next
-
-- stronger provenance for learnings
-- model-backed summary backends
-- better import adapters for Claude/OpenCode sessions
-- safer concurrent writes
-- richer mapsOS sync and bidirectional flows
-- export / transclusion
-
-### later
-
-- graph views
-- publish/export surface
-- richer review workflows
-- broader plugin ecosystem
+cartographer uses normal Markdown plus HTML comment block markers.
+Point Obsidian directly at `~/atlas`. `.cartographer/` stays implementation detail.
 
 ## what this is not
 
@@ -422,21 +417,10 @@ You can point Obsidian directly at `~/atlas`.
 
 ## repository map
 
-- [SPEC.md](SPEC.md): product spec and locked decisions
-- [HANDOVER.md](HANDOVER.md): original build order
-- [CLAUDE_OPENCODE_REVIEW.md](CLAUDE_OPENCODE_REVIEW.md): scoped future additions for Claude/OpenCode review
-- [AGENT_CONTRIBUTE.md](AGENT_CONTRIBUTE.md): contribution workflow for non-Hermes agents
-
-## tone check
-
-This project is ambitious on purpose.
-It is also allowed to be a little dangerous while the core takes shape.
-
-The promise is not "perfect knowledge management."
-The promise is:
-
-- your files stay yours
-- your agents can leave durable memory
-- your system can grow without getting trapped in somebody else's product
+- [SPEC.md](SPEC.md) — product spec and locked decisions
+- [AGENT_ONBOARDING.md](AGENT_ONBOARDING.md) — full system context for any agent
+- [AGENT_CONTRIBUTE.md](AGENT_CONTRIBUTE.md) — contribution workflow for non-Hermes agents
+- [CART_PHASE3_SPEC.md](CART_PHASE3_SPEC.md) — phase 3 implementation record
+- [CART_SYSTEM_HANDOVER_2026-04-17.md](CART_SYSTEM_HANDOVER_2026-04-17.md) — current system state
 
 the tape keeps rolling. the server never sleeps.
