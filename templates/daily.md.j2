@@ -1,0 +1,20 @@
+---
+id: daily-{{ date }}
+title: {{ date }}
+type: daily
+tags: [daily]
+links: {% if yesterday %}[daily-{{ yesterday }}]{% else %}[]{% endif %}
+auto_blocks: true
+created: {{ date }}
+modified: {{ date }}
+---
+
+# {{ date }}
+
+## today
+
+## notes
+
+## tasks
+
+{% if yesterday %}← [[daily-{{ yesterday }}]]{% endif %}
