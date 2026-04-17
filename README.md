@@ -7,6 +7,19 @@ Local-first knowledge filesystem and agent memory layer.
 Plain Markdown. Git history. Queryable graph. Block-addressable text.
 Agents and humans write to the same substrate. Nothing is trapped in an app.
 
+<table>
+<tr>
+<td align="center"><img src="1.png" width="400"><br><sub>atlas TUI — graph pane + note view</sub></td>
+<td align="center"><img src="2.png" width="400"><br><sub>block transclusion rendering</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="3.png" width="400"><br><sub>mapsOS state strip + task overlay</sub></td>
+<td align="center"><img src="4.png" width="400"><br><sub>entity profile with backlinks</sub></td>
+</tr>
+</table>
+
+<sub>_Note: Entity names censored for public release._</sub>
+
 ---
 
 Someone on Discord, after seeing an early scope sheet, wrote:
