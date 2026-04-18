@@ -526,6 +526,23 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       font-size: 0.95rem;
     }
     .stat { font-size: 0.75rem; }
+    details {
+      padding: 0.4rem;
+      border-radius: 0.7rem;
+      background: var(--surface);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    summary {
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+    }
+    summary:hover {
+      color: var(--accent);
+    }
+    details[open] summary {
+      margin-bottom: 0.3rem;
+    }
     .label { color: var(--muted); font-size: 0.7rem; }
     .search-wrap { display: grid; gap: 0.3rem; }
     input[type="search"] {
@@ -932,12 +949,18 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       </div>
 
       <div class="toggle-grid">
-        <label class="toggle"><input id="demo-mode" type="checkbox" checked> obscure relationships</label>
         <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
-        <label class="toggle"><input id="hide-names" type="checkbox"> anonymize labels</label>
         <label class="toggle"><input id="show-sessions" type="checkbox"> show sessions</label>
         <label class="toggle"><input id="show-wires" type="checkbox" checked> show semantic wires</label>
       </div>
+
+      <details class="card">
+        <summary class="eyebrow">privacy</summary>
+        <div class="toggle-grid" style="margin-top: 0.4rem;">
+          <label class="toggle"><input id="anonymize-labels" type="checkbox"> anonymize labels</label>
+          <label class="toggle"><input id="anonymize-people" type="checkbox" checked> anonymize people</label>
+        </div>
+      </details>
 
       <div class="card">
         <div class="eyebrow">Type Legend</div>
@@ -1098,15 +1121,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
-    const ANON_STORAGE_KEY = 'atlas.graph.hideNames';
+    const ANONYMIZE_LABELS_KEY = 'atlas.graph.anonymizeLabels';
+    const ANONYMIZE_PEOPLE_KEY = 'atlas.graph.anonymizePeople';
     const WIRES_STORAGE_KEY = 'atlas.graph.showWires';
-    const DEMO_MODE_KEY = 'atlas.graph.demoMode';
 
     const searchInput = document.getElementById('search');
     const folderFilterSelect = document.getElementById('folder-filter');
-    const demoModeToggle = document.getElementById('demo-mode');
     const showLabelsToggle = document.getElementById('show-labels');
-    const hideNamesToggle = document.getElementById('hide-names');
+    const anonymizeLabelsToggle = document.getElementById('anonymize-labels');
+    const anonymizePeopleToggle = document.getElementById('anonymize-people');
     const showSessionsToggle = document.getElementById('show-sessions');
     const showWiresToggle = document.getElementById('show-wires');
     const nodeCountEl = document.getElementById('node-count');
@@ -1166,9 +1189,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       browserType: null,
       showSessions: storageBool(SESSION_STORAGE_KEY, false),
       showLabels: storageBool(LABEL_STORAGE_KEY, false),
-      hideNames: storageBool(ANON_STORAGE_KEY, false),
+      anonymizeLabels: storageBool(ANONYMIZE_LABELS_KEY, false),
+      anonymizePeople: storageBool(ANONYMIZE_PEOPLE_KEY, true), // Default: hide person names in demo mode
       showWires: storageBool(WIRES_STORAGE_KEY, true),
-      demoMode: storageBool(DEMO_MODE_KEY, true), // Default to true for safe demo view
     };
 
     const initialHashState = readHashState();
@@ -1185,9 +1208,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     searchInput.value = state.search;
-    demoModeToggle.checked = state.demoMode;
     showLabelsToggle.checked = state.showLabels;
-    hideNamesToggle.checked = state.hideNames;
+    anonymizeLabelsToggle.checked = state.anonymizeLabels;
+    anonymizePeopleToggle.checked = state.anonymizePeople;
     showSessionsToggle.checked = state.showSessions;
     showWiresToggle.checked = state.showWires;
 
@@ -1413,7 +1436,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (!node) {
         return 'Nothing selected';
       }
-      return state.hideNames ? `${node.type} ${node.typeOrdinal}` : node.title;
+      if (state.anonymizePeople && node.type === 'person') {
+        const personIndex = [...nodes].filter(n => n.type === 'person').indexOf(node) + 1;
+        return `Person ${personIndex}`;
+      }
+      return state.anonymizeLabels ? `${node.type} ${node.typeOrdinal}` : node.title;
     }
 
     function detailTypeLabel(node) {
@@ -1637,9 +1664,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function saveToggles() {
       window.localStorage.setItem(SESSION_STORAGE_KEY, state.showSessions ? '1' : '0');
       window.localStorage.setItem(LABEL_STORAGE_KEY, state.showLabels ? '1' : '0');
-      window.localStorage.setItem(ANON_STORAGE_KEY, state.hideNames ? '1' : '0');
+      window.localStorage.setItem(ANONYMIZE_LABELS_KEY, state.anonymizeLabels ? '1' : '0');
+      window.localStorage.setItem(ANONYMIZE_PEOPLE_KEY, state.anonymizePeople ? '1' : '0');
       window.localStorage.setItem(WIRES_STORAGE_KEY, state.showWires ? '1' : '0');
-      window.localStorage.setItem(DEMO_MODE_KEY, state.demoMode ? '1' : '0');
     }
 
     function writeHashState() {
@@ -2043,26 +2070,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         return;
       }
 
-      const isPersonInDemoMode = state.demoMode && node.type === 'person';
-      const personIndex = isPersonInDemoMode ? [...nodes].indexOf(node) + 1 : null;
+      const anonymizePersonName = state.anonymizePeople && node.type === 'person';
+      const anonymizeNodeName = state.anonymizeLabels && node.type !== 'person';
+      const personIndex = anonymizePersonName ? [...nodes].filter(n => n.type === 'person').indexOf(node) + 1 : null;
 
-      detailTitleEl.textContent = isPersonInDemoMode ? `Person ${personIndex}` : displayNodeName(node);
+      detailTitleEl.textContent = anonymizePersonName
+        ? `Person ${personIndex}`
+        : anonymizeNodeName
+          ? node.type
+          : displayNodeName(node);
       detailSubtitleEl.textContent = detailTypeLabel(node);
-      detailPreviewEl.innerHTML = isPersonInDemoMode
-        ? renderPreviewMarkdown('[relationship context hidden in demo mode]')
-        : renderPreviewMarkdown(node.preview || 'No preview available.');
-      detailPathEl.textContent = node.path || '—';
+      detailPreviewEl.innerHTML = renderPreviewMarkdown(node.preview || 'No preview available.');
+      detailPathEl.textContent = (anonymizePersonName && node.type === 'person') ? '—' : (node.path || '—');
       openNoteEl.href = fileHref(node.path);
-      selectionStatusEl.textContent = `${isPersonInDemoMode ? `Person ${personIndex}` : displayNodeName(node)} · ${node.type}`;
+      selectionStatusEl.textContent = `${anonymizePersonName ? `Person ${personIndex}` : (anonymizeNodeName ? node.type : displayNodeName(node))} · ${node.type}`;
 
       detailTagsEl.innerHTML = '';
       for (const value of [
         node.type,
-        !isPersonInDemoMode && node.emotional_valence,
-        !isPersonInDemoMode && node.energy_impact,
-        !isPersonInDemoMode && node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
-        !isPersonInDemoMode && node.growth_edge ? 'growth-edge' : null,
-        !isPersonInDemoMode && node.current_state ? `state:${node.current_state}` : null,
+        node.emotional_valence, // Always show
+        node.energy_impact, // Always show
+        node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null, // Always show
+        node.growth_edge ? 'growth-edge' : null, // Always show
+        node.current_state ? `state:${node.current_state}` : null, // Always show
         ...(node.tags || []).slice(0, 8),
       ]) {
         if (!value) {
@@ -2073,16 +2103,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         chip.textContent = value;
         detailTagsEl.appendChild(chip);
       }
-      if (isPersonInDemoMode) {
-        detailEmotionalEl.textContent = '(relationship data hidden in demo mode)';
-        detailEmotionalNoteEl.textContent = '';
-      } else {
-        const emotionalBits = nodeEmotionalSummary(node);
-        detailEmotionalEl.textContent = emotionalBits.length
-          ? emotionalBits.join(' · ')
-          : 'No emotional topology on this node yet.';
-        detailEmotionalNoteEl.textContent = node.valence_note || '';
-      }
+      const emotionalBits = nodeEmotionalSummary(node);
+      detailEmotionalEl.textContent = emotionalBits.length
+        ? emotionalBits.join(' · ')
+        : 'No emotional topology on this node yet.';
+      detailEmotionalNoteEl.textContent = anonymizePersonName ? '' : (node.valence_note || '');
 
       const linked = Array.from(neighbors.get(node.id) || [])
         .map((id) => nodeById.get(id))
@@ -2604,18 +2629,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       refreshSceneState();
       writeHashState();
     });
-    demoModeToggle.addEventListener('change', () => {
-      state.demoMode = demoModeToggle.checked;
+    anonymizeLabelsToggle.addEventListener('change', () => {
+      state.anonymizeLabels = anonymizeLabelsToggle.checked;
       saveToggles();
-      layoutNodes();
-      applySearch();
+      updateDetail(selectedNode);
       renderTypeBrowser();
       refreshSceneState();
-      smartFitCamera();
       writeHashState();
     });
-    hideNamesToggle.addEventListener('change', () => {
-      state.hideNames = hideNamesToggle.checked;
+    anonymizePeopleToggle.addEventListener('change', () => {
+      state.anonymizePeople = anonymizePeopleToggle.checked;
       saveToggles();
       updateDetail(selectedNode);
       renderTypeBrowser();
@@ -2711,8 +2734,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
       if (event.key === 'x') {
         event.preventDefault();
-        hideNamesToggle.checked = !hideNamesToggle.checked;
-        hideNamesToggle.dispatchEvent(new Event('change'));
+        anonymizeLabelsToggle.checked = !anonymizeLabelsToggle.checked;
+        anonymizeLabelsToggle.dispatchEvent(new Event('change'));
         return;
       }
       if (event.key === 'r') {
