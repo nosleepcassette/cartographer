@@ -50,6 +50,7 @@ from .session_import import (
 )
 from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
+from .therapy import build_therapy_handoff_payload, write_therapy_handoff
 from .vimwiki import patch_vimrc
 from .worklog import Worklog
 from .working_set import add_entry as add_working_set_entry
@@ -1208,6 +1209,60 @@ def working_set_gc(as_json: bool) -> None:
     click.echo(
         f"removed {payload['removed_count']} expired working-set entr{'y' if payload['removed_count'] == 1 else 'ies'}"
     )
+
+
+@main.group()
+def therapy() -> None:
+    """therapy-scoped atlas export surfaces."""
+
+
+@therapy.command("export")
+@click.option("--role", default="intake", show_default=True)
+@click.option("--scope", default="therapy", show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown",
+    type=click.Choice(["markdown", "json"]),
+    show_default=True,
+)
+@click.option("--write", "write_path", help="Write the handoff to a specific atlas path.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the payload as JSON instead of writing a file.")
+def therapy_export(
+    role: str,
+    scope: str,
+    output_format: str,
+    write_path: str | None,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    entries = list_working_set_entries(
+        atlas.root,
+        role=role,
+        scope=scope,
+        include_expired=False,
+        delete_expired=True,
+    )
+    sessions_payload = recent_sessions_payload(atlas, limit=6)
+    payload = build_therapy_handoff_payload(
+        working_set_entries=entries,
+        sessions=list(sessions_payload["sessions"]),
+        role=role,
+        scope=scope,
+    )
+    if as_json:
+        _emit_json(_with_schema(payload, surface="therapy.export"))
+        return
+
+    fmt = "json" if output_format == "json" else "markdown"
+    destination = None if write_path is None else Path(write_path).expanduser()
+    written = write_therapy_handoff(
+        atlas.root,
+        payload=payload,
+        fmt=fmt,
+        destination=destination,
+    )
+    click.echo(written)
 
 
 def _resolve_session_import_paths(

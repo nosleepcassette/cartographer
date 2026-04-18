@@ -91,6 +91,7 @@ class Atlas:
             self.root / "agents" / "mapsOS",
             self.root / "agents" / "mapsOS" / "learnings",
             self.root / "entities",
+            self.root / "notes",
             self.root / "tasks",
             self.root / "working-set",
             self.root / "ref",
@@ -147,6 +148,7 @@ class Atlas:
             f"- [[daily/index]]",
             "- [[projects/index]]",
             "- [[entities/index]]",
+            "- [[notes/index]]",
             "- [[tasks/active]]",
             "- [[ref/index]]",
             "- [[agents/MASTER_SUMMARY]]",
@@ -160,6 +162,7 @@ class Atlas:
             "daily-index",
             "projects-index",
             "entities-index",
+            "notes-index",
             "tasks-active",
             "ref-index",
             "master-summary",
@@ -279,6 +282,7 @@ class Atlas:
         )
         created.append(str(self._write_section_index("projects", "Projects")))
         created.append(str(self._write_section_index("entities", "Entities")))
+        created.append(str(self._write_section_index("notes", "Notes")))
         created.append(str(self._write_section_index("ref", "Reference")))
         created.append(str(self._write_gitignore()))
         master_summary_path = ensure_master_summary_note(self.root)

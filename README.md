@@ -84,6 +84,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Optional qmd-backed plain-language atlas search
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
+- Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
 - Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -254,6 +255,14 @@ cart sessions recent --agent hermes --json
 cart working-set add "RSD counter-evidence candidate" --role intake --scope therapy
 cart working-set list --json
 cart working-set gc
+```
+
+### therapy export
+
+```zsh
+cart therapy export
+cart therapy export --format json
+cart therapy export --json
 ```
 
 ### external import
