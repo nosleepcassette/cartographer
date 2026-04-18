@@ -380,8 +380,8 @@ def _render_session_body(imported: ImportedSession) -> str:
         )
     if imported.entities:
         lines.append(
-            "- entities: "
-            + ", ".join(f"[[{entity_slug}]]" for entity_slug in imported.entities)
+            "- people mentioned: "
+            + ", ".join(imported.entities)
         )
     if imported.touched_files:
         lines.extend(["", "## files", ""])
@@ -523,7 +523,7 @@ def _update_session_note(root: Path, imported: ImportedSession) -> Path:
         note_id=imported.note_id,
         body=_render_session_body(imported),
         tags=[imported.agent, "session", "imported"],
-        links=sorted(imported.projects + imported.entities),
+        links=sorted(imported.projects),
         extra_frontmatter={
             "agent": imported.agent,
             "source": str(imported.source_path),
@@ -608,7 +608,7 @@ def _update_daily_surface(root: Path, imported: ImportedSession, session_note: P
         )
     if imported.entities:
         lines.append(
-            "- entities: " + ", ".join(f"[[{entity_slug}]]" for entity_slug in imported.entities)
+            "- people mentioned: " + ", ".join(imported.entities)
         )
     note.body = _upsert_managed_section(
         note.body,
@@ -619,7 +619,7 @@ def _update_daily_surface(root: Path, imported: ImportedSession, session_note: P
     existing_links = note.frontmatter.get("links", [])
     link_values = [str(item) for item in existing_links if isinstance(item, str)]
     note.frontmatter["links"] = _unique(
-        link_values + [f"daily-{imported.session_date}"] + imported.projects + imported.entities
+        link_values + [f"daily-{imported.session_date}"] + imported.projects
     )
     note.write()
     return note.path
@@ -671,7 +671,7 @@ def _update_project_surfaces(root: Path, imported: ImportedSession, session_note
         )
         existing_links = note.frontmatter.get("links", [])
         link_values = [str(item) for item in existing_links if isinstance(item, str)]
-        note.frontmatter["links"] = _unique(link_values + [session_note.stem] + imported.entities)
+        note.frontmatter["links"] = _unique(link_values + [session_note.stem])
         note.write()
         written.append(note.path)
     return written
@@ -760,7 +760,7 @@ def _update_task_surface(root: Path, imported: ImportedSession, session_note: Pa
     )
     existing_links = note.frontmatter.get("links", [])
     link_values = [str(item) for item in existing_links if isinstance(item, str)]
-    note.frontmatter["links"] = _unique(link_values + [session_note.stem] + imported.projects + imported.entities)
+    note.frontmatter["links"] = _unique(link_values + [session_note.stem] + imported.projects)
     note.write()
     return note.path
 
@@ -785,8 +785,7 @@ def import_imported_session(root: Path, imported: ImportedSession, *, force: boo
     daily_note = _update_daily_surface(root, imported, session_note)
     task_surface = _update_task_surface(root, imported, session_note)
     project_paths = _update_project_surfaces(root, imported, session_note)
-    entity_paths = _update_entity_surfaces(root, imported, session_note)
-    written = [session_note, summary_note, daily_note, task_surface] + project_paths + entity_paths
+    written = [session_note, summary_note, daily_note, task_surface] + project_paths
     return {
         "source": str(imported.source_path),
         "agent": imported.agent,
@@ -820,8 +819,7 @@ def import_session(root: Path, source_type: str, path: Path, *, force: bool = Fa
     daily_note = _update_daily_surface(root, imported, session_note)
     task_surface = _update_task_surface(root, imported, session_note)
     project_paths = _update_project_surfaces(root, imported, session_note)
-    entity_paths = _update_entity_surfaces(root, imported, session_note)
-    written = [session_note, summary_note, daily_note, task_surface] + project_paths + entity_paths
+    written = [session_note, summary_note, daily_note, task_surface] + project_paths
     return {
         "source": str(path),
         "agent": imported.agent,

@@ -43,7 +43,7 @@ class BootstrapAndImportTests(unittest.TestCase):
             self.assertIn("[[projects/index]]", index_note)
             self.assertIn("[[agents/MASTER_SUMMARY]]", index_note)
 
-    def test_import_claude_session_updates_session_daily_project_entity_and_summary_notes(self) -> None:
+    def test_import_claude_session_updates_session_daily_project_and_summary_notes_without_person_links(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             atlas_root = Path(tempdir) / "atlas"
             self._init_atlas(atlas_root)
@@ -76,13 +76,14 @@ class BootstrapAndImportTests(unittest.TestCase):
             self.assertTrue((atlas_root / "daily" / "2026-04-16.md").exists())
             self.assertTrue((atlas_root / "projects" / "cartographer.md").exists())
             self.assertTrue((atlas_root / "projects" / "mapsos.md").exists())
-            self.assertTrue((atlas_root / "entities" / "chris.md").exists())
+            self.assertFalse((atlas_root / "entities" / "chris.md").exists())
             self.assertTrue((atlas_root / "tasks" / "session-imports.md").exists())
 
             daily_text = (atlas_root / "daily" / "2026-04-16.md").read_text(encoding="utf-8")
             self.assertIn("Imported Session 2026-04-16-maps-session", daily_text)
             self.assertIn("[[cartographer]]", daily_text)
             self.assertIn("call Chris back after the HopeAgent review", daily_text)
+            self.assertNotIn("[[chris]]", daily_text.lower())
 
             task_surface = (atlas_root / "tasks" / "session-imports.md").read_text(encoding="utf-8")
             self.assertIn("imported session requests are captured here", task_surface)
@@ -130,50 +131,19 @@ class BootstrapAndImportTests(unittest.TestCase):
             self.assertTrue((atlas_root / "agents" / "hermes" / "SUMMARY.md").exists())
             self.assertTrue((atlas_root / "projects" / "cartographer.md").exists())
             self.assertTrue((atlas_root / "projects" / "mapsos.md").exists())
-            self.assertTrue((atlas_root / "entities" / "chris.md").exists())
+            self.assertFalse((atlas_root / "entities" / "chris.md").exists())
 
             summary_note = Note.from_file(atlas_root / "agents" / "hermes" / "SUMMARY.md")
             self.assertEqual(summary_note.frontmatter.get("id"), "hermes-summary")
             self.assertEqual(summary_note.frontmatter.get("type"), "agent-summary")
 
-    def test_entity_surfaces_use_session_backlinks_and_cleanup_migrates_old_import_blocks(self) -> None:
+    def test_clean_entity_imports_migrates_old_import_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             atlas_root = Path(tempdir) / "atlas"
             self._init_atlas(atlas_root)
 
-            session_path = Path(tempdir) / "session_20260416_214759_5b702d.json"
-            session_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": "20260416_214759_5b702d",
-                        "session_start": "2026-04-16T21:51:51",
-                        "last_updated": "2026-04-16T23:20:03",
-                        "model": "z-ai/glm5",
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": "summarize MASTER_SUMMARY.md and scaffold cartographer feedback for mapsOS and Irene",
-                            },
-                            {
-                                "role": "assistant",
-                                "content": "I summarized the mapsOS learning layer and wrote the scaffold back into cartographer notes.",
-                            },
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            import_sessions(atlas_root, "hermes", [session_path])
-
-            entity_path = atlas_root / "entities" / "irene.md"
-            entity_text = entity_path.read_text(encoding="utf-8")
-            self.assertIn("## Sessions", entity_text)
-            self.assertIn("[[session-20260416-214759-5b702d]] (2026-04-16)", entity_text)
-            self.assertNotIn("## Imported Session", entity_text)
-            self.assertNotIn("cart:session-import", entity_text)
-
             legacy_entity = atlas_root / "entities" / "chris.md"
+            legacy_entity.parent.mkdir(parents=True, exist_ok=True)
             legacy_entity.write_text(
                 "---\n"
                 "id: chris\n"

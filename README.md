@@ -14,8 +14,18 @@
 
 Local-first knowledge filesystem and agent memory layer.
 
-Plain Markdown. Git history. Queryable graph. Block-addressable text.
-Agents and humans write to the same substrate. Nothing is trapped in an app.
+Plain Markdown. Git history. Queryable graph. Block-addressable text. Agents and humans write to the same substrate. Nothing is trapped in an app.
+
+### who this is for
+
+- **Neurodivergent people** managing ADHD, autism, RSD, emotional flashbacks, and capacity shifts. Your brain varies by state. This system sees that.
+- **Teachers and educators** juggling dozens of students, learning differences, and intervention histories. Remember what worked for each kid.
+- **Therapists and counselors** tracking patterns, interventions, and what actually helps across clients and time.
+- **Caregivers** managing complex family dynamics, medical histories, and relational patterns that repeat.
+- **Anyone with a lot to hold** — complex projects, multiple roles, relationships that matter, knowledge that gets lost between sessions.
+- **Developers** building agents that actually remember and learn.
+
+This isn't a productivity tool. It's a memory system that knows you're not always the same person.
 
 <table>
 <tr>
@@ -45,20 +55,22 @@ mapsOS is what keeps it honest about how you're actually doing.
 
 ## where this is going
 
-The next phase of the maps -> atlas -> cartographer stack is not "better journaling." It's a real-time intervention layer.
+The next phase of the maps -> atlas -> cartographer stack is not "better journaling." It's a **real-time avoidance detection and intervention system**.
 
-mapsOS should notice meaningful state shifts as they happen. atlas should remember what those states have tended to cost before. cartographer should surface the right memory, pattern, and next action while the loop is still forming, not days later when the damage is already compounded.
+The problem: Most people's biggest pattern isn't thinking too much. It's **running away**. From hard conversations. From grief. From people they love. From their own nervous system when it feels like too much. Avoidance is how you lose years without noticing.
+
+The goal: Catch avoidance in the moment it starts forming. Before it compounds. Before the damage is done.
 
 That means building toward:
 
-- **Real-time pattern detection.** Catch relationship drift, project stall, spending spirals, burnout slides, conflict avoidance, and other recurring loops while they're starting, not after they calcify into "history."
-- **State-dependent memory as a live tool.** When someone is in a narrowed or depleted state, the system should be able to say: "this feels wise right now, but here is what your steadier self learned last time, and here is what the costs looked like."
-- **Somatic interruption plus accountability.** Not just insight. Grounding, presence, tiny next actions, and visible feedback on whether the user stayed, followed through, or ran.
-- **Compassionate interruption instead of shame.** The point is not to nag. The point is to recognize that self-protection is real, while still helping the user choose something better than silent drift.
+- **Real-time pattern detection.** Detect when you're falling into the pull (silence, numbness, pulling inward, "I'll deal with it later"). Surface it immediately, not days later when the damage calcifies.
+- **State-dependent memory as a live tool.** When your nervous system says "just ignore this, it will be fine," the system can say: "That's the avoidance speaking. Last time you did this, it cost you [X]. Here's what steadier you knows."
+- **Somatic grounding plus accountability.** Not shame. Not pushing. Grounding to help you stay present. Real data about whether you actually showed up.
+- **Compassionate interruption.** The point is not to nag. Self-protection is real. The goal is to recognize it and ask: "What if you stayed with this anyway?"
 
-Maybe the pattern is not texting someone back. Maybe it's dodging a scary PR review, letting an invoice queue rot, going quiet on a collaborator, disappearing from a product launch when energy crashes, or leaving an incident half-triaged because your nervous system wants out. The long-term goal is the same: catch the loop in the moment, surface the memory that matters, and help the user stay with reality long enough to choose on purpose.
+Maybe it's not texting someone back. Maybe it's ghosting your best friend. Maybe it's dodging a hard conversation. Maybe it's the silence around grief. Maybe it's professional: dodging a scary PR review, letting an invoice rot, disappearing from a collaborator, going quiet when you're overwhelmed, leaving an incident half-triaged. The pattern is the same: your nervous system wants out, so you disappear.
 
-The reflection layer still matters. That's long-term medicine. The next build is the tourniquet.
+The reflection layer (decision journals, belief evolution, pattern libraries) still matters. That's long-term medicine. This next build is the tourniquet.
 
 ---
 
@@ -85,6 +97,7 @@ This is the release where atlas starts to feel like a real operating surface ins
 - **Note previews read like notes now.** The graph detail pane renders markdown headings, lists, code, blockquotes, and basic tables instead of dumping flattened text.
 - **The atlas TUI got sharper instead of busier.** `cart tui` now focuses on section-aware note navigation, markdown rendering, semantic wire neighborhoods, `note://` jumps, tasks overlay, backlinks, and measured filter latency.
 - **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
+- **Therapy integration is real.** Cassette's therapy plugin detects emotional spirals (RSD, isolation, executive paralysis, shame cycles) and surfaces grounded counter-evidence at the moment it matters. Builds pattern libraries of what interventions actually work. Respects autonomy first.
 - **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
 
 ---
@@ -114,8 +127,8 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
-- Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence`
-- File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
+- Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence` — pattern detection (RSD, isolation, shame cycles), grounded counter-evidence queries, autonomy-first interventions
+- File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces — enables relationship mapping beyond raw frequency, foundation for avoidance detection
 - Textual atlas TUI (`cart tui`) with section jumps, collapsed-section submenus, semantic wire neighborhood, `note://` jumps, note rendering, backlinks, tasks overlay, measured filter timing, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -297,6 +310,8 @@ cart sessions recent
 cart sessions recent --agent hermes --json
 ```
 
+Session imports now link sessions to projects, day notes, and agent summaries without auto-linking every person mentioned in passing. People stay available as plain-text context until you wire them intentionally.
+
 ### working set
 
 ```zsh
@@ -323,7 +338,10 @@ cart therapy counter-evidence "I wasn't giving them what they needed"
 ```zsh
 cart wire predicates
 cart wire add alpha#b-alpha-1 beta --predicate supports
+cart wire add sarah maps --relationship relates_to_person --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge --current-state building
 cart wire ls alpha --json
+cart wire query --avoidance-risk high --json
+cart wire emotional-summary sarah
 cart wire traverse alpha --depth 2
 cart wire doctor
 cart wire gc
@@ -332,10 +350,11 @@ cart wire gc
 Wires are stored inline as HTML comments in notes, for example:
 
 ```md
-<!-- cart:wire target="beta#b-beta-4" predicate="supports" -->
+<!-- cart:wire target="beta#b-beta-4" predicate="supports" relationship="supports" -->
+<!-- cart:wire target="maps" predicate="relates_to_person" relationship="relates_to_person" emotional_valence="mixed" energy_impact="energizing" avoidance_risk="high" growth_edge="true" current_state="building" valence_note="growth territory" -->
 ```
 
-Cart indexes them for traversal, but the file remains the source of truth.
+Cart indexes them for traversal and emotional querying, but the file remains the source of truth. `cart wire add` is idempotent now: rerunning the same source/target/predicate updates the inline comment instead of duplicating it.
 
 ### external import
 
@@ -356,14 +375,15 @@ cart graph --format html --open
 
 JSON output includes atlas metadata plus enriched nodes and edges:
 
-- nodes: `id`, `title`, `type`, `path`, `tags`, `degree`, `color`, `preview`, `is_session`
-- edges: `source`, `target`, `kind`, and wire metadata such as `predicate`
+- nodes: `id`, `title`, `type`, `path`, `tags`, `degree`, `color`, `type_color`, `preview`, `is_session`, and emotional topology fields when a node has wired relationship context
+- edges: `source`, `target`, `kind`, and wire metadata such as `predicate`, `relationship`, `emotional_valence`, `energy_impact`, `avoidance_risk`, `growth_edge`, `current_state`, and `valence_note`
 
 HTML output is a self-contained visual graph with:
 
 - Firefox-safe offline rendering from a single exported HTML file
 - a deterministic clustered 3D layout instead of free-floating SVG drift
-- type-colored, degree-scaled nodes with brighter semantic wires
+- emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
+- brighter semantic wires with emotional metadata in the detail pane
 - local search by note title, id, type, or tag
 - category toggles, session hiding, privacy mode (`hide names`), wire toggles, and a type browser
 - smarter `fit view` that prefers the current search, type lens, or selected neighborhood

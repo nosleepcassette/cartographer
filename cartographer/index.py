@@ -12,7 +12,14 @@ from typing import Any
 
 from .config import load_config
 from .notes import Note, extract_wikilinks
-from .wires import VALID_WIRE_PREDICATES, parse_wire_comments
+from .wires import (
+    VALID_AVOIDANCE_RISKS,
+    VALID_CURRENT_STATES,
+    VALID_EMOTIONAL_VALENCES,
+    VALID_ENERGY_IMPACTS,
+    VALID_WIRE_PREDICATES,
+    parse_wire_comments,
+)
 
 
 MAX_RETRIES = 5
@@ -73,6 +80,15 @@ CREATE TABLE IF NOT EXISTS wires (
     target_block TEXT,
     predicate TEXT NOT NULL,
     bidirectional INTEGER NOT NULL DEFAULT 0,
+    relationship TEXT,
+    emotional_valence TEXT,
+    energy_impact TEXT,
+    avoidance_risk TEXT,
+    growth_edge INTEGER,
+    current_state TEXT,
+    since TEXT,
+    until TEXT,
+    valence_note TEXT,
     path TEXT NOT NULL,
     line INTEGER NOT NULL
 );
@@ -95,6 +111,18 @@ FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id, title, body);
 """
 
+WIRE_OPTIONAL_COLUMNS = {
+    "relationship": "TEXT",
+    "emotional_valence": "TEXT",
+    "energy_impact": "TEXT",
+    "avoidance_risk": "TEXT",
+    "growth_edge": "INTEGER",
+    "current_state": "TEXT",
+    "since": "TEXT",
+    "until": "TEXT",
+    "valence_note": "TEXT",
+}
+
 
 def _slugify_note_id(value: str) -> str:
     return (
@@ -114,6 +142,69 @@ def _canonical_note_id(note: Note, path: Path) -> str:
     if raw_id is not None and str(raw_id).strip():
         return str(raw_id)
     return path.stem
+
+
+def _alias_variants(root: Path, note_id: str, raw_path: str) -> tuple[str, list[str]]:
+    exact = note_id
+    weaker: list[str] = []
+    if raw_path:
+        path = Path(raw_path)
+        try:
+            relative = path.resolve().relative_to(root.resolve())
+        except ValueError:
+            relative = path
+        weaker.append(relative.with_suffix("").as_posix())
+        weaker.append(path.stem)
+    deduped: list[str] = []
+    seen: set[str] = {exact}
+    for alias in weaker:
+        normalized = alias.strip().removesuffix(".md").strip("/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return exact, deduped
+
+
+def _normalize_note_ref(value: str) -> str:
+    return value.strip().removesuffix(".md").strip("/")
+
+
+def _row_to_wire_payload(row: sqlite3.Row, *, note_id: str | None = None, block_id: str | None = None) -> dict[str, Any]:
+    source_note = str(row["source_note"])
+    source_block = None if row["source_block"] is None else str(row["source_block"])
+    target_note = str(row["target_note"])
+    target_block = None if row["target_block"] is None else str(row["target_block"])
+    if note_id is None:
+        current_direction = "outgoing"
+    else:
+        current_direction = (
+            "incoming"
+            if target_note == note_id and target_block == block_id
+            else "outgoing"
+        )
+    return {
+        "direction": current_direction,
+        "source_note": source_note,
+        "source_block": source_block,
+        "target_note": target_note,
+        "target_block": target_block,
+        "predicate": str(row["predicate"]),
+        "relationship": None if row["relationship"] is None else str(row["relationship"]),
+        "bidirectional": bool(row["bidirectional"]),
+        "emotional_valence": None
+        if row["emotional_valence"] is None
+        else str(row["emotional_valence"]),
+        "energy_impact": None if row["energy_impact"] is None else str(row["energy_impact"]),
+        "avoidance_risk": None if row["avoidance_risk"] is None else str(row["avoidance_risk"]),
+        "growth_edge": None if row["growth_edge"] is None else bool(row["growth_edge"]),
+        "current_state": None if row["current_state"] is None else str(row["current_state"]),
+        "since": None if row["since"] is None else str(row["since"]),
+        "until": None if row["until"] is None else str(row["until"]),
+        "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
+        "path": str(row["path"]),
+        "line": int(row["line"]),
+    }
 
 
 class Index:
@@ -146,10 +237,23 @@ class Index:
     def _initialize(self) -> None:
         with self._connection() as connection:
             connection.executescript(SCHEMA)
+            self._migrate(connection)
             try:
                 connection.executescript(FTS_SCHEMA)
             except sqlite3.OperationalError:
                 self.fts_enabled = False
+
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        wire_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(wires)").fetchall()
+        }
+        for column_name, column_type in WIRE_OPTIONAL_COLUMNS.items():
+            if column_name in wire_columns:
+                continue
+            connection.execute(
+                f"ALTER TABLE wires ADD COLUMN {column_name} {column_type}"
+            )
 
     def _ignored(self, path: Path) -> bool:
         config = load_config(self.root)
@@ -233,15 +337,11 @@ class Index:
 
             aliases: dict[str, str] = {}
             for item in parsed_notes:
-                path = Path(item["path"])
                 note_id = str(item["note_id"])
-                aliases[note_id] = note_id
-                try:
-                    relative = path.resolve().relative_to(self.root.resolve())
-                except ValueError:
-                    relative = path
-                aliases[relative.with_suffix("").as_posix()] = note_id
-                aliases[path.stem] = note_id
+                exact, weaker = _alias_variants(self.root, note_id, str(item["path"]))
+                aliases[exact] = note_id
+                for alias in weaker:
+                    aliases.setdefault(alias, note_id)
 
             for item in parsed_notes:
                 path = Path(item["path"])
@@ -325,8 +425,26 @@ class Index:
                     connection.execute(
                         """
                         INSERT INTO wires
-                        (source_note, source_block, target_note, target_block, predicate, bidirectional, path, line)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (
+                            source_note,
+                            source_block,
+                            target_note,
+                            target_block,
+                            predicate,
+                            bidirectional,
+                            relationship,
+                            emotional_valence,
+                            energy_impact,
+                            avoidance_risk,
+                            growth_edge,
+                            current_state,
+                            since,
+                            until,
+                            valence_note,
+                            path,
+                            line
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             wire.source_note,
@@ -335,6 +453,15 @@ class Index:
                             wire.target_block,
                             wire.predicate,
                             1 if wire.bidirectional else 0,
+                            wire.relationship,
+                            wire.emotional_valence,
+                            wire.energy_impact,
+                            wire.avoidance_risk,
+                            None if wire.growth_edge is None else (1 if wire.growth_edge else 0),
+                            wire.current_state,
+                            wire.since,
+                            wire.until,
+                            wire.valence_note,
                             wire.path,
                             wire.line,
                         ),
@@ -489,14 +616,14 @@ class Index:
                 (note_id,),
             ).fetchone()
         if row is not None:
-                return Path(str(row["path"]))
+            return Path(str(row["path"]))
         for path in self.iter_note_paths():
             if path.stem == note_id:
                 return path
         return None
 
     def canonicalize_note_ref(self, note_ref: str) -> str | None:
-        clean_ref = note_ref.strip().removesuffix(".md").strip("/")
+        clean_ref = _normalize_note_ref(note_ref)
         if not clean_ref:
             return None
         with self._connection() as connection:
@@ -504,13 +631,10 @@ class Index:
         aliases: dict[str, str] = {}
         for row in rows:
             note_id = str(row["id"])
-            aliases[note_id] = note_id
-            try:
-                relative = Path(str(row["path"])).resolve().relative_to(self.root.resolve())
-            except ValueError:
-                relative = Path(str(row["path"]))
-            aliases[relative.with_suffix("").as_posix()] = note_id
-            aliases[Path(str(row["path"])).stem] = note_id
+            exact, weaker = _alias_variants(self.root, note_id, str(row["path"]))
+            aliases[exact] = note_id
+            for alias in weaker:
+                aliases.setdefault(alias, note_id)
         return aliases.get(clean_ref)
 
     def block_exists(self, note_id: str, block_id: str) -> bool:
@@ -552,7 +676,24 @@ class Index:
             return []
         statement = (
             """
-            SELECT source_note, source_block, target_note, target_block, predicate, bidirectional, path, line
+            SELECT
+                source_note,
+                source_block,
+                target_note,
+                target_block,
+                predicate,
+                relationship,
+                bidirectional,
+                emotional_valence,
+                energy_impact,
+                avoidance_risk,
+                growth_edge,
+                current_state,
+                since,
+                until,
+                valence_note,
+                path,
+                line
             FROM wires
             WHERE (
             """
@@ -566,31 +707,78 @@ class Index:
         with self._connection() as connection:
             rows = connection.execute(statement, params).fetchall()
 
-        wires: list[dict[str, Any]] = []
-        for row in rows:
-            source_note = str(row["source_note"])
-            source_block = None if row["source_block"] is None else str(row["source_block"])
-            target_note = str(row["target_note"])
-            target_block = None if row["target_block"] is None else str(row["target_block"])
-            current_direction = (
-                "incoming"
-                if target_note == note_id and target_block == block_id
-                else "outgoing"
-            )
-            wires.append(
-                {
-                    "direction": current_direction,
-                    "source_note": source_note,
-                    "source_block": source_block,
-                    "target_note": target_note,
-                    "target_block": target_block,
-                    "predicate": str(row["predicate"]),
-                    "bidirectional": bool(row["bidirectional"]),
-                    "path": str(row["path"]),
-                    "line": int(row["line"]),
-                }
-            )
-        return wires
+        return [
+            _row_to_wire_payload(row, note_id=note_id, block_id=block_id)
+            for row in rows
+        ]
+
+    def query_wires(
+        self,
+        *,
+        note_id: str | None = None,
+        predicate: str | None = None,
+        relationship: str | None = None,
+        emotional_valence: str | None = None,
+        energy_impact: str | None = None,
+        avoidance_risk: str | None = None,
+        growth_edge: bool | None = None,
+        current_state: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if note_id is not None:
+            clauses.append("(source_note = ? OR target_note = ?)")
+            params.extend([note_id, note_id])
+        if predicate is not None:
+            clauses.append("predicate = ?")
+            params.append(predicate)
+        if relationship is not None:
+            clauses.append("(relationship = ? OR predicate = ?)")
+            params.extend([relationship, relationship])
+        if emotional_valence is not None:
+            clauses.append("emotional_valence = ?")
+            params.append(emotional_valence)
+        if energy_impact is not None:
+            clauses.append("energy_impact = ?")
+            params.append(energy_impact)
+        if avoidance_risk is not None:
+            clauses.append("avoidance_risk = ?")
+            params.append(avoidance_risk)
+        if growth_edge is not None:
+            clauses.append("growth_edge = ?")
+            params.append(1 if growth_edge else 0)
+        if current_state is not None:
+            clauses.append("current_state = ?")
+            params.append(current_state)
+
+        statement = """
+            SELECT
+                source_note,
+                source_block,
+                target_note,
+                target_block,
+                predicate,
+                relationship,
+                bidirectional,
+                emotional_valence,
+                energy_impact,
+                avoidance_risk,
+                growth_edge,
+                current_state,
+                since,
+                until,
+                valence_note,
+                path,
+                line
+            FROM wires
+        """
+        if clauses:
+            statement += " WHERE " + " AND ".join(clauses)
+        statement += " ORDER BY path ASC, line ASC"
+
+        with self._connection() as connection:
+            rows = connection.execute(statement, params).fetchall()
+        return [_row_to_wire_payload(row) for row in rows]
 
     def wire_doctor(self) -> dict[str, Any]:
         issues: list[dict[str, Any]] = []
@@ -604,13 +792,34 @@ class Index:
             ).fetchall()
             wire_rows = connection.execute(
                 """
-                SELECT source_note, source_block, target_note, target_block, predicate, bidirectional, path, line
+                SELECT
+                    source_note,
+                    source_block,
+                    target_note,
+                    target_block,
+                    predicate,
+                    relationship,
+                    bidirectional,
+                    emotional_valence,
+                    energy_impact,
+                    avoidance_risk,
+                    growth_edge,
+                    current_state,
+                    since,
+                    until,
+                    valence_note,
+                    path,
+                    line
                 FROM wires
                 ORDER BY path ASC, line ASC
                 """
             ).fetchall()
 
         valid_predicates = set(VALID_WIRE_PREDICATES)
+        valid_valences = set(VALID_EMOTIONAL_VALENCES)
+        valid_impacts = set(VALID_ENERGY_IMPACTS)
+        valid_risks = set(VALID_AVOIDANCE_RISKS)
+        valid_states = set(VALID_CURRENT_STATES)
         for row in malformed_rows:
             issues.append(
                 {
@@ -629,6 +838,10 @@ class Index:
             predicate = str(row["predicate"])
             path = str(row["path"])
             line = int(row["line"])
+            emotional_valence = None if row["emotional_valence"] is None else str(row["emotional_valence"])
+            energy_impact = None if row["energy_impact"] is None else str(row["energy_impact"])
+            avoidance_risk = None if row["avoidance_risk"] is None else str(row["avoidance_risk"])
+            current_state = None if row["current_state"] is None else str(row["current_state"])
             if predicate not in valid_predicates:
                 issues.append(
                     {
@@ -645,6 +858,46 @@ class Index:
                     }
                 )
                 continue
+            if emotional_valence is not None and emotional_valence not in valid_valences:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_emotional_valence",
+                        "message": f"invalid emotional valence: {emotional_valence}",
+                        "raw": "",
+                    }
+                )
+            if energy_impact is not None and energy_impact not in valid_impacts:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_energy_impact",
+                        "message": f"invalid energy impact: {energy_impact}",
+                        "raw": "",
+                    }
+                )
+            if avoidance_risk is not None and avoidance_risk not in valid_risks:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_avoidance_risk",
+                        "message": f"invalid avoidance risk: {avoidance_risk}",
+                        "raw": "",
+                    }
+                )
+            if current_state is not None and current_state not in valid_states:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_current_state",
+                        "message": f"invalid current state: {current_state}",
+                        "raw": "",
+                    }
+                )
             target_exists = self.find_note_path(target_note) is not None
             if not target_exists:
                 issues.append(
@@ -694,7 +947,22 @@ class Index:
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT source_note, source_block, target_note, target_block, predicate, bidirectional
+                SELECT
+                    source_note,
+                    source_block,
+                    target_note,
+                    target_block,
+                    predicate,
+                    relationship,
+                    bidirectional,
+                    emotional_valence,
+                    energy_impact,
+                    avoidance_risk,
+                    growth_edge,
+                    current_state,
+                    since,
+                    until,
+                    valence_note
                 FROM wires
                 """
             ).fetchall()
@@ -714,7 +982,20 @@ class Index:
                 "target_note": target,
                 "target_block": None if row["target_block"] is None else str(row["target_block"]),
                 "predicate": predicate_value,
+                "relationship": None if row["relationship"] is None else str(row["relationship"]),
                 "bidirectional": bool(row["bidirectional"]),
+                "emotional_valence": None
+                if row["emotional_valence"] is None
+                else str(row["emotional_valence"]),
+                "energy_impact": None if row["energy_impact"] is None else str(row["energy_impact"]),
+                "avoidance_risk": None
+                if row["avoidance_risk"] is None
+                else str(row["avoidance_risk"]),
+                "growth_edge": None if row["growth_edge"] is None else bool(row["growth_edge"]),
+                "current_state": None if row["current_state"] is None else str(row["current_state"]),
+                "since": None if row["since"] is None else str(row["since"]),
+                "until": None if row["until"] is None else str(row["until"]),
+                "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
             }
             adjacency.setdefault(source, []).append(edge)
             if bool(row["bidirectional"]):

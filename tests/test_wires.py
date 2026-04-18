@@ -85,7 +85,7 @@ def test_wire_add_list_and_traverse_json(tmp_path, monkeypatch) -> None:
     assert add_payload["created"] is True
 
     alpha_text = (atlas_root / "projects" / "alpha.md").read_text(encoding="utf-8")
-    assert '<!-- cart:wire target="beta" predicate="supports" -->' in alpha_text
+    assert '<!-- cart:wire target="beta" predicate="supports" relationship="supports" -->' in alpha_text
 
     list_result = runner.invoke(main, ["wire", "ls", "alpha#b-alpha-1", "--json"])
 
@@ -103,6 +103,78 @@ def test_wire_add_list_and_traverse_json(tmp_path, monkeypatch) -> None:
     assert traverse_payload["surface"] == "wire.traverse"
     assert "beta" in traverse_payload["visited"]
     assert traverse_payload["edge_count"] == 1
+
+
+def test_wire_query_and_emotional_summary_include_emotional_metadata(tmp_path, monkeypatch) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "entities" / "sarah.md",
+        note_id="sarah",
+        title="Sarah",
+        note_type="entity",
+        body="# Sarah\n",
+    )
+    _write_note(
+        atlas_root / "entities" / "maps.md",
+        note_id="maps",
+        title="maps",
+        note_type="entity",
+        body="# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    runner = CliRunner()
+    monkeypatch.setenv("CARTOGRAPHER_ROOT", str(atlas_root))
+
+    add_result = runner.invoke(
+        main,
+        [
+            "wire",
+            "add",
+            "sarah",
+            "maps",
+            "--relationship",
+            "relates_to_person",
+            "--emotional-valence",
+            "mixed",
+            "--energy-impact",
+            "energizing",
+            "--avoidance-risk",
+            "high",
+            "--growth-edge",
+            "--current-state",
+            "building",
+            "--valence-note",
+            "growth territory",
+            "--json",
+        ],
+    )
+    assert add_result.exit_code == 0
+    add_payload = json.loads(add_result.output)
+    assert add_payload["predicate"] == "relates_to_person"
+    assert add_payload["relationship"] == "relates_to_person"
+    assert add_payload["growth_edge"] is True
+
+    query_result = runner.invoke(
+        main,
+        ["wire", "query", "--avoidance-risk", "high", "--json"],
+    )
+    assert query_result.exit_code == 0
+    query_payload = json.loads(query_result.output)
+    assert query_payload["count"] == 1
+    assert query_payload["wires"][0]["emotional_valence"] == "mixed"
+    assert query_payload["wires"][0]["current_state"] == "building"
+
+    summary_result = runner.invoke(
+        main,
+        ["wire", "emotional-summary", "sarah", "--json"],
+    )
+    assert summary_result.exit_code == 0
+    summary_payload = json.loads(summary_result.output)
+    assert summary_payload["summary"]["emotional_valence"] == "mixed"
+    assert summary_payload["summary"]["avoidance_risk"] == "high"
+    assert summary_payload["summary"]["growth_edge"] is True
 
 
 def test_wire_doctor_reports_invalid_and_orphan_targets(tmp_path, monkeypatch) -> None:

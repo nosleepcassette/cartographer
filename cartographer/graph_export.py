@@ -15,6 +15,7 @@ from .wires import VALID_WIRE_PREDICATES
 TYPE_COLORS = {
     "person": "#8ec1ff",
     "project": "#d97757",
+    "goal": "#e6c15d",
     "entity": "#6cb88f",
     "agent-log": "#7aa6d9",
     "session": "#7aa6d9",
@@ -23,7 +24,99 @@ TYPE_COLORS = {
     "note": "#b6c2cf",
 }
 
+EMOTIONAL_NODE_COLORS = {
+    "positive": "#67d98b",
+    "negative": "#f06a74",
+    "mixed": "#b988ff",
+    "neutral": "#a7b3c3",
+}
+
+AVOIDANCE_RISK_SCALE = {
+    "high": 1.58,
+    "medium": 1.28,
+    "low": 1.06,
+    "none": 0.9,
+}
+
 SESSION_NOTE_TYPES = {"agent-log", "session", "daily"}
+
+
+def _wire_metadata_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "relationship": None if row["relationship"] is None else str(row["relationship"]),
+        "emotional_valence": None
+        if row["emotional_valence"] is None
+        else str(row["emotional_valence"]),
+        "energy_impact": None if row["energy_impact"] is None else str(row["energy_impact"]),
+        "avoidance_risk": None if row["avoidance_risk"] is None else str(row["avoidance_risk"]),
+        "growth_edge": None if row["growth_edge"] is None else bool(row["growth_edge"]),
+        "current_state": None if row["current_state"] is None else str(row["current_state"]),
+        "since": None if row["since"] is None else str(row["since"]),
+        "until": None if row["until"] is None else str(row["until"]),
+        "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
+    }
+
+
+def _primary_emotional_summary(
+    *,
+    node_id: str,
+    note_type: str,
+    incident_wires: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if note_type not in {"person", "project", "goal"}:
+        return {}
+    if not incident_wires:
+        return {}
+    primary = next(
+        (
+            wire
+            for wire in incident_wires
+            if {str(wire["source"]), str(wire["target"])} == {node_id, "maps"}
+            and any(
+                wire.get(field) is not None
+                for field in (
+                    "emotional_valence",
+                    "energy_impact",
+                    "avoidance_risk",
+                    "growth_edge",
+                    "current_state",
+                    "valence_note",
+                )
+            )
+        ),
+        None,
+    )
+    if primary is None:
+        primary = next(
+            (
+                wire
+                for wire in incident_wires
+                if any(
+                    wire.get(field) is not None
+                    for field in (
+                        "emotional_valence",
+                        "energy_impact",
+                        "avoidance_risk",
+                        "growth_edge",
+                        "current_state",
+                        "valence_note",
+                    )
+                )
+            ),
+            None,
+        )
+    if primary is None:
+        return {}
+    return {
+        "emotional_valence": primary.get("emotional_valence"),
+        "energy_impact": primary.get("energy_impact"),
+        "avoidance_risk": primary.get("avoidance_risk"),
+        "growth_edge": primary.get("growth_edge"),
+        "current_state": primary.get("current_state"),
+        "since": primary.get("since"),
+        "until": primary.get("until"),
+        "valence_note": primary.get("valence_note"),
+    }
 
 
 def _display_type_for_note(atlas_root: Path, raw_path: str, raw_type: str) -> str:
@@ -135,7 +228,20 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
         ).fetchall()
         wire_rows = connection.execute(
             """
-            SELECT source_note, target_note, predicate, bidirectional
+            SELECT
+                source_note,
+                target_note,
+                predicate,
+                relationship,
+                bidirectional,
+                emotional_valence,
+                energy_impact,
+                avoidance_risk,
+                growth_edge,
+                current_state,
+                since,
+                until,
+                valence_note
             FROM wires
             ORDER BY source_note ASC, target_note ASC, predicate ASC
             """
@@ -185,6 +291,7 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
 
     valid_predicates = set(VALID_WIRE_PREDICATES)
     wire_count = 0
+    incident_wires: dict[str, list[dict[str, Any]]] = {}
     for row in wire_rows:
         predicate = str(row["predicate"] or "").strip()
         if predicate not in valid_predicates:
@@ -201,8 +308,18 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
             "target": target,
             "kind": "wire",
             "predicate": predicate,
+            **_wire_metadata_payload(row),
             "bidirectional": bool(row["bidirectional"]),
         }
+        incident_payload = {
+            "source": source,
+            "target": target,
+            "predicate": predicate,
+            **_wire_metadata_payload(row),
+            "bidirectional": bool(row["bidirectional"]),
+        }
+        incident_wires.setdefault(source, []).append(incident_payload)
+        incident_wires.setdefault(target, []).append(incident_payload)
         wire_count += 1
 
     edges = [edge_pairs[key] for key in sorted(edge_pairs)]
@@ -222,6 +339,14 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
         except Exception:
             tags = []
         node_id = str(row["id"])
+        type_color = TYPE_COLORS.get(note_type, TYPE_COLORS["note"])
+        emotional_summary = _primary_emotional_summary(
+            node_id=node_id,
+            note_type=note_type,
+            incident_wires=incident_wires.get(node_id, []),
+        )
+        emotional_valence = emotional_summary.get("emotional_valence")
+        avoidance_risk = emotional_summary.get("avoidance_risk")
         nodes.append(
             {
                 "id": node_id,
@@ -233,7 +358,21 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
                 "tags": tags if isinstance(tags, list) else [],
                 "modified": float(row["modified"] or 0.0),
                 "degree": degree_counts.get(node_id, 0),
-                "color": TYPE_COLORS.get(note_type, TYPE_COLORS["note"]),
+                "type_color": type_color,
+                "color": EMOTIONAL_NODE_COLORS.get(str(emotional_valence), type_color),
+                "emotional_valence": emotional_valence,
+                "energy_impact": emotional_summary.get("energy_impact"),
+                "avoidance_risk": avoidance_risk,
+                "growth_edge": emotional_summary.get("growth_edge"),
+                "current_state": emotional_summary.get("current_state"),
+                "since": emotional_summary.get("since"),
+                "until": emotional_summary.get("until"),
+                "valence_note": emotional_summary.get("valence_note"),
+                "base_radius": round(
+                    (4.8 + min(degree_counts.get(node_id, 0), 14) * 0.55)
+                    * AVOIDANCE_RISK_SCALE.get(str(avoidance_risk), 1.0),
+                    3,
+                ),
                 "preview": _note_preview(Path(raw_path)) if raw_path else "",
                 "is_session": note_type in SESSION_NOTE_TYPES,
             }
@@ -885,8 +1024,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       relates_to_person: '#8ec1ff',
       intention_outcome: '#f5d16f',
       resistance_against: '#ff6a8c',
+      'active-project': '#ffd36a',
+      'core-infrastructure': '#7ec8ff',
+      relates_to: '#c2c9d6',
     };
-    const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.color]));
+    const emotionalColors = {
+      positive: '#67d98b',
+      negative: '#f06a74',
+      mixed: '#b988ff',
+      neutral: '#a7b3c3',
+    };
+    const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
     const ANON_STORAGE_KEY = 'atlas.graph.hideNames';
@@ -997,7 +1145,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       baseColor: new THREE.Color(node.color),
       displayColor: new THREE.Color(node.color).lerp(new THREE.Color('#fff4d4'), 0.18),
       glowColor: new THREE.Color(node.color).lerp(new THREE.Color('#ffc987'), 0.12),
-      baseRadius: 4.8 + Math.min(node.degree, 14) * 0.55,
+      baseRadius: node.base_radius || (4.8 + Math.min(node.degree, 14) * 0.55),
       radius: 0,
       mesh: null,
       material: null,
@@ -1025,7 +1173,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         isWire: edge.kind === 'wire',
         baseColor: new THREE.Color(
           edge.kind === 'wire'
-            ? predicateColors[edge.predicate] || '#f0b35f'
+            ? emotionalColors[edge.emotional_valence] || predicateColors[edge.predicate] || '#f0b35f'
             : '#6e7b96'
         ),
         line: null,
@@ -1204,10 +1352,42 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (node.status) {
         bits.push(node.status);
       }
+      if (node.emotional_valence) {
+        bits.push(`valence ${node.emotional_valence}`);
+      }
+      if (node.avoidance_risk) {
+        bits.push(`avoidance ${node.avoidance_risk}`);
+      }
+      if (node.current_state) {
+        bits.push(`state ${node.current_state}`);
+      }
       if (node.raw_type && node.raw_type !== node.type) {
         bits.push(`raw ${node.raw_type}`);
       }
       return bits.join(' · ');
+    }
+
+    function edgeMetaLine(edge) {
+      const bits = [];
+      if (edge.relationship && edge.relationship !== edge.predicate) {
+        bits.push(edge.relationship);
+      }
+      if (edge.emotional_valence) {
+        bits.push(`valence ${edge.emotional_valence}`);
+      }
+      if (edge.energy_impact) {
+        bits.push(`energy ${edge.energy_impact}`);
+      }
+      if (edge.avoidance_risk) {
+        bits.push(`avoidance ${edge.avoidance_risk}`);
+      }
+      if (edge.growth_edge) {
+        bits.push('growth-edge');
+      }
+      if (edge.current_state) {
+        bits.push(`state ${edge.current_state}`);
+      }
+      return bits.join(' · ') || 'wire';
     }
 
     function activeNodes() {
@@ -1767,7 +1947,18 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       selectionStatusEl.textContent = `${displayNodeName(node)} · ${node.type}`;
 
       detailTagsEl.innerHTML = '';
-      for (const value of [node.type, ...(node.tags || []).slice(0, 8)]) {
+      for (const value of [
+        node.type,
+        node.emotional_valence,
+        node.energy_impact,
+        node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
+        node.growth_edge ? 'growth-edge' : null,
+        node.current_state ? `state:${node.current_state}` : null,
+        ...(node.tags || []).slice(0, 8),
+      ]) {
+        if (!value) {
+          continue;
+        }
         const chip = document.createElement('span');
         chip.className = 'chip';
         chip.textContent = value;
@@ -1794,7 +1985,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((edge) =>
           makeListItem(
             `← ${edge.predicate} ← ${displayNodeName(edge.source)}`,
-            edge.source.id,
+            `${edge.source.id} · ${edgeMetaLine(edge)}`,
             () => selectNode(edge.source, true)
           )
         );
@@ -1806,7 +1997,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((edge) =>
           makeListItem(
             `→ ${edge.predicate} → ${displayNodeName(edge.target)}`,
-            edge.target.id,
+            `${edge.target.id} · ${edgeMetaLine(edge)}`,
             () => selectNode(edge.target, true)
           )
         );

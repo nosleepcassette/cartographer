@@ -65,6 +65,10 @@ from .working_set import gc_entries as gc_working_set_entries
 from .working_set import list_entries as list_working_set_entries
 from .working_set import working_set_stats
 from .wires import (
+    VALID_AVOIDANCE_RISKS,
+    VALID_CURRENT_STATES,
+    VALID_EMOTIONAL_VALENCES,
+    VALID_ENERGY_IMPACTS,
     VALID_WIRE_PREDICATES,
     WIRE_PATTERN,
     insert_wire_comment,
@@ -73,7 +77,7 @@ from .wires import (
     render_wire_comment,
 )
 
-JSON_SCHEMA_VERSION = "2026-04-17"
+JSON_SCHEMA_VERSION = "2026-04-18"
 
 
 def get_atlas(root: str | None = None) -> Atlas:
@@ -482,6 +486,86 @@ def _wire_direction(incoming: bool, outgoing: bool) -> str:
     if outgoing and not incoming:
         return "outgoing"
     return "both"
+
+
+def _wire_predicate_and_relationship(
+    predicate: str | None,
+    relationship: str | None,
+) -> tuple[str, str | None]:
+    resolved = (predicate or relationship or "").strip()
+    if not resolved:
+        raise click.ClickException("wire add requires --predicate or --relationship")
+    if resolved not in VALID_WIRE_PREDICATES:
+        raise click.ClickException(
+            f"invalid wire predicate/relationship: {resolved}. See `cart wire predicates`."
+        )
+    return resolved, (relationship.strip() if relationship else resolved)
+
+
+def _wire_metadata_fields(wire: dict[str, Any]) -> list[str]:
+    fields: list[str] = []
+    if wire.get("emotional_valence"):
+        fields.append(f"valence={wire['emotional_valence']}")
+    if wire.get("energy_impact"):
+        fields.append(f"energy={wire['energy_impact']}")
+    if wire.get("avoidance_risk"):
+        fields.append(f"avoidance={wire['avoidance_risk']}")
+    if wire.get("current_state"):
+        fields.append(f"state={wire['current_state']}")
+    if wire.get("growth_edge") is True:
+        fields.append("growth-edge")
+    if wire.get("since"):
+        fields.append(f"since={wire['since']}")
+    if wire.get("until"):
+        fields.append(f"until={wire['until']}")
+    return fields
+
+
+def _render_wire_summary(wire: dict[str, Any]) -> str:
+    source_ref = _render_note_or_block(
+        str(wire["source_note"]),
+        None if wire["source_block"] is None else str(wire["source_block"]),
+    )
+    target_ref = _render_note_or_block(
+        str(wire["target_note"]),
+        None if wire["target_block"] is None else str(wire["target_block"]),
+    )
+    metadata = _wire_metadata_fields(wire)
+    suffix = "  [bi]" if wire.get("bidirectional") else ""
+    if metadata:
+        suffix += "  {" + ", ".join(metadata) + "}"
+    if wire.get("valence_note"):
+        suffix += f"  — {wire['valence_note']}"
+    return f"{source_ref} --{wire['predicate']}--> {target_ref}{suffix}"
+
+
+def _replace_or_append_wire_comment(
+    note: Note,
+    *,
+    source_block: str | None,
+    target_note: str,
+    target_block: str | None,
+    predicate: str,
+    comment: str,
+) -> tuple[bool, bool]:
+    wires, _ = parse_wire_comments(
+        note.body,
+        note_id=str(note.frontmatter.get("id") or note.path.stem),
+        path=note.path,
+    )
+    for wire in wires:
+        if wire.source_block != source_block:
+            continue
+        if wire.target_note != target_note or wire.target_block != target_block:
+            continue
+        if wire.predicate != predicate:
+            continue
+        if wire.raw == comment:
+            return False, False
+        note.body = note.body[: wire.start] + comment + note.body[wire.end :]
+        return False, True
+    insert_wire_comment(note, source_block=source_block, comment=comment)
+    return True, False
 
 
 def _wire_gc_plan(index: Index) -> list[dict[str, Any]]:
@@ -896,6 +980,10 @@ def wire_predicates(as_json: bool) -> None:
     payload = {
         "count": len(VALID_WIRE_PREDICATES),
         "predicates": list(VALID_WIRE_PREDICATES),
+        "emotional_valences": list(VALID_EMOTIONAL_VALENCES),
+        "energy_impacts": list(VALID_ENERGY_IMPACTS),
+        "avoidance_risks": list(VALID_AVOIDANCE_RISKS),
+        "current_states": list(VALID_CURRENT_STATES),
     }
     if as_json:
         _emit_json(_with_schema(payload, surface="wire.predicates"))
@@ -909,50 +997,79 @@ def wire_predicates(as_json: bool) -> None:
 @click.argument("target")
 @click.option(
     "--predicate",
-    required=True,
+    required=False,
     type=click.Choice(list(VALID_WIRE_PREDICATES)),
 )
+@click.option(
+    "--relationship",
+    required=False,
+    type=click.Choice(list(VALID_WIRE_PREDICATES)),
+    help="Alias for --predicate and stored relationship label.",
+)
 @click.option("--bidirectional", is_flag=True, help="Mark the relationship as symmetric.")
+@click.option(
+    "--emotional-valence",
+    type=click.Choice(list(VALID_EMOTIONAL_VALENCES)),
+    help="Emotional tone of the relationship.",
+)
+@click.option(
+    "--energy-impact",
+    type=click.Choice(list(VALID_ENERGY_IMPACTS)),
+    help="Energy impact of the relationship.",
+)
+@click.option(
+    "--avoidance-risk",
+    type=click.Choice(list(VALID_AVOIDANCE_RISKS)),
+    help="Avoidance risk carried by this relationship.",
+)
+@click.option("--growth-edge", is_flag=True, help="Mark the wire as an active growth edge.")
+@click.option(
+    "--current-state",
+    type=click.Choice(list(VALID_CURRENT_STATES)),
+    help="Current state of the relationship.",
+)
+@click.option("--since", help="Optional ISO date or freeform start marker.")
+@click.option("--until", help="Optional ISO date or freeform end marker.")
+@click.option("--valence-note", help="Free-text note for emotional nuance.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def wire_add(
     source: str,
     target: str,
-    predicate: str,
+    predicate: str | None,
+    relationship: str | None,
     bidirectional: bool,
+    emotional_valence: str | None,
+    energy_impact: str | None,
+    avoidance_risk: str | None,
+    growth_edge: bool,
+    current_state: str | None,
+    since: str | None,
+    until: str | None,
+    valence_note: str | None,
     as_json: bool,
 ) -> None:
     atlas = get_atlas()
     index = ensure_index_current(atlas)
+    predicate, relationship = _wire_predicate_and_relationship(predicate, relationship)
     source_note, source_block, source_path = _resolve_note_or_block_ref(index, source)
     target_note, target_block, _ = _resolve_note_or_block_ref(index, target)
-
-    existing = [
-        wire
-        for wire in index.list_wires(
-            note_id=source_note,
-            block_id=source_block,
-            direction="outgoing",
-            predicate=predicate,
-        )
-        if wire["target_note"] == target_note
-        and wire["target_block"] == target_block
-        and bool(wire["bidirectional"]) == bidirectional
-    ]
     payload = {
         "source": _render_note_or_block(source_note, source_block),
         "target": _render_note_or_block(target_note, target_block),
         "predicate": predicate,
+        "relationship": relationship,
         "bidirectional": bidirectional,
+        "emotional_valence": emotional_valence,
+        "energy_impact": energy_impact,
+        "avoidance_risk": avoidance_risk,
+        "growth_edge": growth_edge,
+        "current_state": current_state,
+        "since": since,
+        "until": until,
+        "valence_note": valence_note,
         "created": False,
+        "updated": False,
     }
-    if existing:
-        if as_json:
-            _emit_json(_with_schema(payload, surface="wire.add"))
-            return
-        click.echo(
-            f"wire already exists: {payload['source']} --{predicate}--> {payload['target']}"
-        )
-        return
 
     note = Note.from_file(source_path)
     comment = render_wire_comment(
@@ -960,18 +1077,42 @@ def wire_add(
         target_block=target_block,
         predicate=predicate,
         bidirectional=bidirectional,
+        relationship=relationship,
+        emotional_valence=emotional_valence,
+        energy_impact=energy_impact,
+        avoidance_risk=avoidance_risk,
+        growth_edge=True if growth_edge else None,
+        current_state=current_state,
+        since=since,
+        until=until,
+        valence_note=valence_note,
     )
-    insert_wire_comment(note, source_block=source_block, comment=comment)
-    note.write()
-    atlas.refresh_index()
-    payload["created"] = True
+    created, updated = _replace_or_append_wire_comment(
+        note,
+        source_block=source_block,
+        target_note=target_note,
+        target_block=target_block,
+        predicate=predicate,
+        comment=comment,
+    )
+    payload["created"] = created
+    payload["updated"] = updated
+    if created or updated:
+        note.write()
+        atlas.refresh_index()
     if as_json:
         _emit_json(_with_schema(payload, surface="wire.add"))
         return
-    click.echo(
-        f"{payload['source']} --{predicate}--> {payload['target']}"
-        + ("  [bidirectional]" if bidirectional else "")
+    status = "created" if created else "updated" if updated else "unchanged"
+    metadata = _wire_metadata_fields(payload)
+    suffix = ("  [bidirectional]" if bidirectional else "") + (
+        f"  {{{', '.join(metadata)}}}" if metadata else ""
     )
+    click.echo(
+        f"wire {status}: {payload['source']} --{predicate}--> {payload['target']}{suffix}"
+    )
+    if valence_note:
+        click.echo(f"note: {valence_note}")
 
 
 @wire_group.command("ls")
@@ -1008,19 +1149,146 @@ def wire_list(
         _emit_json(_with_schema(payload, surface="wire.list"))
         return
     for wire in wires:
-        source_ref = _render_note_or_block(
-            str(wire["source_note"]),
-            None if wire["source_block"] is None else str(wire["source_block"]),
-        )
-        target_ref = _render_note_or_block(
-            str(wire["target_note"]),
-            None if wire["target_block"] is None else str(wire["target_block"]),
-        )
         direction_label = "in " if wire["direction"] == "incoming" else "out"
-        suffix = "  [bi]" if wire["bidirectional"] else ""
-        click.echo(
-            f"{direction_label:3} {wire['predicate']:18} {source_ref} -> {target_ref}{suffix}"
+        click.echo(f"{direction_label:3} {_render_wire_summary(wire)}")
+
+
+@wire_group.command("query")
+@click.option("--node", help="Limit results to wires touching this note.")
+@click.option("--predicate", help="Filter to one predicate.")
+@click.option("--relationship", help="Filter to one relationship/predicate.")
+@click.option(
+    "--emotional-valence",
+    type=click.Choice(list(VALID_EMOTIONAL_VALENCES)),
+    help="Filter by emotional valence.",
+)
+@click.option(
+    "--energy-impact",
+    type=click.Choice(list(VALID_ENERGY_IMPACTS)),
+    help="Filter by energy impact.",
+)
+@click.option(
+    "--avoidance-risk",
+    type=click.Choice(list(VALID_AVOIDANCE_RISKS)),
+    help="Filter by avoidance risk.",
+)
+@click.option("--growth-edge", is_flag=True, help="Only show growth edges.")
+@click.option(
+    "--current-state",
+    type=click.Choice(list(VALID_CURRENT_STATES)),
+    help="Filter by current state.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_query(
+    node: str | None,
+    predicate: str | None,
+    relationship: str | None,
+    emotional_valence: str | None,
+    energy_impact: str | None,
+    avoidance_risk: str | None,
+    growth_edge: bool,
+    current_state: str | None,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    note_id: str | None = None
+    if node:
+        note_id, _block_id, _path = _resolve_note_or_block_ref(index, node)
+    wires = index.query_wires(
+        note_id=note_id,
+        predicate=predicate,
+        relationship=relationship,
+        emotional_valence=emotional_valence,
+        energy_impact=energy_impact,
+        avoidance_risk=avoidance_risk,
+        growth_edge=True if growth_edge else None,
+        current_state=current_state,
+    )
+    payload = {
+        "node": note_id,
+        "predicate": predicate,
+        "relationship": relationship,
+        "emotional_valence": emotional_valence,
+        "energy_impact": energy_impact,
+        "avoidance_risk": avoidance_risk,
+        "growth_edge": growth_edge,
+        "current_state": current_state,
+        "count": len(wires),
+        "wires": wires,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.query"))
+        return
+    if not wires:
+        click.echo("no matching wires")
+        return
+    for wire in wires:
+        click.echo(_render_wire_summary(wire))
+
+
+@wire_group.command("emotional-summary")
+@click.argument("node")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_emotional_summary(node: str, as_json: bool) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    note_id, block_id, _path = _resolve_note_or_block_ref(index, node)
+    wires = index.list_wires(note_id=note_id, block_id=block_id, direction="both")
+    primary = next(
+        (
+            wire
+            for wire in wires
+            if {
+                str(wire["source_note"]),
+                str(wire["target_note"]),
+            }
+            == {note_id, "maps"}
+        ),
+        wires[0] if wires else None,
+    )
+    payload = {
+        "node": _render_note_or_block(note_id, block_id),
+        "count": len(wires),
+        "primary": primary,
+        "summary": None
+        if primary is None
+        else {
+            "emotional_valence": primary.get("emotional_valence"),
+            "energy_impact": primary.get("energy_impact"),
+            "avoidance_risk": primary.get("avoidance_risk"),
+            "growth_edge": primary.get("growth_edge"),
+            "current_state": primary.get("current_state"),
+            "since": primary.get("since"),
+            "until": primary.get("until"),
+            "valence_note": primary.get("valence_note"),
+        },
+        "wires": wires,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.emotional_summary"))
+        return
+    click.echo(f"{payload['node']} — emotional topology")
+    if payload["summary"] is None:
+        click.echo("no wires found")
+        return
+    summary = payload["summary"]
+    click.echo(
+        "summary: "
+        + " / ".join(
+            [
+                str(summary.get("emotional_valence") or "?"),
+                str(summary.get("energy_impact") or "?"),
+                str(summary.get("avoidance_risk") or "?"),
+                "growth-edge" if summary.get("growth_edge") else "non-growth",
+                str(summary.get("current_state") or "?"),
+            ]
         )
+    )
+    if summary.get("valence_note"):
+        click.echo(f"note: {summary['valence_note']}")
+    for wire in wires:
+        click.echo(f"- {_render_wire_summary(wire)}")
 
 
 @wire_group.command("doctor")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from .notes import Note, parse_link_target
 WIRE_PATTERN = re.compile(r"<!--\s*cart:wire(?P<attrs>[^>]*)-->")
 
 VALID_WIRE_PREDICATES = (
+    "relates_to",
     "supports",
     "qualifies",
     "contradicts",
@@ -27,6 +29,20 @@ VALID_WIRE_PREDICATES = (
     "relates_to_person",
     "intention_outcome",
     "resistance_against",
+    "active-project",
+    "core-infrastructure",
+)
+
+VALID_EMOTIONAL_VALENCES = ("positive", "negative", "mixed", "neutral")
+VALID_ENERGY_IMPACTS = ("draining", "energizing", "neutral", "conflicted")
+VALID_AVOIDANCE_RISKS = ("high", "medium", "low", "none")
+VALID_CURRENT_STATES = (
+    "active",
+    "grieving",
+    "building",
+    "recovering",
+    "suspended",
+    "provisional",
 )
 
 
@@ -34,6 +50,28 @@ def _parse_bool(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _normalize_text_attr(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = html.unescape(value).strip()
+    return normalized or None
+
+
+def _quote_attr(value: str) -> str:
+    return html.escape(value, quote=True)
 
 
 @dataclass(slots=True)
@@ -44,6 +82,15 @@ class WireComment:
     target_block: str | None
     predicate: str
     bidirectional: bool
+    relationship: str | None
+    emotional_valence: str | None
+    energy_impact: str | None
+    avoidance_risk: str | None
+    growth_edge: bool | None
+    current_state: str | None
+    since: str | None
+    until: str | None
+    valence_note: str | None
     path: str
     line: int
     raw: str
@@ -76,11 +123,38 @@ def render_wire_comment(
     target_block: str | None,
     predicate: str,
     bidirectional: bool = False,
+    relationship: str | None = None,
+    emotional_valence: str | None = None,
+    energy_impact: str | None = None,
+    avoidance_risk: str | None = None,
+    growth_edge: bool | None = None,
+    current_state: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    valence_note: str | None = None,
 ) -> str:
     target = target_note if target_block is None else f"{target_note}#{target_block}"
-    attrs = [f'target="{target}"', f'predicate="{predicate}"']
+    attrs = [f'target="{_quote_attr(target)}"', f'predicate="{_quote_attr(predicate)}"']
     if bidirectional:
         attrs.append('bidirectional="true"')
+    if relationship:
+        attrs.append(f'relationship="{_quote_attr(relationship)}"')
+    if emotional_valence:
+        attrs.append(f'emotional_valence="{_quote_attr(emotional_valence)}"')
+    if energy_impact:
+        attrs.append(f'energy_impact="{_quote_attr(energy_impact)}"')
+    if avoidance_risk:
+        attrs.append(f'avoidance_risk="{_quote_attr(avoidance_risk)}"')
+    if growth_edge is not None:
+        attrs.append(f'growth_edge="{"true" if growth_edge else "false"}"')
+    if current_state:
+        attrs.append(f'current_state="{_quote_attr(current_state)}"')
+    if since:
+        attrs.append(f'since="{_quote_attr(since)}"')
+    if until:
+        attrs.append(f'until="{_quote_attr(until)}"')
+    if valence_note:
+        attrs.append(f'valence_note="{_quote_attr(valence_note)}"')
     return f"<!-- cart:wire {' '.join(attrs)} -->"
 
 
@@ -101,7 +175,18 @@ def parse_wire_comments(
     for match in WIRE_PATTERN.finditer(body):
         attrs = {key: value for key, value in ATTR_PATTERN.findall(match.group("attrs"))}
         target_raw = attrs.get("target", "").strip()
-        predicate = attrs.get("predicate", "").strip()
+        predicate = _normalize_text_attr(attrs.get("predicate")) or _normalize_text_attr(
+            attrs.get("relationship")
+        )
+        relationship = _normalize_text_attr(attrs.get("relationship"))
+        emotional_valence = _normalize_text_attr(attrs.get("emotional_valence"))
+        energy_impact = _normalize_text_attr(attrs.get("energy_impact"))
+        avoidance_risk = _normalize_text_attr(attrs.get("avoidance_risk"))
+        growth_edge = _parse_optional_bool(attrs.get("growth_edge"))
+        current_state = _normalize_text_attr(attrs.get("current_state"))
+        since = _normalize_text_attr(attrs.get("since"))
+        until = _normalize_text_attr(attrs.get("until"))
+        valence_note = _normalize_text_attr(attrs.get("valence_note"))
         line = body.count("\n", 0, match.start()) + 1
         if not target_raw:
             issues.append(
@@ -125,6 +210,56 @@ def parse_wire_comments(
                 )
             )
             continue
+        if emotional_valence is not None and emotional_valence not in VALID_EMOTIONAL_VALENCES:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_emotional_valence",
+                    message=f"invalid emotional valence: {emotional_valence}",
+                    raw=match.group(0),
+                )
+            )
+        if energy_impact is not None and energy_impact not in VALID_ENERGY_IMPACTS:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_energy_impact",
+                    message=f"invalid energy impact: {energy_impact}",
+                    raw=match.group(0),
+                )
+            )
+        if avoidance_risk is not None and avoidance_risk not in VALID_AVOIDANCE_RISKS:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_avoidance_risk",
+                    message=f"invalid avoidance risk: {avoidance_risk}",
+                    raw=match.group(0),
+                )
+            )
+        if attrs.get("growth_edge") is not None and growth_edge is None:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_growth_edge",
+                    message=f"invalid growth_edge value: {attrs.get('growth_edge')}",
+                    raw=match.group(0),
+                )
+            )
+        if current_state is not None and current_state not in VALID_CURRENT_STATES:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_current_state",
+                    message=f"invalid current state: {current_state}",
+                    raw=match.group(0),
+                )
+            )
         target_note, target_block = parse_link_target(target_raw)
         if not target_note:
             issues.append(
@@ -150,6 +285,15 @@ def parse_wire_comments(
                 target_block=target_block,
                 predicate=predicate,
                 bidirectional=_parse_bool(attrs.get("bidirectional")),
+                relationship=relationship,
+                emotional_valence=emotional_valence,
+                energy_impact=energy_impact,
+                avoidance_risk=avoidance_risk,
+                growth_edge=growth_edge,
+                current_state=current_state,
+                since=since,
+                until=until,
+                valence_note=valence_note,
                 path=path_text,
                 line=line,
                 raw=match.group(0),

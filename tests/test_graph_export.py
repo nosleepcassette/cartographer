@@ -167,15 +167,13 @@ def test_graph_payload_includes_semantic_wires(tmp_path) -> None:
     wire_edges = [edge for edge in payload["edges"] if edge.get("kind") == "wire"]
 
     assert payload["wire_count"] == 1
-    assert wire_edges == [
-        {
-            "source": "alpha",
-            "target": "beta",
-            "kind": "wire",
-            "predicate": "supports",
-            "bidirectional": False,
-        }
-    ]
+    assert len(wire_edges) == 1
+    assert wire_edges[0]["source"] == "alpha"
+    assert wire_edges[0]["target"] == "beta"
+    assert wire_edges[0]["kind"] == "wire"
+    assert wire_edges[0]["predicate"] == "supports"
+    assert wire_edges[0]["bidirectional"] is False
+    assert wire_edges[0]["emotional_valence"] is None
 
 
 def test_graph_payload_includes_preview_and_session_flag(tmp_path) -> None:
@@ -233,3 +231,49 @@ def test_graph_payload_promotes_entity_people_to_person_type(tmp_path) -> None:
     assert node_types["killian"] == "person"
     assert node_types["maggie"] == "person"
     assert payload["type_counts"]["person"] == 2
+
+
+def test_graph_payload_surfaces_emotional_topology_on_nodes_and_edges(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "sarah.md",
+        (
+            "id: sarah\n"
+            "title: Sarah\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        (
+            "# Sarah\n\n"
+            '<!-- cart:wire target="maps" predicate="relates_to_person" relationship="relates_to_person" emotional_valence="mixed" energy_impact="energizing" avoidance_risk="high" growth_edge="true" current_state="building" valence_note="growth territory" -->\n'
+        ),
+    )
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "maps.md",
+        (
+            "id: maps\n"
+            "title: maps\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    sarah = next(node for node in payload["nodes"] if node["id"] == "sarah")
+    wire_edge = next(edge for edge in payload["edges"] if edge.get("kind") == "wire")
+
+    assert sarah["emotional_valence"] == "mixed"
+    assert sarah["avoidance_risk"] == "high"
+    assert sarah["growth_edge"] is True
+    assert sarah["current_state"] == "building"
+    assert sarah["base_radius"] > 4.8
+    assert wire_edge["emotional_valence"] == "mixed"
+    assert wire_edge["avoidance_risk"] == "high"
+    assert wire_edge["valence_note"] == "growth territory"
