@@ -82,7 +82,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Graph export: all notes as nodes, all links as edges (JSON)
 - Visual knowledge graph HTML export with local search, pan/zoom, dragging, and node inspection
 - Optional qmd-backed plain-language atlas search
-- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, and JSON task/query output
+- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -161,6 +161,7 @@ cart init
 cart status
 cart doctor
 cart daily-brief
+cart sessions recent --json
 cart tui
 cart session-import claude --latest 1
 ```
@@ -176,6 +177,7 @@ cart init [path]
 cart status
 cart doctor
 cart status --json
+cart sessions recent --json
 cart tui
 cart backup
 cart index rebuild
@@ -241,6 +243,8 @@ cart todo query --json 'status:open'
 cart session-import claude --latest 5
 cart session-import hermes --all
 cart session-import claude --force
+cart sessions recent
+cart sessions recent --agent hermes --json
 ```
 
 ### external import
@@ -392,6 +396,8 @@ Plugins live in `.cartographer/plugins/`. They're just executables.
 ```
 
 Python, shell, Lua, anything that speaks JSON on stdin/stdout.
+
+Machine-readable CLI surfaces now include top-level `schema_version` and `surface` fields so bridge clients can validate what they are consuming over time.
 
 ---
 

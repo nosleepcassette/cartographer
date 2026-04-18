@@ -53,6 +53,8 @@ from .tasks import append_task, mark_done, query_tasks, sort_tasks
 from .vimwiki import patch_vimrc
 from .worklog import Worklog
 
+JSON_SCHEMA_VERSION = "2026-04-17"
+
 
 def get_atlas(root: str | None = None) -> Atlas:
     atlas = Atlas(root=root)
@@ -87,6 +89,14 @@ def _jsonable(value: Any) -> Any:
 
 def _emit_json(payload: Any) -> None:
     click.echo(json.dumps(_jsonable(payload), indent=2, ensure_ascii=False))
+
+
+def _with_schema(payload: dict[str, Any], *, surface: str) -> dict[str, Any]:
+    return {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "surface": surface,
+        **payload,
+    }
 
 
 def _format_timestamp(value: float | None) -> str:
@@ -334,6 +344,72 @@ def load_note_payload(path: Path) -> dict[str, object]:
     }
 
 
+def _session_metadata(path: Path) -> dict[str, Any]:
+    note = Note.from_file(path)
+    frontmatter = note.frontmatter
+    path_parts = path.parts
+    agent = ""
+    try:
+        agents_index = path_parts.index("agents")
+    except ValueError:
+        agents_index = -1
+    if agents_index >= 0 and agents_index + 1 < len(path_parts):
+        agent = str(path_parts[agents_index + 1])
+
+    modified_value = str(frontmatter.get("modified") or "").strip()
+    if not modified_value:
+        modified_value = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+
+    return {
+        "id": str(frontmatter.get("id") or path.stem),
+        "title": str(frontmatter.get("title") or path.stem),
+        "path": str(path),
+        "agent": agent or str(frontmatter.get("agent") or ""),
+        "type": str(frontmatter.get("type") or "note"),
+        "date": str(frontmatter.get("date") or ""),
+        "summary_preview": str(frontmatter.get("summary_preview") or ""),
+        "source_type": str(frontmatter.get("source_type") or ""),
+        "source": str(frontmatter.get("source") or ""),
+        "session_started": str(frontmatter.get("session_started") or ""),
+        "session_updated": str(frontmatter.get("session_updated") or ""),
+        "model": str(frontmatter.get("model") or ""),
+        "modified": modified_value,
+    }
+
+
+def recent_sessions_payload(
+    atlas: Atlas,
+    *,
+    limit: int = 8,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    session_root = atlas.root / "agents"
+    paths: list[Path] = []
+    if session_root.exists():
+        for candidate in session_root.glob("*/sessions/*.md"):
+            if not candidate.is_file():
+                continue
+            if agent and candidate.parts[-3] != agent:
+                continue
+            paths.append(candidate)
+
+    sessions = [_session_metadata(path) for path in paths]
+    sessions.sort(
+        key=lambda item: (
+            str(item.get("date") or ""),
+            str(item.get("session_updated") or ""),
+            str(item.get("modified") or ""),
+            str(item.get("path") or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "agent": agent,
+        "count": len(sessions[: max(limit, 0)]),
+        "sessions": sessions[: max(limit, 0)],
+    }
+
+
 @click.group()
 def main() -> None:
     """cartographer — maps your knowledge."""
@@ -397,7 +473,7 @@ def status(as_json: bool) -> None:
     atlas = get_atlas()
     info = atlas.status()
     if as_json:
-        _emit_json(info)
+        _emit_json(_with_schema(info, surface="status"))
         return
     last_rebuild_text = _format_timestamp(info["index"]["last_rebuild"])
     tasks = info["tasks"]
@@ -429,7 +505,7 @@ def doctor(as_json: bool) -> None:
     atlas = Atlas()
     payload = _doctor_payload(atlas)
     if as_json:
-        _emit_json(payload)
+        _emit_json(_with_schema(payload, surface="doctor"))
         return
 
     click.echo(f"atlas: {'ok' if payload['initialized'] else 'warn'}  {payload['root']}")
@@ -561,7 +637,7 @@ def query(expression: tuple[str, ...], as_json: bool) -> None:
     expr = " ".join(expression)
     results = resolve_query_paths(atlas, expr)
     if as_json:
-        _emit_json({"expression": expr, "results": results})
+        _emit_json(_with_schema({"expression": expr, "results": results}, surface="query"))
         return
     for result in results:
         click.echo(result)
@@ -640,7 +716,12 @@ def todo_list(as_json: bool) -> None:
     atlas = get_atlas()
     tasks = sort_tasks(query_tasks(atlas.root, "status:open"))
     if as_json:
-        _emit_json({"query": "status:open", "tasks": [_task_payload(task) for task in tasks]})
+        _emit_json(
+            _with_schema(
+                {"query": "status:open", "tasks": [_task_payload(task) for task in tasks]},
+                surface="todo.list",
+            )
+        )
         return
     for task in tasks:
         parts = [task.id, task.priority, task.text]
@@ -681,7 +762,12 @@ def todo_query(expression: tuple[str, ...], as_json: bool) -> None:
     expr = " ".join(expression)
     tasks = query_tasks(atlas.root, expr)
     if as_json:
-        _emit_json({"expression": expr, "tasks": [_task_payload(task) for task in tasks]})
+        _emit_json(
+            _with_schema(
+                {"expression": expr, "tasks": [_task_payload(task) for task in tasks]},
+                surface="todo.query",
+            )
+        )
         return
     for task in tasks:
         parts = [task.id, task.status, task.priority, task.text]
@@ -703,7 +789,7 @@ def worklog_status(as_json: bool) -> None:
     atlas = get_atlas()
     data = Worklog(atlas.worklog_db_path).status()
     if as_json:
-        _emit_json(data)
+        _emit_json(_with_schema(data, surface="worklog.status"))
         return
     click.echo(f"current_session: {data['current_session_id'] or 'none'}")
     click.echo(f"in_progress: {len(data['in_progress'])}")
@@ -990,6 +1076,29 @@ def obsidian_sync(use_dataview: bool) -> None:
     else:
         destination = obsidian_sync_impl(atlas.root, vault_path)
         click.echo(destination)
+
+
+@main.group()
+def sessions() -> None:
+    """session note surfaces."""
+
+
+@sessions.command("recent")
+@click.option("--limit", default=8, type=int, show_default=True)
+@click.option("--agent", help="Filter by agent slug, e.g. hermes or claude.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def sessions_recent(limit: int, agent: str | None, as_json: bool) -> None:
+    atlas = get_atlas()
+    payload = recent_sessions_payload(atlas, limit=limit, agent=agent)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="sessions.recent"))
+        return
+    for session in payload["sessions"]:
+        summary = str(session.get("summary_preview") or "").strip()
+        suffix = f" — {summary}" if summary else ""
+        click.echo(
+            f"{session['agent']:8} {session['date'] or 'unknown-date'}  {session['title']}{suffix}"
+        )
 
 
 def _resolve_session_import_paths(
