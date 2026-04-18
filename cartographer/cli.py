@@ -50,7 +50,14 @@ from .session_import import (
 )
 from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
-from .therapy import build_therapy_handoff_payload, write_therapy_handoff
+from .therapy import (
+    build_therapy_handoff_payload,
+    build_therapy_review_payload,
+    counter_evidence_payload,
+    therapy_plugin_status,
+    write_therapy_handoff,
+    write_therapy_review,
+)
 from .vimwiki import patch_vimrc
 from .worklog import Worklog
 from .working_set import add_entry as add_working_set_entry
@@ -1678,6 +1685,99 @@ def therapy_export(
         destination=destination,
     )
     click.echo(written)
+
+
+@therapy.command("review")
+@click.option("--role", default="intake", show_default=True)
+@click.option("--scope", default="therapy", show_default=True)
+@click.option("--sessions", default=6, type=int, show_default=True)
+@click.option("--task-query", default="status:open", show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown",
+    type=click.Choice(["markdown", "json"]),
+    show_default=True,
+)
+@click.option("--write", "write_path", help="Write the therapy review to a specific atlas path.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the payload as JSON instead of writing a file.")
+def therapy_review(
+    role: str,
+    scope: str,
+    sessions: int,
+    task_query: str,
+    output_format: str,
+    write_path: str | None,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    plugin = therapy_plugin_status(atlas.root)
+    if not plugin["available"]:
+        missing = ", ".join(plugin["missing"]) or "unknown"
+        raise click.ClickException(
+            f"therapy plugin unavailable at {plugin['dir']} (missing: {missing})"
+        )
+    entries = list_working_set_entries(
+        atlas.root,
+        role=role,
+        scope=scope,
+        include_expired=False,
+        delete_expired=True,
+    )
+    sessions_payload = recent_sessions_payload(atlas, limit=max(sessions, 0))
+    tasks = [_task_payload(task) for task in query_tasks(atlas.root, task_query)]
+    try:
+        payload = build_therapy_review_payload(
+            atlas.root,
+            working_set_entries=entries,
+            sessions=list(sessions_payload["sessions"]),
+            tasks=tasks,
+            role=role,
+            scope=scope,
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if as_json:
+        _emit_json(_with_schema(payload, surface="therapy.review"))
+        return
+
+    fmt = "json" if output_format == "json" else "markdown"
+    destination = None if write_path is None else Path(write_path).expanduser()
+    written = write_therapy_review(
+        atlas.root,
+        payload=payload,
+        fmt=fmt,
+        destination=destination,
+    )
+    click.echo(written)
+
+
+@therapy.command("counter-evidence")
+@click.argument("claim", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def therapy_counter_evidence(claim: tuple[str, ...], as_json: bool) -> None:
+    atlas = get_atlas()
+    text = " ".join(claim).strip()
+    if not text:
+        raise click.ClickException("claim is required")
+    try:
+        payload = counter_evidence_payload(atlas.root, text)
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    response = {
+        "claim": text,
+        **payload,
+    }
+    if as_json:
+        _emit_json(_with_schema(response, surface="therapy.counter-evidence"))
+        return
+    pattern = str(response.get("pattern_detected") or "unknown")
+    click.echo(f"pattern: {pattern}")
+    queries = response.get("counter_queries") or []
+    if isinstance(queries, list) and queries:
+        for query in queries:
+            click.echo(f"- {query}")
 
 
 def _resolve_session_import_paths(

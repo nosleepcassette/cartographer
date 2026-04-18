@@ -85,6 +85,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
+- Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence`
 - File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
 - Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, semantic wire neighborhood, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
@@ -264,7 +265,12 @@ cart working-set gc
 cart therapy export
 cart therapy export --format json
 cart therapy export --json
+cart therapy review --json
+cart therapy review --write ~/atlas/notes/therapy/reviews/today.md
+cart therapy counter-evidence "I wasn't giving them what they needed"
 ```
+
+`therapy review` is review-first. It compiles therapy working-set entries, recent sessions, open tasks, and the latest mapsOS export, then runs Cassette's MVP therapy plugin from `~/atlas/agents/cassette/skills/therapy-plugin/`. It only writes a note when `--write` is used.
 
 ### semantic wires
 
