@@ -323,18 +323,48 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       padding-right: 0.25rem;
     }}
     .legend-row {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 0.6rem;
       padding: 0.45rem 0.55rem;
       border-radius: 0.7rem;
       background: rgba(255, 255, 255, 0.02);
     }}
+    .legend-row.active {{
+      border: 1px solid rgba(233, 196, 106, 0.26);
+      background: rgba(233, 196, 106, 0.08);
+    }}
     .legend-left {{
       display: inline-flex;
       align-items: center;
       gap: 0.6rem;
+    }}
+    .legend-main {{
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      text-align: left;
+      cursor: pointer;
+    }}
+    .legend-main:hover {{
+      filter: none;
+      color: var(--accent);
+    }}
+    .legend-actions {{
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+    }}
+    .legend-toggle {{
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.22rem 0.6rem;
+      font-size: 0.76rem;
     }}
     .swatch {{
       width: 0.8rem;
@@ -383,6 +413,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       border-radius: 0.65rem;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+    }}
+    .neighbor-list li.type-browser-empty {{
+      cursor: default;
     }}
     .graph-toolbar {{
       position: absolute;
@@ -425,6 +459,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .edge.edge-wire {{
       stroke: rgba(244, 162, 97, 0.5);
       stroke-dasharray: 6 4;
+    }}
+    .node-hit {{
+      fill: rgba(0, 0, 0, 0);
+      cursor: pointer;
     }}
     .node circle {{
       stroke: rgba(0, 0, 0, 0.55);
@@ -481,11 +519,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       <div class="controls">
         <button id="reset-layout" type="button">re-layout</button>
         <button id="fit-view" type="button">fit view</button>
+        <button id="show-all-types" type="button">show all</button>
         <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
       </div>
       <div>
         <div class="eyebrow">type legend</div>
         <div class="legend" id="legend"></div>
+      </div>
+      <div class="detail-card">
+        <div class="eyebrow">type browser</div>
+        <div class="mono" id="type-browser-title">Click a category to browse its nodes.</div>
+        <ul class="neighbor-list" id="type-node-list"></ul>
       </div>
       <div class="detail-card">
         <div class="eyebrow">atlas root</div>
@@ -497,6 +541,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         <span>drag nodes</span>
         <span>drag background to pan</span>
         <span>wheel to zoom</span>
+        <span>j/k or arrows to move</span>
+        <span>/ to search</span>
       </div>
       <svg id="graph" viewBox="-800 -520 1600 1040">
         <g id="viewport">
@@ -525,6 +571,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
   </div>
   <script>
     const atlasGraphPayload = {payload_json};
+    const GOLDEN_ANGLE = 2.399963229728653;
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.color]));
     const searchInput = document.getElementById("search");
     const showLabelsToggle = document.getElementById("show-labels");
@@ -539,6 +586,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const detailPathEl = document.getElementById("detail-path");
     const detailTagsEl = document.getElementById("detail-tags");
     const neighborListEl = document.getElementById("neighbor-list");
+    const typeBrowserTitleEl = document.getElementById("type-browser-title");
+    const typeNodeListEl = document.getElementById("type-node-list");
     const svg = document.getElementById("graph");
     const viewport = document.getElementById("viewport");
     const edgeLayer = document.getElementById("edge-layer");
@@ -551,54 +600,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     atlasRootEl.textContent = atlasGraphPayload.atlas_root;
 
     const typeNames = Object.keys(atlasGraphPayload.type_counts).sort((a, b) => atlasGraphPayload.type_counts[b] - atlasGraphPayload.type_counts[a]);
-    for (const typeName of typeNames) {{
-      const row = document.createElement("div");
-      row.className = "legend-row";
-      const left = document.createElement("div");
-      left.className = "legend-left";
-      const swatch = document.createElement("span");
-      swatch.className = "swatch";
-      swatch.style.background = typeColors[typeName] || "#b6c2cf";
-      const label = document.createElement("span");
-      label.textContent = typeName;
-      left.appendChild(swatch);
-      left.appendChild(label);
-      const count = document.createElement("span");
-      count.className = "muted mono";
-      count.textContent = String(atlasGraphPayload.type_counts[typeName]);
-      row.appendChild(left);
-      row.appendChild(count);
-      legendEl.appendChild(row);
-    }}
+    const hiddenTypes = new Set();
+    let browserType = null;
 
-    const typeAnchors = {{
-      project: [-260, -110],
-      entity: [240, -140],
-      learning: [-260, 170],
-      session: [250, 180],
-      "agent-log": [220, 180],
-      daily: [-10, 260],
-      note: [0, -250],
-      other: [0, 0],
-    }};
-
-    const nodes = atlasGraphPayload.nodes.map((node, index) => {{
-      const anchor = typeAnchors[node.type] || typeAnchors.other;
-      const angle = (index * 0.73) % (Math.PI * 2);
-      const radius = 80 + (index % 18) * 11;
-      return {{
-        ...node,
-        index,
-        x: anchor[0] + Math.cos(angle) * radius,
-        y: anchor[1] + Math.sin(angle) * radius,
-        vx: 0,
-        vy: 0,
-        fx: null,
-        fy: null,
-        matched: false,
-        selected: false,
-      }};
-    }});
+    const nodes = atlasGraphPayload.nodes.map((node, index) => ({{
+      ...node,
+      index,
+      x: 0,
+      y: 0,
+      matched: false,
+      selected: false,
+    }}));
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const edges = atlasGraphPayload.edges
       .map((edge) => ({{
@@ -628,9 +640,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
       g.setAttribute("class", "node");
       g.dataset.id = node.id;
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      hit.setAttribute("class", "node-hit");
+      hit.setAttribute("r", String(14 + Math.min(node.degree, 10) * 1.05));
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circle.setAttribute("r", String(6 + Math.min(node.degree, 10) * 0.85));
       circle.setAttribute("fill", node.color);
+      g.appendChild(hit);
       g.appendChild(circle);
       nodeLayer.appendChild(g);
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -640,25 +656,69 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       nodeEls.push({{ node, g, circle, text }});
     }}
 
-    let alpha = 1;
     let draggingNode = null;
     let draggingCanvas = false;
     let lastPointer = null;
     let selectedNode = null;
     let camera = {{ x: 0, y: 0, scale: 1 }};
 
-    function resetLayout() {{
-      alpha = 1;
-      for (const node of nodes) {{
-        const anchor = typeAnchors[node.type] || typeAnchors.other;
-        const angle = (node.index * 0.73) % (Math.PI * 2);
-        const radius = 80 + (node.index % 18) * 11;
-        node.x = anchor[0] + Math.cos(angle) * radius;
-        node.y = anchor[1] + Math.sin(angle) * radius;
-        node.vx = 0;
-        node.vy = 0;
-        node.fx = null;
-        node.fy = null;
+    function sortNodes(items) {{
+      return [...items].sort((a, b) => {{
+        if (a.type !== b.type) {{
+          return a.type.localeCompare(b.type);
+        }}
+        if (b.degree !== a.degree) {{
+          return b.degree - a.degree;
+        }}
+        return a.title.localeCompare(b.title);
+      }});
+    }}
+
+    function visibleNodes() {{
+      return nodes.filter((node) => !hiddenTypes.has(node.type));
+    }}
+
+    function computeTypeAnchors(activeTypes) {{
+      const anchors = new Map();
+      if (!activeTypes.length) {{
+        return anchors;
+      }}
+      if (activeTypes.length === 1) {{
+        anchors.set(activeTypes[0], [0, 0]);
+        return anchors;
+      }}
+      const radiusX = 360;
+      const radiusY = 240;
+      activeTypes.forEach((typeName, index) => {{
+        const angle = -Math.PI / 2 + (index * 2 * Math.PI) / activeTypes.length;
+        anchors.set(typeName, [
+          Math.cos(angle) * radiusX,
+          Math.sin(angle) * radiusY,
+        ]);
+      }});
+      return anchors;
+    }}
+
+    function layoutNodes() {{
+      const activeTypes = typeNames.filter((typeName) => !hiddenTypes.has(typeName));
+      const anchors = computeTypeAnchors(activeTypes);
+      for (const typeName of activeTypes) {{
+        const anchor = anchors.get(typeName) || [0, 0];
+        const cluster = sortNodes(nodes.filter((node) => node.type === typeName));
+        cluster.forEach((node, index) => {{
+          if (node === draggingNode) {{
+            return;
+          }}
+          if (index === 0) {{
+            node.x = anchor[0];
+            node.y = anchor[1];
+            return;
+          }}
+          const radius = 42 + Math.floor((index - 1) / 8) * 48 + ((index - 1) % 8) * 3;
+          const angle = (index - 1) * GOLDEN_ANGLE;
+          node.x = anchor[0] + Math.cos(angle) * radius;
+          node.y = anchor[1] + Math.sin(angle) * radius * 0.72;
+        }});
       }}
     }}
 
@@ -667,9 +727,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }}
 
     function fitView() {{
-      if (!nodes.length) return;
+      const visible = visibleNodes();
+      if (!visible.length) {{
+        return;
+      }}
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const node of nodes) {{
+      for (const node of visible) {{
         minX = Math.min(minX, node.x);
         minY = Math.min(minY, node.y);
         maxX = Math.max(maxX, node.x);
@@ -677,13 +740,27 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }}
       const width = Math.max(1, maxX - minX);
       const height = Math.max(1, maxY - minY);
-      const scale = Math.min(1.6, Math.max(0.45, Math.min(1300 / width, 900 / height)));
+      const scale = Math.min(1.35, Math.max(0.42, Math.min(1280 / width, 900 / height)));
       camera = {{
-        x: -(minX + maxX) / 2 * scale,
-        y: -(minY + maxY) / 2 * scale,
+        x: -((minX + maxX) / 2) * scale,
+        y: -((minY + maxY) / 2) * scale,
         scale,
       }};
       applyCamera();
+    }}
+
+    function ensureSelectedNodeVisible() {{
+      if (selectedNode && hiddenTypes.has(selectedNode.type)) {{
+        selectedNode = null;
+      }}
+      const candidates = keyboardCandidates();
+      if (!selectedNode && candidates.length) {{
+        selectNode(candidates[0], false);
+        return;
+      }}
+      if (!candidates.length) {{
+        selectNode(null, false);
+      }}
     }}
 
     function updateDetail(node) {{
@@ -707,13 +784,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }}
       const linked = Array.from(neighbors.get(node.id) || [])
         .map((id) => nodeById.get(id))
-        .filter(Boolean)
+        .filter((candidate) => candidate && !hiddenTypes.has(candidate.type))
         .sort((a, b) => a.title.localeCompare(b.title));
       neighborListEl.innerHTML = "";
       if (!linked.length) {{
         const item = document.createElement("li");
-        item.className = "muted";
-        item.textContent = "No linked neighbors.";
+        item.className = "muted type-browser-empty";
+        item.textContent = "No visible linked neighbors.";
         neighborListEl.appendChild(item);
       }}
       for (const linkedNode of linked.slice(0, 20)) {{
@@ -725,17 +802,106 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }}
 
     function selectNode(node, center = false) {{
-      selectedNode = node;
+      selectedNode = node && !hiddenTypes.has(node.type) ? node : null;
       for (const item of nodeEls) {{
-        item.node.selected = item.node === node;
+        item.node.selected = !!selectedNode && item.node.id === selectedNode.id;
       }}
-      updateDetail(node);
-      if (center && node) {{
-        camera.x = -node.x * camera.scale;
-        camera.y = -node.y * camera.scale;
+      updateDetail(selectedNode);
+      if (center && selectedNode) {{
+        camera.x = -selectedNode.x * camera.scale;
+        camera.y = -selectedNode.y * camera.scale;
         applyCamera();
       }}
       render();
+    }}
+
+    function renderTypeBrowser() {{
+      typeNodeListEl.innerHTML = "";
+      if (!browserType || hiddenTypes.has(browserType)) {{
+        typeBrowserTitleEl.textContent = "Click a category to browse its nodes.";
+        const item = document.createElement("li");
+        item.className = "muted type-browser-empty";
+        item.textContent = "No type selected.";
+        typeNodeListEl.appendChild(item);
+        return;
+      }}
+      const typedNodes = sortNodes(nodes.filter((node) => node.type === browserType));
+      typeBrowserTitleEl.textContent = `${{browserType}} · ${{typedNodes.length}} nodes`;
+      for (const node of typedNodes.slice(0, 48)) {{
+        const item = document.createElement("li");
+        item.innerHTML = `<strong>${{node.title}}</strong><div class="muted mono">${{node.id}} · degree ${{node.degree}}</div>`;
+        item.addEventListener("click", () => selectNode(node, true));
+        typeNodeListEl.appendChild(item);
+      }}
+      if (!typedNodes.length) {{
+        const item = document.createElement("li");
+        item.className = "muted type-browser-empty";
+        item.textContent = "No nodes in this category.";
+        typeNodeListEl.appendChild(item);
+      }}
+    }}
+
+    function renderLegend() {{
+      legendEl.innerHTML = "";
+      for (const typeName of typeNames) {{
+        const row = document.createElement("div");
+        row.className = `legend-row${{browserType === typeName ? " active" : ""}}`;
+
+        const main = document.createElement("button");
+        main.type = "button";
+        main.className = "legend-main";
+        const left = document.createElement("span");
+        left.className = "legend-left";
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = typeColors[typeName] || "#b6c2cf";
+        const label = document.createElement("span");
+        label.textContent = typeName;
+        left.appendChild(swatch);
+        left.appendChild(label);
+        main.appendChild(left);
+        main.addEventListener("click", () => {{
+          if (hiddenTypes.has(typeName)) {{
+            hiddenTypes.delete(typeName);
+          }}
+          browserType = browserType === typeName ? null : typeName;
+          renderLegend();
+          renderTypeBrowser();
+          render();
+        }});
+
+        const actions = document.createElement("div");
+        actions.className = "legend-actions";
+        const count = document.createElement("span");
+        count.className = "muted mono";
+        count.textContent = String(atlasGraphPayload.type_counts[typeName]);
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "legend-toggle";
+        toggle.textContent = hiddenTypes.has(typeName) ? "show" : "hide";
+        toggle.addEventListener("click", (event) => {{
+          event.stopPropagation();
+          if (hiddenTypes.has(typeName)) {{
+            hiddenTypes.delete(typeName);
+          }} else {{
+            hiddenTypes.add(typeName);
+          }}
+          if (browserType === typeName && hiddenTypes.has(typeName)) {{
+            browserType = null;
+          }}
+          layoutNodes();
+          fitView();
+          renderLegend();
+          renderTypeBrowser();
+          ensureSelectedNodeVisible();
+          render();
+        }});
+        actions.appendChild(count);
+        actions.appendChild(toggle);
+        row.appendChild(main);
+        row.appendChild(actions);
+        legendEl.appendChild(row);
+      }}
     }}
 
     function applySearch() {{
@@ -743,104 +909,91 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       let matches = 0;
       for (const item of nodeEls) {{
         const haystack = [item.node.id, item.node.title, item.node.type, ...(item.node.tags || [])].join(" ").toLowerCase();
-        item.node.matched = !!needle && haystack.includes(needle);
-        if (item.node.matched) matches += 1;
+        item.node.matched = !!needle && haystack.includes(needle) && !hiddenTypes.has(item.node.type);
+        if (item.node.matched) {{
+          matches += 1;
+        }}
       }}
       matchCountEl.textContent = String(matches);
-      render();
-      if (matches && !selectedNode) {{
-        const first = nodeEls.find((item) => item.node.matched);
-        if (first) selectNode(first.node, true);
+      const candidates = keyboardCandidates();
+      if ((!selectedNode || (needle && !selectedNode.matched)) && candidates.length) {{
+        selectNode(candidates[0], false);
+      }} else if (!candidates.length) {{
+        selectNode(null, false);
+      }} else {{
+        render();
       }}
     }}
 
+    function keyboardCandidates() {{
+      const visible = sortNodes(visibleNodes());
+      const matched = visible.filter((node) => node.matched);
+      return matched.length ? matched : visible;
+    }}
+
+    function cycleSelection(delta) {{
+      const candidates = keyboardCandidates();
+      if (!candidates.length) {{
+        selectNode(null, false);
+        return;
+      }}
+      let currentIndex = selectedNode ? candidates.findIndex((node) => node.id === selectedNode.id) : -1;
+      if (currentIndex < 0) {{
+        currentIndex = delta > 0 ? -1 : 0;
+      }}
+      const nextIndex = (currentIndex + delta + candidates.length) % candidates.length;
+      selectNode(candidates[nextIndex], true);
+    }}
+
     function visibleEdge(edge) {{
-      const needle = searchInput.value.trim();
-      if (!needle) return true;
-      return edge.source.matched || edge.target.matched;
+      return !hiddenTypes.has(edge.source.type) && !hiddenTypes.has(edge.target.type);
     }}
 
     function render() {{
       const needle = searchInput.value.trim();
+      const spotlightType = browserType && !hiddenTypes.has(browserType) ? browserType : null;
       for (const item of edgeEls) {{
-        const isMatch = visibleEdge(item.edge);
+        const visible = visibleEdge(item.edge);
+        const matched = !needle || item.edge.source.matched || item.edge.target.matched;
         item.line.setAttribute("x1", item.edge.source.x);
         item.line.setAttribute("y1", item.edge.source.y);
         item.line.setAttribute("x2", item.edge.target.x);
         item.line.setAttribute("y2", item.edge.target.y);
-        item.line.setAttribute("class", `edge${{isMatch && needle ? " match" : ""}}`);
-        item.line.style.opacity = !needle || isMatch ? "1" : "0.06";
+        item.line.setAttribute(
+          "class",
+          [
+            "edge",
+            item.edge.kind === "wire" ? "edge-wire" : "",
+            visible && needle && matched ? "match" : "",
+          ].filter(Boolean).join(" "),
+        );
+        item.line.style.display = visible ? "block" : "none";
+        item.line.style.opacity = visible && matched ? "1" : "0.05";
       }}
       for (const item of nodeEls) {{
+        const visible = !hiddenTypes.has(item.node.type);
+        const dimForSearch = needle && !item.node.matched && !item.node.selected;
+        const dimForBrowser = spotlightType && spotlightType !== item.node.type && !item.node.selected;
+        item.g.style.display = visible ? "block" : "none";
+        item.text.style.display = visible ? "block" : "none";
+        if (!visible) {{
+          continue;
+        }}
         item.g.setAttribute("transform", `translate(${{item.node.x}} ${{item.node.y}})`);
-        const showLabel = showLabelsToggle.checked || item.node.selected || item.node.matched || item.node.degree >= 4;
-        item.g.setAttribute("class", [
-          "node",
-          item.node.selected ? "selected" : "",
-          item.node.matched ? "match" : "",
-          needle && !item.node.matched && !item.node.selected ? "dimmed" : "",
-        ].filter(Boolean).join(" "));
-        item.text.setAttribute("x", item.node.x + 10);
+        const showLabel = showLabelsToggle.checked || item.node.selected || item.node.matched || item.node.degree >= 4 || spotlightType === item.node.type;
+        item.g.setAttribute(
+          "class",
+          [
+            "node",
+            item.node.selected ? "selected" : "",
+            item.node.matched ? "match" : "",
+            dimForSearch || dimForBrowser ? "dimmed" : "",
+          ].filter(Boolean).join(" "),
+        );
+        item.text.setAttribute("x", item.node.x + 11);
         item.text.setAttribute("y", item.node.y - 10);
         item.text.style.opacity = showLabel ? "1" : "0";
       }}
-    }}
-
-    function tickPhysics() {{
-      alpha *= 0.985;
-      for (let i = 0; i < nodes.length; i += 1) {{
-        const a = nodes[i];
-        for (let j = i + 1; j < nodes.length; j += 1) {{
-          const b = nodes[j];
-          let dx = a.x - b.x;
-          let dy = a.y - b.y;
-          let dist2 = dx * dx + dy * dy + 0.01;
-          let force = 4200 / dist2;
-          dx *= force;
-          dy *= force;
-          a.vx += dx;
-          a.vy += dy;
-          b.vx -= dx;
-          b.vy -= dy;
-        }}
-      }}
-      for (const edge of edges) {{
-        const dx = edge.target.x - edge.source.x;
-        const dy = edge.target.y - edge.source.y;
-        const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-        const desired = 85 + Math.min(edge.source.degree + edge.target.degree, 18) * 4;
-        const spring = (distance - desired) * 0.0009 * alpha;
-        const fx = (dx / distance) * spring;
-        const fy = (dy / distance) * spring;
-        edge.source.vx += fx;
-        edge.source.vy += fy;
-        edge.target.vx -= fx;
-        edge.target.vy -= fy;
-      }}
-      for (const node of nodes) {{
-        const anchor = typeAnchors[node.type] || typeAnchors.other;
-        node.vx += (anchor[0] - node.x) * 0.0008 * alpha;
-        node.vy += (anchor[1] - node.y) * 0.0008 * alpha;
-        if (node.fx !== null && node.fy !== null) {{
-          node.x = node.fx;
-          node.y = node.fy;
-          node.vx = 0;
-          node.vy = 0;
-        }} else {{
-          node.vx *= 0.82;
-          node.vy *= 0.82;
-          node.x += node.vx;
-          node.y += node.vy;
-        }}
-      }}
-    }}
-
-    function animationLoop() {{
-      if (alpha > 0.02 || draggingNode) {{
-        tickPhysics();
-        render();
-      }}
-      requestAnimationFrame(animationLoop);
     }}
 
     function svgPoint(event) {{
@@ -850,10 +1003,21 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return pt.matrixTransform(svg.getScreenCTM().inverse());
     }}
 
+    function graphCoordinates(point) {{
+      return {{
+        x: (point.x - camera.x) / camera.scale,
+        y: (point.y - camera.y) / camera.scale,
+      }};
+    }}
+
     svg.addEventListener("wheel", (event) => {{
       event.preventDefault();
+      const point = svgPoint(event);
+      const graphPoint = graphCoordinates(point);
       const zoom = event.deltaY < 0 ? 1.08 : 0.92;
-      camera.scale = Math.max(0.25, Math.min(3, camera.scale * zoom));
+      camera.scale = Math.max(0.24, Math.min(3, camera.scale * zoom));
+      camera.x = point.x - graphPoint.x * camera.scale;
+      camera.y = point.y - graphPoint.y * camera.scale;
       applyCamera();
     }}, {{ passive: false }});
 
@@ -862,9 +1026,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       lastPointer = svgPoint(event);
       if (targetNode) {{
         draggingNode = nodeById.get(targetNode.dataset.id);
-        draggingNode.fx = lastPointer.x / camera.scale - camera.x / camera.scale;
-        draggingNode.fy = lastPointer.y / camera.scale - camera.y / camera.scale;
-        alpha = Math.max(alpha, 0.3);
         selectNode(draggingNode, false);
       }} else {{
         draggingCanvas = true;
@@ -873,12 +1034,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }});
 
     svg.addEventListener("pointermove", (event) => {{
-      if (!lastPointer) return;
+      if (!lastPointer) {{
+        return;
+      }}
       const point = svgPoint(event);
       if (draggingNode) {{
-        draggingNode.fx = point.x / camera.scale - camera.x / camera.scale;
-        draggingNode.fy = point.y / camera.scale - camera.y / camera.scale;
-        alpha = Math.max(alpha, 0.25);
+        const graphPoint = graphCoordinates(point);
+        draggingNode.x = graphPoint.x;
+        draggingNode.y = graphPoint.y;
+        render();
       }} else if (draggingCanvas) {{
         camera.x += point.x - lastPointer.x;
         camera.y += point.y - lastPointer.y;
@@ -888,10 +1052,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }});
 
     function clearDragging() {{
-      if (draggingNode) {{
-        draggingNode.fx = null;
-        draggingNode.fy = null;
-      }}
       draggingNode = null;
       draggingCanvas = false;
       lastPointer = null;
@@ -903,12 +1063,30 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     svg.addEventListener("dblclick", () => fitView());
 
     searchInput.addEventListener("input", applySearch);
+    searchInput.addEventListener("keydown", (event) => {{
+      if (event.key === "Escape") {{
+        searchInput.value = "";
+        applySearch();
+        searchInput.blur();
+      }}
+    }});
     showLabelsToggle.addEventListener("change", render);
     document.getElementById("reset-layout").addEventListener("click", () => {{
-      resetLayout();
+      layoutNodes();
       fitView();
+      render();
     }});
     document.getElementById("fit-view").addEventListener("click", fitView);
+    document.getElementById("show-all-types").addEventListener("click", () => {{
+      hiddenTypes.clear();
+      browserType = null;
+      layoutNodes();
+      fitView();
+      renderLegend();
+      renderTypeBrowser();
+      ensureSelectedNodeVisible();
+      render();
+    }});
 
     for (const item of nodeEls) {{
       item.g.addEventListener("click", (event) => {{
@@ -917,11 +1095,60 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }});
     }}
 
+    document.addEventListener("keydown", (event) => {{
+      if (event.metaKey || event.ctrlKey || event.altKey) {{
+        return;
+      }}
+      if (document.activeElement === searchInput) {{
+        return;
+      }}
+      if (event.key === "/") {{
+        event.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+        return;
+      }}
+      if (event.key === "j" || event.key === "ArrowDown") {{
+        event.preventDefault();
+        cycleSelection(1);
+        return;
+      }}
+      if (event.key === "k" || event.key === "ArrowUp") {{
+        event.preventDefault();
+        cycleSelection(-1);
+        return;
+      }}
+      if (event.key === "Enter" || event.key === " ") {{
+        if (selectedNode) {{
+          event.preventDefault();
+          selectNode(selectedNode, true);
+        }}
+        return;
+      }}
+      if (event.key === "f") {{
+        event.preventDefault();
+        fitView();
+        return;
+      }}
+      if (event.key === "0") {{
+        event.preventDefault();
+        hiddenTypes.clear();
+        renderLegend();
+        renderTypeBrowser();
+        layoutNodes();
+        fitView();
+        ensureSelectedNodeVisible();
+        render();
+      }}
+    }});
+
+    renderLegend();
+    layoutNodes();
     fitView();
+    renderTypeBrowser();
     updateDetail(null);
     applySearch();
     render();
-    requestAnimationFrame(animationLoop);
   </script>
 </body>
 </html>

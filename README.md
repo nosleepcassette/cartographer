@@ -52,7 +52,7 @@ cartographer assumes both exist and treats them as first-class:
 
 This is the release where atlas starts to feel like a real operating surface instead of just a filesystem plus commands.
 
-- **A real atlas interface.** `cart tui` gives you a Textual TUI with a structured graph pane, a native graph-focus view, collapsible groups, note rendering, backlinks, tasks overlay, and vim-style movement.
+- **A real atlas interface.** `cart tui` gives you a Textual TUI with section-aware graph navigation, collapsible groups that open into submenus, a native graph-focus view, note rendering, backlinks, tasks overlay, and vim-style movement.
 - **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
 - **State is visible inside memory now.** The atlas TUI reads the latest mapsOS export directly and shows current qualitative state, active arcs, and open P0 load in the state strip.
 - **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
@@ -87,7 +87,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
 - Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence`
 - File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
-- Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, semantic wire neighborhood, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
+- Textual atlas TUI (`cart tui`) with section jumps, collapsed-section submenus, native graph-focus rendering, semantic wire neighborhood, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
 - Learning audit loop
@@ -186,6 +186,22 @@ cart tui
 cart backup
 cart index rebuild
 ```
+
+### tui
+
+```zsh
+cart tui
+```
+
+Key navigation:
+
+- `j` / `k` moves through visible notes
+- `[` / `]` jumps between top-level sections
+- `1`-`5` jumps directly to the visible section slots
+- `c` collapses or expands the current section
+- collapsed sections open as a submenu in the note pane
+- `g` toggles the graph-focus pane
+- `/` filters the graph
 
 ### notes
 
@@ -314,8 +330,10 @@ HTML output is a self-contained visual graph with:
 
 - type-colored nodes
 - semantic wire edges rendered distinctly from plain wikilinks
-- degree-scaled sizing
+- degree-scaled sizing and larger hit targets
 - local search by note title, id, type, or tag
+- stable clustered layout instead of free-floating drift
+- category toggles, a type browser, and keyboard navigation (`j`/`k`, arrows, `/`, `f`)
 - pan/zoom, dragging, and a detail pane for the selected node
 
 ### mapsOS bridge

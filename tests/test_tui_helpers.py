@@ -7,6 +7,7 @@ from pathlib import Path
 from cartographer.tasks import append_task
 from cartographer.tui import (
     NoteRecord,
+    build_section_submenu_markdown,
     build_graph_sections,
     build_graph_rows,
     build_state_strip_lines,
@@ -84,7 +85,42 @@ class TUIHelperTests(unittest.TestCase):
         self.assertEqual([section.group for section in sections], ["PROJECTS", "ENTITIES"])
         self.assertTrue(sections[0].collapsed)
         self.assertEqual(sections[0].rows, [])
+        self.assertEqual(sections[0].note_ids, ["hopeagent"])
         self.assertEqual(sections[1].total_count, 1)
+
+    def test_build_section_submenu_markdown_lists_hidden_notes(self) -> None:
+        records = {
+            "hopeagent": NoteRecord(
+                note_id="hopeagent",
+                path=Path("/tmp/hopeagent.md"),
+                title="hopeagent",
+                note_type="project",
+                status="active",
+                tags=[],
+                modified=10,
+            ),
+            "cartographer": NoteRecord(
+                note_id="cartographer",
+                path=Path("/tmp/cartographer.md"),
+                title="cartographer",
+                note_type="project",
+                status=None,
+                tags=[],
+                modified=9,
+            ),
+        }
+        section = build_graph_sections(
+            records,
+            set(),
+            collapsed_groups={"PROJECTS"},
+        )[0]
+
+        text = build_section_submenu_markdown(records, section)
+
+        self.assertIn("# PROJECTS", text)
+        self.assertIn("2 notes hidden", text)
+        self.assertIn("[[hopeagent]]", text)
+        self.assertIn("[[cartographer]]", text)
 
     def test_resolve_transclusions_formats_note_and_block_content(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

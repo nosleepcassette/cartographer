@@ -68,6 +68,9 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     html = output_path.read_text(encoding="utf-8")
     assert "atlasGraphPayload" in html
     assert "Knowledge Graph V1" in html
+    assert "type browser" in html
+    assert "show-all-types" in html
+    assert "cycleSelection" in html
     assert '"id": "alpha"' in html
     assert '"source": "alpha"' in html
 
