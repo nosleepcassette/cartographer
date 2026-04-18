@@ -333,7 +333,8 @@ HTML output is a self-contained visual graph with:
 - degree-scaled sizing and larger hit targets
 - local search by note title, id, type, or tag
 - stable clustered layout instead of free-floating drift
-- category toggles, a type browser, and keyboard navigation (`j`/`k`, arrows, `/`, `f`)
+- category toggles, privacy mode (`hide names`), wire/connection spotlighting, and a type browser
+- keyboard navigation (`j`/`k`, arrows, `/`, `f`, `x`, `v`)
 - pan/zoom, dragging, and a detail pane for the selected node
 
 ### mapsOS bridge

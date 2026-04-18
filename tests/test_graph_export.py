@@ -39,6 +39,19 @@ def _write_note(path: Path, *, note_id: str, title: str, note_type: str, body: s
     )
 
 
+def _write_note_with_frontmatter(path: Path, frontmatter: str, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        (
+            "---\n"
+            f"{frontmatter}"
+            "---\n\n"
+            f"{body}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     atlas_root = tmp_path / "atlas"
     _init_atlas(atlas_root)
@@ -71,6 +84,8 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "type browser" in html
     assert "show-all-types" in html
     assert "cycleSelection" in html
+    assert "hide-names" in html
+    assert "highlight-links" in html
     assert '"id": "alpha"' in html
     assert '"source": "alpha"' in html
 
@@ -153,3 +168,39 @@ def test_graph_payload_includes_semantic_wires(tmp_path) -> None:
             "bidirectional": False,
         }
     ]
+
+
+def test_graph_payload_promotes_entity_people_to_person_type(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "killian.md",
+        (
+            "id: killian\n"
+            "title: Killian\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# Killian\n",
+    )
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "maggie.md",
+        (
+            "id: maggie\n"
+            "title: Maggie\n"
+            "type: entity\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# Maggie\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    node_types = {node["id"]: node["type"] for node in payload["nodes"]}
+
+    assert node_types["killian"] == "person"
+    assert node_types["maggie"] == "person"
+    assert payload["type_counts"]["person"] == 2

@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from .wires import VALID_WIRE_PREDICATES
+from .notes import parse_frontmatter
 
 
 TYPE_COLORS = {
+    "person": "#8ec1ff",
     "project": "#d97757",
     "entity": "#6cb88f",
     "agent-log": "#7aa6d9",
@@ -19,6 +21,32 @@ TYPE_COLORS = {
     "learning": "#d5b06b",
     "note": "#b6c2cf",
 }
+
+
+def _display_type_for_note(atlas_root: Path, raw_path: str, raw_type: str) -> str:
+    normalized = raw_type.strip().lower() or "note"
+    if normalized == "person":
+        return "person"
+    if normalized != "entity":
+        return normalized
+
+    path = Path(raw_path)
+    try:
+        relative = path.resolve().relative_to(atlas_root.resolve())
+    except ValueError:
+        relative = path
+
+    try:
+        frontmatter, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+    except OSError:
+        frontmatter = {}
+
+    entity_type = str(frontmatter.get("entity_type") or "").strip().lower()
+    if entity_type:
+        return entity_type
+    if relative.parts and relative.parts[0] == "entities":
+        return "person"
+    return normalized
 
 
 def _alias_map(atlas_root: Path, note_rows: list[sqlite3.Row]) -> dict[str, str]:
@@ -142,7 +170,8 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     type_counts: Counter[str] = Counter()
     for row in note_rows:
-        note_type = str(row["type"] or "note")
+        raw_type = str(row["type"] or "note")
+        note_type = _display_type_for_note(atlas_root, str(row["path"]), raw_type)
         type_counts[note_type] += 1
         try:
             tags = json.loads(row["tags"]) if row["tags"] else []
@@ -154,6 +183,7 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
                 "id": node_id,
                 "title": str(row["title"] or node_id),
                 "type": note_type,
+                "raw_type": raw_type,
                 "status": None if row["status"] is None else str(row["status"]),
                 "path": str(row["path"]),
                 "tags": tags if isinstance(tags, list) else [],
@@ -186,16 +216,18 @@ def render_graph_html(payload: dict[str, Any]) -> str:
   <title>atlas graph</title>
   <style>
     :root {{
-      --bg: #0a0b0f;
-      --panel: rgba(18, 20, 28, 0.92);
-      --panel-border: rgba(233, 196, 106, 0.18);
-      --text: #f3e8d0;
-      --muted: #9f9688;
+      --bg: #0e1016;
+      --panel: rgba(24, 28, 38, 0.94);
+      --panel-border: rgba(233, 196, 106, 0.22);
+      --text: #fbf2e2;
+      --muted: #c1b29b;
       --accent: #e9c46a;
       --accent-strong: #f4a261;
-      --line: rgba(255, 255, 255, 0.1);
-      --grid: rgba(255, 255, 255, 0.03);
-      --surface: rgba(255, 255, 255, 0.02);
+      --line: rgba(255, 248, 236, 0.22);
+      --line-active: rgba(255, 228, 168, 0.82);
+      --wire-line: rgba(244, 162, 97, 0.82);
+      --grid: rgba(255, 255, 255, 0.05);
+      --surface: rgba(255, 255, 255, 0.04);
     }}
     * {{ box-sizing: border-box; }}
     html, body {{ height: 100%; margin: 0; }}
@@ -428,7 +460,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       gap: 0.7rem;
       align-items: center;
       background: rgba(9, 10, 14, 0.74);
-      border: 1px solid rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 999px;
       backdrop-filter: blur(8px);
     }}
@@ -450,15 +482,24 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }}
     .edge {{
       stroke: var(--line);
-      stroke-width: 1.1;
+      stroke-width: 1.55;
     }}
     .edge.match {{
-      stroke: rgba(233, 196, 106, 0.45);
-      stroke-width: 1.6;
+      stroke: rgba(233, 196, 106, 0.72);
+      stroke-width: 2.2;
     }}
     .edge.edge-wire {{
-      stroke: rgba(244, 162, 97, 0.5);
-      stroke-dasharray: 6 4;
+      stroke: var(--wire-line);
+      stroke-width: 2.3;
+      stroke-dasharray: 8 4;
+    }}
+    .edge.active {{
+      stroke: var(--line-active);
+      stroke-width: 2.7;
+    }}
+    .edge.edge-wire.active {{
+      stroke: rgba(255, 194, 131, 0.98);
+      stroke-width: 3.2;
     }}
     .node-hit {{
       fill: rgba(0, 0, 0, 0);
@@ -471,6 +512,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .node.selected circle {{
       stroke: rgba(233, 196, 106, 0.96);
       stroke-width: 2.8;
+    }}
+    .node.connected circle {{
+      stroke: rgba(255, 233, 190, 0.9);
+      stroke-width: 2.1;
     }}
     .node.match circle {{
       stroke: rgba(255, 255, 255, 0.88);
@@ -521,6 +566,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         <button id="fit-view" type="button">fit view</button>
         <button id="show-all-types" type="button">show all</button>
         <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
+        <label class="toggle"><input id="hide-names" type="checkbox"> hide names</label>
+        <label class="toggle"><input id="highlight-links" type="checkbox" checked> spotlight links</label>
       </div>
       <div>
         <div class="eyebrow">type legend</div>
@@ -542,7 +589,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         <span>drag background to pan</span>
         <span>wheel to zoom</span>
         <span>j/k or arrows to move</span>
-        <span>/ to search</span>
+        <span>/ search</span>
+        <span>x hide names</span>
+        <span>v spotlight links</span>
       </div>
       <svg id="graph" viewBox="-800 -520 1600 1040">
         <g id="viewport">
@@ -575,6 +624,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.color]));
     const searchInput = document.getElementById("search");
     const showLabelsToggle = document.getElementById("show-labels");
+    const hideNamesToggle = document.getElementById("hide-names");
+    const highlightLinksToggle = document.getElementById("highlight-links");
     const nodeCountEl = document.getElementById("node-count");
     const edgeCountEl = document.getElementById("edge-count");
     const typeCountEl = document.getElementById("type-count");
@@ -610,7 +661,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       y: 0,
       matched: false,
       selected: false,
+      typeOrdinal: 0,
     }}));
+    const typeOrdinals = new Map();
+    for (const node of sortNodes(nodes)) {{
+      const current = (typeOrdinals.get(node.type) || 0) + 1;
+      typeOrdinals.set(node.type, current);
+      node.typeOrdinal = current;
+    }}
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const edges = atlasGraphPayload.edges
       .map((edge) => ({{
@@ -672,6 +730,21 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         }}
         return a.title.localeCompare(b.title);
       }});
+    }}
+
+    function displayNodeName(node) {{
+      if (!node) {{
+        return "Nothing selected";
+      }}
+      if (!hideNamesToggle.checked) {{
+        return node.title;
+      }}
+      return `${{node.type}} ${{node.typeOrdinal}}`;
+    }}
+
+    function detailTypeLabel(node) {{
+      const raw = node.raw_type && node.raw_type !== node.type ? ` · raw ${{node.raw_type}}` : "";
+      return `${{node.type}} · degree ${{node.degree}}${{node.status ? " · " + node.status : ""}}${{raw}}`;
     }}
 
     function visibleNodes() {{
@@ -772,8 +845,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         neighborListEl.innerHTML = "";
         return;
       }}
-      detailTitleEl.textContent = node.title;
-      detailSubtitleEl.textContent = `${{node.type}} · degree ${{node.degree}}${{node.status ? " · " + node.status : ""}}`;
+      detailTitleEl.textContent = displayNodeName(node);
+      detailSubtitleEl.textContent = detailTypeLabel(node);
       detailPathEl.textContent = node.path;
       detailTagsEl.innerHTML = "";
       for (const value of [node.type, ...(node.tags || []).slice(0, 8)]) {{
@@ -795,7 +868,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }}
       for (const linkedNode of linked.slice(0, 20)) {{
         const item = document.createElement("li");
-        item.innerHTML = `<strong>${{linkedNode.title}}</strong><div class="muted mono">${{linkedNode.type}} · degree ${{linkedNode.degree}}</div>`;
+        item.innerHTML = `<strong>${{displayNodeName(linkedNode)}}</strong><div class="muted mono">${{detailTypeLabel(linkedNode)}}</div>`;
         item.addEventListener("click", () => selectNode(linkedNode, true));
         neighborListEl.appendChild(item);
       }}
@@ -829,7 +902,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       typeBrowserTitleEl.textContent = `${{browserType}} · ${{typedNodes.length}} nodes`;
       for (const node of typedNodes.slice(0, 48)) {{
         const item = document.createElement("li");
-        item.innerHTML = `<strong>${{node.title}}</strong><div class="muted mono">${{node.id}} · degree ${{node.degree}}</div>`;
+        item.innerHTML = `<strong>${{displayNodeName(node)}}</strong><div class="muted mono">${{node.id}} · degree ${{node.degree}}</div>`;
         item.addEventListener("click", () => selectNode(node, true));
         typeNodeListEl.appendChild(item);
       }}
@@ -952,9 +1025,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function render() {{
       const needle = searchInput.value.trim();
       const spotlightType = browserType && !hiddenTypes.has(browserType) ? browserType : null;
+      const spotlightLinks = highlightLinksToggle.checked && !!selectedNode;
+      const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
       for (const item of edgeEls) {{
         const visible = visibleEdge(item.edge);
         const matched = !needle || item.edge.source.matched || item.edge.target.matched;
+        const connected = !!selectedNode && (
+          item.edge.source.id === selectedNode.id
+          || item.edge.target.id === selectedNode.id
+        );
         item.line.setAttribute("x1", item.edge.source.x);
         item.line.setAttribute("y1", item.edge.source.y);
         item.line.setAttribute("x2", item.edge.target.x);
@@ -964,16 +1043,25 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           [
             "edge",
             item.edge.kind === "wire" ? "edge-wire" : "",
+            connected ? "active" : "",
             visible && needle && matched ? "match" : "",
           ].filter(Boolean).join(" "),
         );
         item.line.style.display = visible ? "block" : "none";
-        item.line.style.opacity = visible && matched ? "1" : "0.05";
+        if (!visible) {{
+          item.line.style.opacity = "0";
+        }} else if (spotlightLinks) {{
+          item.line.style.opacity = connected ? "1" : "0.1";
+        }} else {{
+          item.line.style.opacity = matched ? "0.92" : "0.12";
+        }}
       }}
       for (const item of nodeEls) {{
         const visible = !hiddenTypes.has(item.node.type);
         const dimForSearch = needle && !item.node.matched && !item.node.selected;
         const dimForBrowser = spotlightType && spotlightType !== item.node.type && !item.node.selected;
+        const connected = !!selectedNode && selectedNeighbors.has(item.node.id);
+        const dimForLinks = spotlightLinks && !item.node.selected && !connected;
         item.g.style.display = visible ? "block" : "none";
         item.text.style.display = visible ? "block" : "none";
         if (!visible) {{
@@ -986,12 +1074,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           [
             "node",
             item.node.selected ? "selected" : "",
+            connected ? "connected" : "",
             item.node.matched ? "match" : "",
-            dimForSearch || dimForBrowser ? "dimmed" : "",
+            dimForSearch || dimForBrowser || dimForLinks ? "dimmed" : "",
           ].filter(Boolean).join(" "),
         );
         item.text.setAttribute("x", item.node.x + 11);
         item.text.setAttribute("y", item.node.y - 10);
+        item.text.textContent = displayNodeName(item.node);
         item.text.style.opacity = showLabel ? "1" : "0";
       }}
     }}
@@ -1071,6 +1161,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }}
     }});
     showLabelsToggle.addEventListener("change", render);
+    hideNamesToggle.addEventListener("change", () => {{
+      renderTypeBrowser();
+      updateDetail(selectedNode);
+      render();
+    }});
+    highlightLinksToggle.addEventListener("change", render);
     document.getElementById("reset-layout").addEventListener("click", () => {{
       layoutNodes();
       fitView();
@@ -1106,6 +1202,20 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         event.preventDefault();
         searchInput.focus();
         searchInput.select();
+        return;
+      }}
+      if (event.key === "x") {{
+        event.preventDefault();
+        hideNamesToggle.checked = !hideNamesToggle.checked;
+        renderTypeBrowser();
+        updateDetail(selectedNode);
+        render();
+        return;
+      }}
+      if (event.key === "v") {{
+        event.preventDefault();
+        highlightLinksToggle.checked = !highlightLinksToggle.checked;
+        render();
         return;
       }}
       if (event.key === "j" || event.key === "ArrowDown") {{
