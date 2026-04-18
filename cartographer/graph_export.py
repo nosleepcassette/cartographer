@@ -119,6 +119,22 @@ def _primary_emotional_summary(
     }
 
 
+def _extract_folder(path_str: str, atlas_root: Path) -> str | None:
+    """Extract top-level folder from note path for grouping."""
+    if not path_str:
+        return None
+    try:
+        path = Path(path_str).resolve()
+        relative = path.relative_to(atlas_root.resolve())
+        parts = relative.parts
+        # Return first meaningful folder (skip root)
+        if len(parts) > 1:
+            return parts[0]
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
 def _display_type_for_note(atlas_root: Path, raw_path: str, raw_type: str) -> str:
     normalized = raw_type.strip().lower() or "note"
     if normalized == "person":
@@ -348,6 +364,7 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
         )
         emotional_valence = emotional_summary.get("emotional_valence")
         avoidance_risk = emotional_summary.get("avoidance_risk")
+        folder = _extract_folder(raw_path, atlas_root)
         nodes.append(
             {
                 "id": node_id,
@@ -356,6 +373,7 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
                 "raw_type": raw_type,
                 "status": None if row["status"] is None else str(row["status"]),
                 "path": raw_path,
+                "folder": folder,
                 "tags": tags if isinstance(tags, list) else [],
                 "modified": float(row["modified"] or 0.0),
                 "degree": degree_counts.get(node_id, 0),
@@ -521,6 +539,24 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     input[type="search"]:focus {
       border-color: rgba(237, 203, 128, 0.42);
       box-shadow: 0 0 0 4px rgba(237, 203, 128, 0.08);
+    }
+    select {
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.28);
+      color: var(--text);
+      border-radius: 0.85rem;
+      padding: 0.8rem 0.9rem;
+      outline: none;
+      font: inherit;
+    }
+    select:focus {
+      border-color: rgba(237, 203, 128, 0.42);
+      box-shadow: 0 0 0 4px rgba(237, 203, 128, 0.08);
+    }
+    select option {
+      background: #1a1f2e;
+      color: var(--text);
     }
     .controls, .toggle-grid {
       display: flex;
@@ -868,6 +904,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         <input id="search" type="search" placeholder="project, person, tag, note title">
       </div>
 
+      <div class="search-wrap">
+        <label class="eyebrow" for="folder-filter">Folder</label>
+        <select id="folder-filter">
+          <option value="">all folders</option>
+        </select>
+      </div>
+
       <div class="controls">
         <button id="reset-layout" type="button">re-layout</button>
         <button id="fit-view" type="button">fit view</button>
@@ -1052,6 +1095,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const DEMO_MODE_KEY = 'atlas.graph.demoMode';
 
     const searchInput = document.getElementById('search');
+    const folderFilterSelect = document.getElementById('folder-filter');
     const demoModeToggle = document.getElementById('demo-mode');
     const showLabelsToggle = document.getElementById('show-labels');
     const hideNamesToggle = document.getElementById('hide-names');
@@ -1109,6 +1153,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     const state = {
       search: '',
+      folderFilter: '',
       hiddenTypes: new Set(),
       browserType: null,
       showSessions: storageBool(SESSION_STORAGE_KEY, false),
@@ -2074,7 +2119,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
       for (const node of nodes) {
         const isDemohidden = state.demoMode && node.type === 'person';
-        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isDemohidden;
+        const isFolderFiltered = state.folderFilter && node.folder !== state.folderFilter;
+        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isDemohidden && !isFolderFiltered;
         const visible = node.visibleByToggle;
         const connected = !!selectedNode && selectedNeighbors.has(node.id);
         const dimForSearch = needle && !node.matched && node !== selectedNode;
@@ -2263,6 +2309,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         row.appendChild(main);
         row.appendChild(actions);
         legendEl.appendChild(row);
+      }
+    }
+
+    function renderFolderFilter() {
+      // Collect unique folders from nodes
+      const folders = new Set();
+      for (const node of nodes) {
+        if (node.folder && node.visibleByToggle) {
+          folders.add(node.folder);
+        }
+      }
+      const sortedFolders = Array.from(folders).sort();
+
+      // Clear existing options except 'all folders'
+      folderFilterSelect.innerHTML = '<option value="">all folders</option>';
+
+      // Add folder options
+      for (const folder of sortedFolders) {
+        const option = document.createElement('option');
+        option.value = folder;
+        const count = nodes.filter(n => n.folder === folder && n.visibleByToggle).length;
+        option.textContent = `${folder} (${count})`;
+        folderFilterSelect.appendChild(option);
       }
     }
 
@@ -2530,6 +2599,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       refreshSceneState();
       writeHashState();
     });
+    folderFilterSelect.addEventListener('change', () => {
+      state.folderFilter = folderFilterSelect.value;
+      layoutNodes();
+      applySearch();
+      renderFolderFilter();
+      renderTypeBrowser();
+      refreshSceneState();
+      smartFitCamera();
+      writeHashState();
+    });
     showSessionsToggle.addEventListener('change', () => {
       state.showSessions = showSessionsToggle.checked;
       saveToggles();
@@ -2669,6 +2748,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     layoutNodes();
     restoreHashSelection();
     renderLegend();
+    renderFolderFilter();
     applySearch();
     renderTypeBrowser();
     refreshSceneState();
