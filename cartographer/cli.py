@@ -32,7 +32,7 @@ from .mapsos import (
     load_mapsos_payload,
     sync_mapsos_payload,
 )
-from .notes import Note
+from .notes import Note, parse_link_target
 from .obsidian import sync as obsidian_sync_impl
 from .plugins import (
     apply_writes,
@@ -57,6 +57,14 @@ from .working_set import add_entry as add_working_set_entry
 from .working_set import gc_entries as gc_working_set_entries
 from .working_set import list_entries as list_working_set_entries
 from .working_set import working_set_stats
+from .wires import (
+    VALID_WIRE_PREDICATES,
+    WIRE_PATTERN,
+    insert_wire_comment,
+    parse_wire_comments,
+    remove_wire_spans,
+    render_wire_comment,
+)
 
 JSON_SCHEMA_VERSION = "2026-04-17"
 
@@ -179,6 +187,21 @@ def _doctor_payload(atlas: Atlas) -> dict[str, Any]:
         warnings.append(
             f"working set has {working_set['expired_count']} expired entries; run `cart working-set gc`"
         )
+    wire_status = {
+        "count": 0,
+        "issue_count": 0,
+    }
+    if initialized and atlas.index_db_path.exists():
+        index = Index(atlas.root)
+        index_status = index.status()
+        wire_status["count"] = int(index_status.get("wires", 0))
+        wire_status["issue_count"] = int(index_status.get("wire_issues", 0))
+        doctor_payload = index.wire_doctor()
+        wire_status["issue_count"] = int(doctor_payload["issue_count"])
+        if doctor_payload["issue_count"]:
+            warnings.append(
+                f"wire doctor found {doctor_payload['issue_count']} issue(s); run `cart wire doctor`"
+            )
 
     payload = {
         "root": str(atlas.root),
@@ -212,6 +235,7 @@ def _doctor_payload(atlas: Atlas) -> dict[str, Any]:
             "names": plugin_files,
         },
         "working_set": working_set,
+        "wires": wire_status,
         "git": atlas.git_status_summary() if initialized else "not initialized",
         "warnings": warnings,
     }
@@ -421,6 +445,127 @@ def recent_sessions_payload(
     }
 
 
+def _resolve_note_or_block_ref(
+    index: Index,
+    ref: str,
+    *,
+    require_block: bool = False,
+) -> tuple[str, str | None, Path]:
+    note_ref, block_id = parse_link_target(ref)
+    canonical_note = index.canonicalize_note_ref(note_ref)
+    if canonical_note is None:
+        raise click.ClickException(f"note not found: {note_ref}")
+    path = index.find_note_path(canonical_note)
+    if path is None:
+        raise click.ClickException(f"note not found: {canonical_note}")
+    if require_block and block_id is None:
+        raise click.ClickException(f"block reference required: {ref}")
+    if block_id is not None and not index.block_exists(canonical_note, block_id):
+        raise click.ClickException(f"block not found: {canonical_note}#{block_id}")
+    return canonical_note, block_id, path
+
+
+def _render_note_or_block(note_id: str, block_id: str | None) -> str:
+    return note_id if block_id is None else f"{note_id}#{block_id}"
+
+
+def _wire_direction(incoming: bool, outgoing: bool) -> str:
+    if incoming and not outgoing:
+        return "incoming"
+    if outgoing and not incoming:
+        return "outgoing"
+    return "both"
+
+
+def _wire_gc_plan(index: Index) -> list[dict[str, Any]]:
+    payload = index.wire_doctor()
+    issues_by_path: dict[str, list[dict[str, Any]]] = {}
+    for issue in payload["issues"]:
+        issues_by_path.setdefault(str(issue["path"]), []).append(issue)
+
+    plan: list[dict[str, Any]] = []
+    removable_codes = {
+        "missing_target",
+        "missing_predicate",
+        "invalid_target",
+        "invalid_predicate",
+        "orphan_target_note",
+        "orphan_target_block",
+    }
+    for path_text, issues in sorted(issues_by_path.items()):
+        path = Path(path_text)
+        if not path.exists():
+            continue
+        note = Note.from_file(path)
+        note_id = str(note.frontmatter.get("id") or path.stem)
+        wires, _ = parse_wire_comments(note.body, note_id=note_id, path=path)
+        wire_issue_keys = {
+            (
+                str(issue["code"]),
+                int(issue["line"]),
+                str(issue.get("target_note") or ""),
+                str(issue.get("target_block") or ""),
+                str(issue.get("predicate") or ""),
+            )
+            for issue in issues
+            if str(issue["code"]) in removable_codes
+        }
+        malformed_issue_lines = {
+            int(issue["line"])
+            for issue in issues
+            if str(issue["code"]) in {"missing_target", "missing_predicate", "invalid_target"}
+        }
+        spans: set[tuple[int, int]] = set()
+        lines: set[int] = set()
+
+        for wire in wires:
+            wire_key = (
+                "invalid_predicate" if wire.predicate not in VALID_WIRE_PREDICATES else "",
+                wire.line,
+                wire.target_note,
+                wire.target_block or "",
+                wire.predicate,
+            )
+            if wire_key in wire_issue_keys:
+                spans.add((wire.start, wire.end))
+                lines.add(wire.line)
+                continue
+            orphan_note_key = (
+                "orphan_target_note",
+                wire.line,
+                wire.target_note,
+                wire.target_block or "",
+                wire.predicate,
+            )
+            orphan_block_key = (
+                "orphan_target_block",
+                wire.line,
+                wire.target_note,
+                wire.target_block or "",
+                wire.predicate,
+            )
+            if orphan_note_key in wire_issue_keys or orphan_block_key in wire_issue_keys:
+                spans.add((wire.start, wire.end))
+                lines.add(wire.line)
+
+        for match in WIRE_PATTERN.finditer(note.body):
+            line = note.body.count("\n", 0, match.start()) + 1
+            if line in malformed_issue_lines:
+                spans.add((match.start(), match.end()))
+                lines.add(line)
+
+        if spans:
+            plan.append(
+                {
+                    "path": str(path),
+                    "line_numbers": sorted(lines),
+                    "span_count": len(spans),
+                    "spans": sorted(spans),
+                }
+            )
+    return plan
+
+
 @click.group()
 def main() -> None:
     """cartographer — maps your knowledge."""
@@ -550,6 +695,12 @@ def doctor(as_json: bool) -> None:
         "working-set: "
         f"{'warn' if working_set['expired_count'] else 'ok'}  "
         f"{working_set['count']} entries  expired={working_set['expired_count']}  pinned={working_set['pinned_count']}"
+    )
+    wires = payload["wires"]
+    click.echo(
+        "wires: "
+        f"{'warn' if wires['issue_count'] else 'ok'}  "
+        f"{wires['count']} indexed  issues={wires['issue_count']}"
     )
     click.echo(f"git: {payload['git']}")
     if payload["warnings"]:
@@ -703,6 +854,270 @@ def qmd_bootstrap() -> None:
     else:
         click.echo("embed: qmd embed failed; run `qmd embed` manually")
     click.echo("next: `cart query \"plain language query\"` now prefers qmd for atlas-scoped matches")
+
+
+@main.group("wire")
+def wire_group() -> None:
+    """semantic wire commands."""
+
+
+@wire_group.command("predicates")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_predicates(as_json: bool) -> None:
+    payload = {
+        "count": len(VALID_WIRE_PREDICATES),
+        "predicates": list(VALID_WIRE_PREDICATES),
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.predicates"))
+        return
+    for predicate in VALID_WIRE_PREDICATES:
+        click.echo(predicate)
+
+
+@wire_group.command("add")
+@click.argument("source")
+@click.argument("target")
+@click.option(
+    "--predicate",
+    required=True,
+    type=click.Choice(list(VALID_WIRE_PREDICATES)),
+)
+@click.option("--bidirectional", is_flag=True, help="Mark the relationship as symmetric.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_add(
+    source: str,
+    target: str,
+    predicate: str,
+    bidirectional: bool,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    source_note, source_block, source_path = _resolve_note_or_block_ref(index, source)
+    target_note, target_block, _ = _resolve_note_or_block_ref(index, target)
+
+    existing = [
+        wire
+        for wire in index.list_wires(
+            note_id=source_note,
+            block_id=source_block,
+            direction="outgoing",
+            predicate=predicate,
+        )
+        if wire["target_note"] == target_note
+        and wire["target_block"] == target_block
+        and bool(wire["bidirectional"]) == bidirectional
+    ]
+    payload = {
+        "source": _render_note_or_block(source_note, source_block),
+        "target": _render_note_or_block(target_note, target_block),
+        "predicate": predicate,
+        "bidirectional": bidirectional,
+        "created": False,
+    }
+    if existing:
+        if as_json:
+            _emit_json(_with_schema(payload, surface="wire.add"))
+            return
+        click.echo(
+            f"wire already exists: {payload['source']} --{predicate}--> {payload['target']}"
+        )
+        return
+
+    note = Note.from_file(source_path)
+    comment = render_wire_comment(
+        target_note=target_note,
+        target_block=target_block,
+        predicate=predicate,
+        bidirectional=bidirectional,
+    )
+    insert_wire_comment(note, source_block=source_block, comment=comment)
+    note.write()
+    atlas.refresh_index()
+    payload["created"] = True
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.add"))
+        return
+    click.echo(
+        f"{payload['source']} --{predicate}--> {payload['target']}"
+        + ("  [bidirectional]" if bidirectional else "")
+    )
+
+
+@wire_group.command("ls")
+@click.argument("node")
+@click.option("--incoming", is_flag=True, help="Only show incoming wires.")
+@click.option("--outgoing", is_flag=True, help="Only show outgoing wires.")
+@click.option("--predicate", help="Filter to one predicate.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_list(
+    node: str,
+    incoming: bool,
+    outgoing: bool,
+    predicate: str | None,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    note_id, block_id, _ = _resolve_note_or_block_ref(index, node)
+    direction = _wire_direction(incoming, outgoing)
+    wires = index.list_wires(
+        note_id=note_id,
+        block_id=block_id,
+        direction=direction,
+        predicate=predicate,
+    )
+    payload = {
+        "node": _render_note_or_block(note_id, block_id),
+        "direction": direction,
+        "predicate": predicate,
+        "count": len(wires),
+        "wires": wires,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.list"))
+        return
+    for wire in wires:
+        source_ref = _render_note_or_block(
+            str(wire["source_note"]),
+            None if wire["source_block"] is None else str(wire["source_block"]),
+        )
+        target_ref = _render_note_or_block(
+            str(wire["target_note"]),
+            None if wire["target_block"] is None else str(wire["target_block"]),
+        )
+        direction_label = "in " if wire["direction"] == "incoming" else "out"
+        suffix = "  [bi]" if wire["bidirectional"] else ""
+        click.echo(
+            f"{direction_label:3} {wire['predicate']:18} {source_ref} -> {target_ref}{suffix}"
+        )
+
+
+@wire_group.command("doctor")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_doctor(as_json: bool) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    payload = index.wire_doctor()
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.doctor"))
+        return
+    if payload["issue_count"] == 0:
+        click.echo("wires: ok")
+        return
+    click.echo(f"wires: {payload['issue_count']} issue(s)")
+    for issue in payload["issues"]:
+        click.echo(
+            f"- {issue['path']}:{issue['line']}  {issue['code']}  {issue['message']}"
+        )
+
+
+@wire_group.command("validate")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_validate(as_json: bool) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    payload = index.wire_doctor()
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.validate"))
+    elif payload["issue_count"] == 0:
+        click.echo("wires: valid")
+    else:
+        click.echo(f"wires: invalid ({payload['issue_count']} issue(s))")
+    raise click.exceptions.Exit(1 if payload["issue_count"] else 0)
+
+
+@wire_group.command("gc")
+@click.option("--apply", is_flag=True, help="Remove the candidate wire comments.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_gc(apply: bool, as_json: bool) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    plan = _wire_gc_plan(index)
+    removed = 0
+    if apply:
+        for item in plan:
+            path = Path(str(item["path"]))
+            note = Note.from_file(path)
+            note.body = remove_wire_spans(note.body, list(item["spans"]))
+            note.write()
+            removed += int(item["span_count"])
+        if plan:
+            atlas.refresh_index()
+    payload = {
+        "apply": apply,
+        "candidate_count": sum(int(item["span_count"]) for item in plan),
+        "removed_count": removed,
+        "note_count": len(plan),
+        "notes": [
+            {
+                "path": item["path"],
+                "line_numbers": item["line_numbers"],
+                "candidate_count": item["span_count"],
+            }
+            for item in plan
+        ],
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.gc"))
+        return
+    if not plan:
+        click.echo("wire gc: nothing to clean")
+        return
+    if not apply:
+        click.echo(
+            f"wire gc: {payload['candidate_count']} candidate comment(s) across {payload['note_count']} note(s)"
+        )
+        click.echo("rerun with `cart wire gc --apply` to remove them")
+        for item in payload["notes"]:
+            click.echo(
+                f"- {item['path']}  lines={','.join(str(line) for line in item['line_numbers'])}"
+            )
+        return
+    click.echo(
+        f"wire gc: removed {payload['removed_count']} comment(s) across {payload['note_count']} note(s)"
+    )
+
+
+@wire_group.command("traverse")
+@click.argument("start")
+@click.option("--depth", default=2, type=int, show_default=True)
+@click.option("--predicate", help="Filter to one predicate.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_traverse(
+    start: str,
+    depth: int,
+    predicate: str | None,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    start_note, _block_id, _path = _resolve_note_or_block_ref(index, start)
+    payload = index.traverse_wires(
+        start_note=start_note,
+        depth=max(depth, 0),
+        predicate=predicate,
+    )
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.traverse"))
+        return
+    click.echo(
+        f"{payload['start_note']}: {payload['edge_count']} traversed edge(s), {len(payload['visited'])} visited note(s)"
+    )
+    for edge in payload["edges"]:
+        source_ref = _render_note_or_block(
+            str(edge["source_note"]),
+            None if edge["source_block"] is None else str(edge["source_block"]),
+        )
+        target_ref = _render_note_or_block(
+            str(edge["target_note"]),
+            None if edge["target_block"] is None else str(edge["target_block"]),
+        )
+        suffix = "  [bi]" if edge["bidirectional"] else ""
+        click.echo(
+            f"- d{edge['depth']}  {edge['predicate']:18} {source_ref} -> {target_ref}{suffix}"
+        )
 
 
 @main.command()

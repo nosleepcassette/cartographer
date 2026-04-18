@@ -12,6 +12,7 @@ from typing import Any
 
 from .config import load_config
 from .notes import Note, extract_wikilinks
+from .wires import VALID_WIRE_PREDICATES, parse_wire_comments
 
 
 MAX_RETRIES = 5
@@ -63,6 +64,25 @@ CREATE TABLE IF NOT EXISTS block_refs (
     from_block TEXT,
     to_note TEXT NOT NULL,
     to_block TEXT
+);
+
+CREATE TABLE IF NOT EXISTS wires (
+    source_note TEXT NOT NULL,
+    source_block TEXT,
+    target_note TEXT NOT NULL,
+    target_block TEXT,
+    predicate TEXT NOT NULL,
+    bidirectional INTEGER NOT NULL DEFAULT 0,
+    path TEXT NOT NULL,
+    line INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wire_issues (
+    path TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    raw TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -159,12 +179,17 @@ class Index:
         note_count = 0
         block_count = 0
         ref_count = 0
+        wire_count = 0
+        wire_issue_count = 0
+        parsed_notes: list[dict[str, Any]] = []
         with self._connection() as connection:
             connection.executescript(
                 """
                 DELETE FROM notes;
                 DELETE FROM blocks;
                 DELETE FROM block_refs;
+                DELETE FROM wires;
+                DELETE FROM wire_issues;
                 DELETE FROM meta;
                 """
             )
@@ -191,6 +216,47 @@ class Index:
                 ]
                 modified = path.stat().st_mtime
                 word_count = len(note.body.split())
+                parsed_notes.append(
+                    {
+                        "path": path,
+                        "note": note,
+                        "note_id": note_id,
+                        "title": title,
+                        "note_type": note_type,
+                        "status": None if status is None else str(status),
+                        "tags": tags,
+                        "links": links,
+                        "modified": modified,
+                        "word_count": word_count,
+                    }
+                )
+
+            aliases: dict[str, str] = {}
+            for item in parsed_notes:
+                path = Path(item["path"])
+                note_id = str(item["note_id"])
+                aliases[note_id] = note_id
+                try:
+                    relative = path.resolve().relative_to(self.root.resolve())
+                except ValueError:
+                    relative = path
+                aliases[relative.with_suffix("").as_posix()] = note_id
+                aliases[path.stem] = note_id
+
+            for item in parsed_notes:
+                path = Path(item["path"])
+                note = item["note"]
+                note_id = str(item["note_id"])
+                title = str(item["title"])
+                note_type = str(item["note_type"])
+                status = item["status"]
+                tags = item["tags"]
+                links = [
+                    aliases.get(str(link).strip().removesuffix(".md").strip("/"), str(link))
+                    for link in item["links"]
+                ]
+                modified = float(item["modified"])
+                word_count = int(item["word_count"])
 
                 connection.execute(
                     """
@@ -231,7 +297,11 @@ class Index:
                 for link in links:
                     refs.add((link, None))
                 for target_note, target_block in extract_wikilinks(note.body):
-                    refs.add((target_note, target_block))
+                    normalized_target = aliases.get(
+                        target_note.strip().removesuffix(".md").strip("/"),
+                        target_note,
+                    )
+                    refs.add((normalized_target, target_block))
                 for target_note, target_block in refs:
                     connection.execute(
                         """
@@ -241,13 +311,57 @@ class Index:
                         (note_id, target_note, target_block),
                     )
                     ref_count += 1
+
+                wires, wire_issues = parse_wire_comments(
+                    note.body,
+                    note_id=note_id,
+                    path=path,
+                )
+                for wire in wires:
+                    normalized_target = aliases.get(
+                        wire.target_note.strip().removesuffix(".md").strip("/"),
+                        wire.target_note,
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO wires
+                        (source_note, source_block, target_note, target_block, predicate, bidirectional, path, line)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            wire.source_note,
+                            wire.source_block,
+                            normalized_target,
+                            wire.target_block,
+                            wire.predicate,
+                            1 if wire.bidirectional else 0,
+                            wire.path,
+                            wire.line,
+                        ),
+                    )
+                    wire_count += 1
+                for issue in wire_issues:
+                    connection.execute(
+                        """
+                        INSERT INTO wire_issues (path, line, code, message, raw)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (issue.path, issue.line, issue.code, issue.message, issue.raw),
+                    )
+                    wire_issue_count += 1
                 note_count += 1
 
             connection.execute(
                 "INSERT INTO meta (key, value) VALUES ('last_rebuild', ?)",
                 (str(time.time()),),
             )
-        return {"notes": note_count, "blocks": block_count, "refs": ref_count}
+        return {
+            "notes": note_count,
+            "blocks": block_count,
+            "refs": ref_count,
+            "wires": wire_count,
+            "wire_issues": wire_issue_count,
+        }
 
     def update(self, _note: Note) -> dict[str, Any]:
         return self.rebuild()
@@ -366,17 +480,276 @@ class Index:
         return [str(row["path"]) for row in rows]
 
     def find_note_path(self, note_id: str) -> Path | None:
+        canonical_note_id = self.canonicalize_note_ref(note_id)
+        if canonical_note_id is not None:
+            note_id = canonical_note_id
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT path FROM notes WHERE id = ? LIMIT 1",
                 (note_id,),
             ).fetchone()
         if row is not None:
-            return Path(str(row["path"]))
+                return Path(str(row["path"]))
         for path in self.iter_note_paths():
             if path.stem == note_id:
                 return path
         return None
+
+    def canonicalize_note_ref(self, note_ref: str) -> str | None:
+        clean_ref = note_ref.strip().removesuffix(".md").strip("/")
+        if not clean_ref:
+            return None
+        with self._connection() as connection:
+            rows = connection.execute("SELECT id, path FROM notes").fetchall()
+        aliases: dict[str, str] = {}
+        for row in rows:
+            note_id = str(row["id"])
+            aliases[note_id] = note_id
+            try:
+                relative = Path(str(row["path"])).resolve().relative_to(self.root.resolve())
+            except ValueError:
+                relative = Path(str(row["path"]))
+            aliases[relative.with_suffix("").as_posix()] = note_id
+            aliases[Path(str(row["path"])).stem] = note_id
+        return aliases.get(clean_ref)
+
+    def block_exists(self, note_id: str, block_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM blocks
+                WHERE note_id = ? AND block_id = ?
+                LIMIT 1
+                """,
+                (note_id, block_id),
+            ).fetchone()
+        return row is not None
+
+    def list_wires(
+        self,
+        *,
+        note_id: str,
+        block_id: str | None = None,
+        direction: str = "both",
+        predicate: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if direction not in {"incoming", "outgoing", "both"}:
+            raise ValueError(f"unsupported wire direction: {direction}")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if direction in {"outgoing", "both"}:
+            clauses.append(
+                "(source_note = ? AND (? IS NULL OR source_block = ?))"
+            )
+            params.extend([note_id, block_id, block_id])
+        if direction in {"incoming", "both"}:
+            clauses.append(
+                "(target_note = ? AND (? IS NULL OR target_block = ?))"
+            )
+            params.extend([note_id, block_id, block_id])
+        if not clauses:
+            return []
+        statement = (
+            """
+            SELECT source_note, source_block, target_note, target_block, predicate, bidirectional, path, line
+            FROM wires
+            WHERE (
+            """
+            + " OR ".join(clauses)
+            + ")"
+        )
+        if predicate is not None:
+            statement += " AND predicate = ?"
+            params.append(predicate)
+        statement += " ORDER BY path ASC, line ASC"
+        with self._connection() as connection:
+            rows = connection.execute(statement, params).fetchall()
+
+        wires: list[dict[str, Any]] = []
+        for row in rows:
+            source_note = str(row["source_note"])
+            source_block = None if row["source_block"] is None else str(row["source_block"])
+            target_note = str(row["target_note"])
+            target_block = None if row["target_block"] is None else str(row["target_block"])
+            current_direction = (
+                "incoming"
+                if target_note == note_id and target_block == block_id
+                else "outgoing"
+            )
+            wires.append(
+                {
+                    "direction": current_direction,
+                    "source_note": source_note,
+                    "source_block": source_block,
+                    "target_note": target_note,
+                    "target_block": target_block,
+                    "predicate": str(row["predicate"]),
+                    "bidirectional": bool(row["bidirectional"]),
+                    "path": str(row["path"]),
+                    "line": int(row["line"]),
+                }
+            )
+        return wires
+
+    def wire_doctor(self) -> dict[str, Any]:
+        issues: list[dict[str, Any]] = []
+        with self._connection() as connection:
+            malformed_rows = connection.execute(
+                """
+                SELECT path, line, code, message, raw
+                FROM wire_issues
+                ORDER BY path ASC, line ASC
+                """
+            ).fetchall()
+            wire_rows = connection.execute(
+                """
+                SELECT source_note, source_block, target_note, target_block, predicate, bidirectional, path, line
+                FROM wires
+                ORDER BY path ASC, line ASC
+                """
+            ).fetchall()
+
+        valid_predicates = set(VALID_WIRE_PREDICATES)
+        for row in malformed_rows:
+            issues.append(
+                {
+                    "path": str(row["path"]),
+                    "line": int(row["line"]),
+                    "code": str(row["code"]),
+                    "message": str(row["message"]),
+                    "raw": str(row["raw"]),
+                }
+            )
+
+        for row in wire_rows:
+            source_note = str(row["source_note"])
+            target_note = str(row["target_note"])
+            target_block = None if row["target_block"] is None else str(row["target_block"])
+            predicate = str(row["predicate"])
+            path = str(row["path"])
+            line = int(row["line"])
+            if predicate not in valid_predicates:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_predicate",
+                        "message": f"invalid wire predicate: {predicate}",
+                        "raw": "",
+                        "source_note": source_note,
+                        "source_block": None if row["source_block"] is None else str(row["source_block"]),
+                        "target_note": target_note,
+                        "target_block": target_block,
+                        "predicate": predicate,
+                    }
+                )
+                continue
+            target_exists = self.find_note_path(target_note) is not None
+            if not target_exists:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "orphan_target_note",
+                        "message": f"wire target note does not exist: {target_note}",
+                        "raw": "",
+                        "source_note": source_note,
+                        "source_block": None if row["source_block"] is None else str(row["source_block"]),
+                        "target_note": target_note,
+                        "target_block": target_block,
+                        "predicate": predicate,
+                    }
+                )
+                continue
+            if target_block is not None and not self.block_exists(target_note, target_block):
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "orphan_target_block",
+                        "message": f"wire target block does not exist: {target_note}#{target_block}",
+                        "raw": "",
+                        "source_note": source_note,
+                        "source_block": None if row["source_block"] is None else str(row["source_block"]),
+                        "target_note": target_note,
+                        "target_block": target_block,
+                        "predicate": predicate,
+                    }
+                )
+
+        return {
+            "valid": not issues,
+            "issue_count": len(issues),
+            "issues": issues,
+        }
+
+    def traverse_wires(
+        self,
+        *,
+        start_note: str,
+        depth: int = 2,
+        predicate: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_note, source_block, target_note, target_block, predicate, bidirectional
+                FROM wires
+                """
+            ).fetchall()
+        adjacency: dict[str, list[dict[str, Any]]] = {}
+        valid_predicates = set(VALID_WIRE_PREDICATES)
+        for row in rows:
+            predicate_value = str(row["predicate"])
+            if predicate_value not in valid_predicates:
+                continue
+            if predicate is not None and predicate_value != predicate:
+                continue
+            source = str(row["source_note"])
+            target = str(row["target_note"])
+            edge = {
+                "source_note": source,
+                "source_block": None if row["source_block"] is None else str(row["source_block"]),
+                "target_note": target,
+                "target_block": None if row["target_block"] is None else str(row["target_block"]),
+                "predicate": predicate_value,
+                "bidirectional": bool(row["bidirectional"]),
+            }
+            adjacency.setdefault(source, []).append(edge)
+            if bool(row["bidirectional"]):
+                reverse = {
+                    **edge,
+                    "source_note": target,
+                    "source_block": None,
+                    "target_note": source,
+                    "target_block": None,
+                }
+                adjacency.setdefault(target, []).append(reverse)
+
+        visited = {start_note}
+        frontier = {start_note}
+        traversed: list[dict[str, Any]] = []
+        for current_depth in range(1, max(depth, 0) + 1):
+            next_frontier: set[str] = set()
+            for node in sorted(frontier):
+                for edge in adjacency.get(node, []):
+                    target = str(edge["target_note"])
+                    traversed.append({**edge, "depth": current_depth})
+                    if target not in visited:
+                        visited.add(target)
+                        next_frontier.add(target)
+            frontier = next_frontier
+            if not frontier:
+                break
+        return {
+            "start_note": start_note,
+            "depth": depth,
+            "predicate": predicate,
+            "visited": sorted(visited),
+            "edge_count": len(traversed),
+            "edges": traversed,
+        }
 
     def status(self) -> dict[str, Any]:
         with self._connection() as connection:
@@ -386,8 +759,16 @@ class Index:
             block_row = connection.execute(
                 "SELECT COUNT(*) AS count FROM blocks"
             ).fetchone()
+            wire_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM wires"
+            ).fetchone()
+            wire_issue_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM wire_issues"
+            ).fetchone()
         return {
             "notes": 0 if note_row is None else int(note_row["count"]),
             "blocks": 0 if block_row is None else int(block_row["count"]),
+            "wires": 0 if wire_row is None else int(wire_row["count"]),
+            "wire_issues": 0 if wire_issue_row is None else int(wire_issue_row["count"]),
             "last_rebuild": self.last_rebuild(),
         }

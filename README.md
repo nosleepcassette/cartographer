@@ -85,6 +85,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
+- File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
 - Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -264,6 +265,25 @@ cart therapy export
 cart therapy export --format json
 cart therapy export --json
 ```
+
+### semantic wires
+
+```zsh
+cart wire predicates
+cart wire add alpha#b-alpha-1 beta --predicate supports
+cart wire ls alpha --json
+cart wire traverse alpha --depth 2
+cart wire doctor
+cart wire gc
+```
+
+Wires are stored inline as HTML comments in notes, for example:
+
+```md
+<!-- cart:wire target="beta#b-beta-4" predicate="supports" -->
+```
+
+Cart indexes them for traversal, but the file remains the source of truth.
 
 ### external import
 

@@ -91,6 +91,8 @@ def test_doctor_status_and_query_json_outputs(tmp_path, monkeypatch) -> None:
     assert doctor_payload["initialized"] is True
     assert doctor_payload["mapsos"]["export_count"] == 1
     assert doctor_payload["index"]["exists"] is True
+    assert doctor_payload["wires"]["count"] == 0
+    assert doctor_payload["wires"]["issue_count"] == 0
 
     status_result = runner.invoke(main, ["status", "--json"])
     assert status_result.exit_code == 0
