@@ -91,18 +91,18 @@ cartographer assumes both exist and treats them as first-class:
 
 ## what shipped in this push
 
-**The emotional topology layer is live.** This is where avoidance detection becomes real.
+**The emotional topology layer is live.** This is where real-time intervention becomes possible.
 
-- **Semantic wiring with emotional predicates.** Wires now capture what relationships *feel* like, not just their existence. `cart wire add sarah maps --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge` tells the system: pining territory, energizing but risky, growth work. Wires index by emotional metadata; queries filter avoidance-risk, energy-impact, valence.
-- **Separate graphs for signal clarity.** Session logs now link only to projects/days/agent (not auto-linked to people). The exocortex (relationship graph) stays clean. Activity timeline (sessions) tracks what you worked on. Two mental models, cross-referenceable.
-- **Real-time avoidance detection.** Therapy plugin queries emotional topology: "You haven't responded to Sarah in 3 days. That's your avoidance pattern (high-risk territory, building state). Last time: somatic grounding worked 99%. Want to try?"
-- **Capacity-aware routing.** When energy is low, surface support people (positive-valence, low-risk). When energy is high, surface growth-edges (growth-edge: yes, avoidance-risk: high). mapsOS state + emotional topology = right people at right time.
-- **Emotional visualization.** HTML graph colors nodes by emotional-valence (green=positive, red=negative, purple=mixed). Sizes by avoidance-risk (larger = higher risk). Wires show relationship types. Detail pane shows full emotional context.
-- **Pattern evolution tracking.** Therapy plugin logs outcomes ("stayed with grief 2 hours"). Wires track growth: maggie.avoidance-risk: high → medium over 6 months. The graph itself becomes feedback.
-- **The visual graph is a real operating surface.** Deterministic 3D clustered layout, emotional metadata rendering, smart navigation, offline rendering, search, filters, PNG/JSON export, shareable state.
-- **The atlas TUI is now a navigation tool, not a graph renderer.** Section jumps, semantic wire neighborhood, markdown rendering, tasks overlay, backlinks, mapsOS handoff (`m` key). Responsive. Clean.
-- **Therapy integration is real and data-driven.** Cassette's plugin detects spirals (RSD, isolation, shame, executive paralysis). Surfaces grounded counter-evidence ranked by success rate. Builds pattern library: "somatic grounding: 99% success, typical duration 20min". Tracks outcomes. Updates wires with growth data.
-- **The system is three integrated layers.** mapsOS (state tracking) → cartographer (memory + wiring) → therapy-plugin (real-time intervention). Each feeds the next. Together: a system that catches avoidance as it forms.
+- **Semantic wiring with emotional predicates.** Wires now capture what relationships *feel* like, not just their existence. `cart wire add contact-a user --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge` tells the system: pining territory, energizing but risky, growth work. Wires index by emotional metadata; queries filter avoidance-risk, energy-impact, valence. Works for any relationship, any configuration.
+- **Separate graphs for signal clarity.** Session logs now link only to projects/days/agent (not auto-linked to people). The exocortex (relationship graph) stays clean. Activity timeline (sessions) tracks what you worked on. Two mental models, cross-referenceable. Removes frequency noise.
+- **Real-time avoidance detection.** Therapy plugin queries emotional topology: "You haven't responded to contact-a in 3 days. That's your avoidance pattern (high-risk territory, building state). Last successful intervention: somatic grounding (99% success). Want to try?" Works for any avoidance-risk territory you've configured.
+- **Capacity-aware routing.** When energy is low, surface support people (positive-valence, low-risk). When energy is high, surface growth-edges (growth-edge: yes, avoidance-risk: high). mapsOS state + emotional topology = right relationships at right time. Adaptive to your energy.
+- **Emotional visualization.** HTML graph colors nodes by emotional-valence (green=positive, red=negative, purple=mixed). Sizes by avoidance-risk (larger = higher risk). Wires show relationship types. Detail pane shows full emotional context. Pattern becomes visible.
+- **Pattern evolution tracking.** Therapy plugin logs outcomes ("stayed with difficult conversation 2 hours"). Wires track growth over time: contact-b.avoidance-risk: high → medium over 6 months. The graph itself becomes feedback. You see yourself improving.
+- **The visual graph is a real operating surface.** Deterministic 3D clustered layout, emotional metadata rendering, smart navigation, offline rendering, search, filters, PNG/JSON export, shareable state. Functional and beautiful.
+- **The atlas TUI is now a navigation tool, not a graph renderer.** Section jumps, semantic wire neighborhood, markdown rendering, tasks overlay, backlinks, mapsOS handoff (`m` key). Responsive. Clean. Focuses on what matters.
+- **Therapy integration is real and data-driven.** Detects emotional spirals (rejection sensitivity, isolation, shame, executive paralysis). Surfaces grounded counter-evidence ranked by success rate in your history. Builds pattern library: "intervention-x: 99% success, typical duration 20min". Tracks outcomes. Updates understanding with growth data.
+- **The system is three integrated layers.** mapsOS (state tracking) → cartographer (memory + wiring) → therapy-plugin (real-time intervention). Each feeds the next. Together: a system that catches your pattern as it forms, before damage compounds.
 
 ---
 
@@ -368,12 +368,13 @@ cart therapy counter-evidence "I wasn't giving them what they needed"
 
 ```zsh
 cart wire predicates
-cart wire add alpha#b-alpha-1 beta --predicate supports
-cart wire add sarah maps --relationship relates_to_person --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge --current-state building
-cart wire ls alpha --json
+cart wire add note-a note-b --predicate supports
+cart wire add contact-a user --relationship relates_to_person --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge --current-state building
+cart wire add contact-b user --relationship relates_to_person --emotional-valence positive --energy-impact energizing --avoidance-risk none --current-state active
+cart wire ls note-a --json
 cart wire query --avoidance-risk high --json
-cart wire emotional-summary sarah
-cart wire traverse alpha --depth 2
+cart wire emotional-summary contact-a
+cart wire traverse note-a --depth 2
 cart wire doctor
 cart wire gc
 ```
@@ -381,8 +382,8 @@ cart wire gc
 Wires are stored inline as HTML comments in notes, for example:
 
 ```md
-<!-- cart:wire target="beta#b-beta-4" predicate="supports" relationship="supports" -->
-<!-- cart:wire target="maps" predicate="relates_to_person" relationship="relates_to_person" emotional_valence="mixed" energy_impact="energizing" avoidance_risk="high" growth_edge="true" current_state="building" valence_note="growth territory" -->
+<!-- cart:wire target="note-b#block-id" predicate="supports" relationship="supports" -->
+<!-- cart:wire target="contact-a" predicate="relates_to_person" relationship="relates_to_person" emotional_valence="mixed" energy_impact="energizing" avoidance_risk="high" growth_edge="true" current_state="building" valence_note="pining territory but growth work" -->
 ```
 
 Cart indexes them for traversal and emotional querying, but the file remains the source of truth. `cart wire add` is idempotent now: rerunning the same source/target/predicate updates the inline comment instead of duplicating it.
