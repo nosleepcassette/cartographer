@@ -1298,7 +1298,7 @@ class CartTUI(App[None]):
         self.filter_text = event.value
         if self._filter_debounce_handle is not None:
             self.remove_timer(self._filter_debounce_handle)
-        self._filter_debounce_handle = self.call_later(self._apply_filter_debounced, delay=0.2)
+        self._filter_debounce_handle = self.set_timer(self._apply_filter_debounced, interval=0.2, repeat=False)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "graph-filter":
