@@ -52,6 +52,10 @@ from .session_import import clean_entity_imports
 from .tasks import append_task, mark_done, query_tasks, sort_tasks
 from .vimwiki import patch_vimrc
 from .worklog import Worklog
+from .working_set import add_entry as add_working_set_entry
+from .working_set import gc_entries as gc_working_set_entries
+from .working_set import list_entries as list_working_set_entries
+from .working_set import working_set_stats
 
 JSON_SCHEMA_VERSION = "2026-04-17"
 
@@ -169,6 +173,11 @@ def _doctor_payload(atlas: Atlas) -> dict[str, Any]:
         if plugin_dir.exists()
         else []
     )
+    working_set = working_set_stats(atlas.root)
+    if working_set["expired_count"]:
+        warnings.append(
+            f"working set has {working_set['expired_count']} expired entries; run `cart working-set gc`"
+        )
 
     payload = {
         "root": str(atlas.root),
@@ -201,6 +210,7 @@ def _doctor_payload(atlas: Atlas) -> dict[str, Any]:
             "count": len(plugin_files),
             "names": plugin_files,
         },
+        "working_set": working_set,
         "git": atlas.git_status_summary() if initialized else "not initialized",
         "warnings": warnings,
     }
@@ -533,6 +543,12 @@ def doctor(as_json: bool) -> None:
     click.echo(
         "plugins: "
         f"{'ok' if plugins['exists'] else 'warn'}  {plugins['count']} files in {plugins['dir']}"
+    )
+    working_set = payload["working_set"]
+    click.echo(
+        "working-set: "
+        f"{'warn' if working_set['expired_count'] else 'ok'}  "
+        f"{working_set['count']} entries  expired={working_set['expired_count']}  pinned={working_set['pinned_count']}"
     )
     click.echo(f"git: {payload['git']}")
     if payload["warnings"]:
@@ -1099,6 +1115,99 @@ def sessions_recent(limit: int, agent: str | None, as_json: bool) -> None:
         click.echo(
             f"{session['agent']:8} {session['date'] or 'unknown-date'}  {session['title']}{suffix}"
         )
+
+
+@main.group("working-set")
+def working_set() -> None:
+    """temporary, role-scoped working memory surfaces."""
+
+
+@working_set.command("add")
+@click.argument("title")
+@click.option("--role", default="intake", show_default=True)
+@click.option("--scope", default="general", show_default=True)
+@click.option("--body", default="", help="Optional body text for the entry.")
+@click.option("--provenance", multiple=True, help="Repeatable provenance references.")
+@click.option("--verification-needed", is_flag=True, help="Mark that the entry still needs source verification.")
+@click.option("--pinned", is_flag=True, help="Do not expire this entry automatically.")
+@click.option("--ttl-hours", default=24, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def working_set_add(
+    title: str,
+    role: str,
+    scope: str,
+    body: str,
+    provenance: tuple[str, ...],
+    verification_needed: bool,
+    pinned: bool,
+    ttl_hours: int,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    entry = add_working_set_entry(
+        atlas.root,
+        title=title,
+        role=role,
+        scope=scope,
+        body=body,
+        provenance=list(provenance),
+        verification_needed=verification_needed,
+        pinned=pinned,
+        ttl_hours=ttl_hours,
+    )
+    if as_json:
+        _emit_json(_with_schema({"entry": entry}, surface="working-set.add"))
+        return
+    expiry = "pinned" if entry["pinned"] else f"expires {entry['expires_at']}"
+    click.echo(f"{entry['id']}  {entry['role']}/{entry['scope']}  {expiry}")
+
+
+@working_set.command("list")
+@click.option("--role")
+@click.option("--scope")
+@click.option("--include-expired", is_flag=True, help="Show expired entries instead of lazily cleaning them.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def working_set_list(
+    role: str | None,
+    scope: str | None,
+    include_expired: bool,
+    as_json: bool,
+) -> None:
+    atlas = get_atlas()
+    entries = list_working_set_entries(
+        atlas.root,
+        role=role,
+        scope=scope,
+        include_expired=include_expired,
+        delete_expired=not include_expired,
+    )
+    payload = {
+        "role": role,
+        "scope": scope,
+        "count": len(entries),
+        "entries": entries,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="working-set.list"))
+        return
+    for entry in entries:
+        status = "expired" if entry.get("expired") else ("pinned" if entry.get("pinned") else "active")
+        click.echo(
+            f"{entry['id']}  {entry['role']}/{entry['scope']}  {status}  {entry['title']}"
+        )
+
+
+@working_set.command("gc")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def working_set_gc(as_json: bool) -> None:
+    atlas = get_atlas()
+    payload = gc_working_set_entries(atlas.root)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="working-set.gc"))
+        return
+    click.echo(
+        f"removed {payload['removed_count']} expired working-set entr{'y' if payload['removed_count'] == 1 else 'ies'}"
+    )
 
 
 def _resolve_session_import_paths(

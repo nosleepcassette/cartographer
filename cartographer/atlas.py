@@ -61,6 +61,10 @@ class Atlas:
     def worklog_db_path(self) -> Path:
         return self.meta_dir / "worklog.db"
 
+    @property
+    def working_set_dir(self) -> Path:
+        return self.root / "working-set"
+
     def is_initialized(self) -> bool:
         return self.config_path.exists()
 
@@ -88,6 +92,7 @@ class Atlas:
             self.root / "agents" / "mapsOS" / "learnings",
             self.root / "entities",
             self.root / "tasks",
+            self.root / "working-set",
             self.root / "ref",
         ]
 
