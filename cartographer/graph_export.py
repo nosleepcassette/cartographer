@@ -448,10 +448,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
     .app {
       display: grid;
-      grid-template-columns: 19rem 1fr 20rem;
-      gap: 0.65rem;
+      grid-template-columns: 17rem 1fr 18rem;
+      gap: 0.5rem;
       height: 100vh;
-      padding: 0.65rem;
+      padding: 0.5rem;
     }
     .panel {
       min-height: 0;
@@ -464,8 +464,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .sidebar, .detail {
       display: flex;
       flex-direction: column;
-      gap: 0.65rem;
-      padding: 0.7rem;
+      gap: 0.5rem;
+      padding: 0.5rem;
       overflow: hidden;
     }
     .canvas-panel {
@@ -496,45 +496,47 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .node-label.active { color: var(--accent); font-weight: 700; }
     .eyebrow {
       color: var(--muted);
-      font-size: 0.75rem;
+      font-size: 0.65rem;
       text-transform: uppercase;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.15em;
     }
     h1, h2, p { margin: 0; }
     h1 {
       font-family: "Baskerville", "Iowan Old Style", serif;
-      font-size: 1.55rem;
+      font-size: 1.3rem;
       line-height: 1;
       color: var(--accent);
     }
-    h2 { font-size: 1.08rem; line-height: 1.1; }
-    .subtle { color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
+    h2 { font-size: 0.95rem; line-height: 1.05; }
+    .subtle { color: var(--muted); font-size: 0.75rem; line-height: 1.25; }
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.7rem;
+      gap: 0.5rem;
     }
     .stat, .card {
-      padding: 0.6rem;
-      border-radius: 0.8rem;
+      padding: 0.4rem;
+      border-radius: 0.7rem;
       background: var(--surface);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
     .stat strong {
       display: block;
       color: var(--accent);
-      font-size: 1.1rem;
+      font-size: 0.95rem;
     }
-    .label { color: var(--muted); font-size: 0.8rem; }
-    .search-wrap { display: grid; gap: 0.45rem; }
+    .stat { font-size: 0.75rem; }
+    .label { color: var(--muted); font-size: 0.7rem; }
+    .search-wrap { display: grid; gap: 0.3rem; }
     input[type="search"] {
       width: 100%;
       border: 1px solid rgba(255, 255, 255, 0.08);
       background: rgba(0, 0, 0, 0.28);
       color: var(--text);
-      border-radius: 0.85rem;
-      padding: 0.8rem 0.9rem;
+      border-radius: 0.75rem;
+      padding: 0.5rem 0.65rem;
       outline: none;
+      font-size: 0.8rem;
     }
     input[type="search"]:focus {
       border-color: rgba(237, 203, 128, 0.42);
@@ -545,14 +547,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       border: 1px solid rgba(255, 255, 255, 0.08);
       background: rgba(0, 0, 0, 0.28);
       color: var(--text);
-      border-radius: 0.85rem;
-      padding: 0.8rem 0.9rem;
+      border-radius: 0.7rem;
+      padding: 0.4rem 0.5rem;
       outline: none;
       font: inherit;
+      font-size: 0.8rem;
     }
     select:focus {
       border-color: rgba(237, 203, 128, 0.42);
-      box-shadow: 0 0 0 4px rgba(237, 203, 128, 0.08);
+      box-shadow: 0 0 0 3px rgba(237, 203, 128, 0.08);
     }
     select option {
       background: #1a1f2e;
@@ -561,22 +564,23 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .controls, .toggle-grid {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
+      gap: 0.35rem;
     }
     .toggle-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.5rem;
+      gap: 0.35rem;
     }
     button, .button-link {
       border: 0;
       border-radius: 999px;
-      padding: 0.58rem 0.92rem;
+      padding: 0.4rem 0.65rem;
       background: linear-gradient(135deg, rgba(237, 203, 128, 0.32), rgba(255, 159, 90, 0.28));
       color: var(--text);
       cursor: pointer;
       text-decoration: none;
       font: inherit;
+      font-size: 0.75rem;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -586,29 +590,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     label.toggle {
       display: inline-flex;
       align-items: center;
-      gap: 0.45rem;
-      padding: 0.55rem 0.7rem;
-      border-radius: 0.85rem;
+      gap: 0.3rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 0.7rem;
       background: rgba(255, 255, 255, 0.03);
       color: var(--muted);
-      font-size: 0.84rem;
+      font-size: 0.75rem;
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
     label.toggle input { accent-color: var(--accent); }
     .legend {
       display: grid;
-      gap: 0.45rem;
-      max-height: 15rem;
+      gap: 0.3rem;
+      max-height: 12rem;
       overflow: auto;
-      padding-right: 0.2rem;
+      padding-right: 0.15rem;
     }
     .legend-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 0.55rem;
+      gap: 0.35rem;
       align-items: center;
-      padding: 0.48rem 0.55rem;
-      border-radius: 0.8rem;
+      padding: 0.3rem 0.4rem;
+      border-radius: 0.65rem;
       background: rgba(255, 255, 255, 0.03);
     }
     .legend-row.active {
@@ -632,47 +636,49 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       gap: 0.4rem;
     }
     .legend-toggle {
-      padding: 0.28rem 0.62rem;
-      font-size: 0.76rem;
+      padding: 0.2rem 0.4rem;
+      font-size: 0.7rem;
       background: rgba(255, 255, 255, 0.05);
     }
     .swatch {
-      width: 0.85rem;
-      height: 0.85rem;
+      width: 0.7rem;
+      height: 0.7rem;
       border-radius: 999px;
       display: inline-block;
-      box-shadow: 0 0 12px currentColor;
+      box-shadow: 0 0 10px currentColor;
     }
     .mono {
       font-family: "SFMono-Regular", "Menlo", monospace;
-      font-size: 0.82rem;
+      font-size: 0.72rem;
     }
     .chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.42rem;
+      gap: 0.3rem;
     }
     .chip {
-      padding: 0.26rem 0.55rem;
+      padding: 0.2rem 0.4rem;
       border-radius: 999px;
       background: rgba(237, 203, 128, 0.12);
-      font-size: 0.77rem;
+      font-size: 0.7rem;
     }
     .list {
       list-style: none;
       margin: 0;
       padding: 0;
       display: grid;
-      gap: 0.45rem;
+      gap: 0.3rem;
     }
     .list li {
-      padding: 0.4rem 0.5rem;
-      border-radius: 0.7rem;
+      padding: 0.3rem 0.4rem;
+      border-radius: 0.6rem;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.04);
       cursor: pointer;
-      font-size: 0.78rem;
+      font-size: 0.72rem;
     }
+    .list li strong { font-size: 0.72rem; line-height: 1.15; }
+    .list li span { font-size: 0.65rem; }
     .list li.empty {
       cursor: default;
       color: var(--muted);
@@ -680,12 +686,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .list strong { display: block; line-height: 1.3; }
     .detail-scroll {
       overflow: auto;
-      padding-right: 0.2rem;
+      padding-right: 0.12rem;
       display: grid;
-      gap: 0.55rem;
+      gap: 0.4rem;
     }
     .preview {
       color: #f3ead9;
+      font-size: 0.78rem;
     }
     .preview > :first-child { margin-top: 0; }
     .preview > :last-child { margin-bottom: 0; }
@@ -693,15 +700,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .preview h2,
     .preview h3,
     .preview h4 {
-      margin: 0 0 0.5rem;
+      margin: 0 0 0.35rem;
       font-family: "Baskerville", "Iowan Old Style", serif;
-      line-height: 1.05;
+      line-height: 1.02;
       color: #fff0c9;
     }
-    .preview h1 { font-size: 1.2rem; }
-    .preview h2 { font-size: 1rem; }
-    .preview h3 { font-size: 0.92rem; }
-    .preview h4 { font-size: 0.86rem; }
+    .preview h1 { font-size: 1rem; }
+    .preview h2 { font-size: 0.9rem; }
+    .preview h3 { font-size: 0.82rem; }
+    .preview h4 { font-size: 0.78rem; }
     .preview p,
     .preview ul,
     .preview ol,
@@ -709,20 +716,20 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .preview pre,
     .preview table,
     .preview hr {
-      margin: 0 0 0.5rem;
+      margin: 0 0 0.35rem;
     }
     .preview p,
     .preview li {
-      line-height: 1.45;
+      line-height: 1.3;
       color: #f0e5d0;
-      font-size: 0.85rem;
+      font-size: 0.75rem;
     }
     .preview ul,
     .preview ol {
-      padding-left: 1.1rem;
+      padding-left: 0.9rem;
     }
     .preview li + li {
-      margin-top: 0.15rem;
+      margin-top: 0.08rem;
     }
     .preview strong {
       color: #fff7e1;
@@ -812,20 +819,21 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.7rem;
+      gap: 0.5rem;
       flex-wrap: wrap;
+      font-size: 0.72rem;
     }
     .stage-toolbar {
       position: absolute;
-      top: 0.9rem;
-      left: 0.9rem;
-      right: 0.9rem;
+      top: 0.6rem;
+      left: 0.6rem;
+      right: 0.6rem;
       z-index: 2;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 1rem;
-      padding: 0.75rem 0.9rem;
+      gap: 0.7rem;
+      padding: 0.45rem 0.6rem;
       border-radius: 999px;
       background: rgba(8, 10, 16, 0.8);
       border: 1px solid rgba(255, 255, 255, 0.09);
@@ -834,11 +842,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .stage-toolbar .keys {
       display: inline-flex;
       flex-wrap: wrap;
-      gap: 0.75rem;
+      gap: 0.55rem;
       color: var(--muted);
-      font-size: 0.8rem;
+      font-size: 0.7rem;
     }
-    .stage-toolbar .status { color: var(--accent); font-size: 0.82rem; }
+    .stage-toolbar .status { color: var(--accent); font-size: 0.72rem; }
     #help-overlay {
       position: absolute;
       right: 1rem;
@@ -2011,6 +2019,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       items.forEach((item) => element.appendChild(item));
     }
 
+    function maskText(text, minLength = 3) {
+      if (!text) return '';
+      if (text.length <= minLength) return text[0] + '*'.repeat(Math.max(1, text.length - 1));
+      return text[0] + '*'.repeat(text.length - 2) + text[text.length - 1];
+    }
+
     function updateDetail(node) {
       if (!node) {
         detailTitleEl.textContent = 'Nothing selected';
@@ -2029,22 +2043,26 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         return;
       }
 
-      detailTitleEl.textContent = displayNodeName(node);
+      const isPersonInDemoMode = state.demoMode && node.type === 'person';
+      const personIndex = isPersonInDemoMode ? [...nodes].indexOf(node) + 1 : null;
+
+      detailTitleEl.textContent = isPersonInDemoMode ? `Person ${personIndex}` : displayNodeName(node);
       detailSubtitleEl.textContent = detailTypeLabel(node);
-      detailPreviewEl.innerHTML = renderPreviewMarkdown(node.preview || 'No preview available.');
+      detailPreviewEl.innerHTML = isPersonInDemoMode
+        ? renderPreviewMarkdown('[relationship context hidden in demo mode]')
+        : renderPreviewMarkdown(node.preview || 'No preview available.');
       detailPathEl.textContent = node.path || '—';
       openNoteEl.href = fileHref(node.path);
-      selectionStatusEl.textContent = `${displayNodeName(node)} · ${node.type}`;
+      selectionStatusEl.textContent = `${isPersonInDemoMode ? `Person ${personIndex}` : displayNodeName(node)} · ${node.type}`;
 
       detailTagsEl.innerHTML = '';
-      const obscureEmotional = state.demoMode && node.type === 'person';
       for (const value of [
         node.type,
-        !obscureEmotional && node.emotional_valence,
-        !obscureEmotional && node.energy_impact,
-        !obscureEmotional && node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
-        !obscureEmotional && node.growth_edge ? 'growth-edge' : null,
-        !obscureEmotional && node.current_state ? `state:${node.current_state}` : null,
+        !isPersonInDemoMode && node.emotional_valence,
+        !isPersonInDemoMode && node.energy_impact,
+        !isPersonInDemoMode && node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
+        !isPersonInDemoMode && node.growth_edge ? 'growth-edge' : null,
+        !isPersonInDemoMode && node.current_state ? `state:${node.current_state}` : null,
         ...(node.tags || []).slice(0, 8),
       ]) {
         if (!value) {
@@ -2055,8 +2073,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         chip.textContent = value;
         detailTagsEl.appendChild(chip);
       }
-      if (obscureEmotional) {
-        detailEmotionalEl.textContent = '(emotional data hidden in demo mode)';
+      if (isPersonInDemoMode) {
+        detailEmotionalEl.textContent = '(relationship data hidden in demo mode)';
         detailEmotionalNoteEl.textContent = '';
       } else {
         const emotionalBits = nodeEmotionalSummary(node);
