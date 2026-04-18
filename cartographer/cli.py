@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import click
+from click.shell_completion import get_completion_class
 
 from .agent_memory import (
     append_learning,
@@ -16,6 +19,8 @@ from .agent_memory import (
     reject_learnings,
 )
 from .atlas import Atlas
+from .config import save_config
+from .integrations import qmd
 from .daily_brief import build_daily_brief
 from .index import Index
 from .mapsos import (
@@ -69,11 +74,128 @@ def coming_soon(message: str) -> None:
     click.echo(message)
 
 
+_STRUCTURED_QUERY_PREFIXES = (
+    "tag:",
+    "status:",
+    "type:",
+    "links:",
+    "modified:>",
+    "text:",
+    "block-ref:",
+)
+_ATLAS_QMD_CONTEXT = "atlas knowledge graph: agents, projects, entities, tasks, daily notes"
+
+
+def _qmd_settings(atlas: Atlas) -> dict[str, object]:
+    raw = atlas.config.get("qmd", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _supports_qmd_query(expression: str) -> bool:
+    tokens = shlex.split(expression) if expression else []
+    if not tokens:
+        return False
+    return not any(
+        any(token.startswith(prefix) for prefix in _STRUCTURED_QUERY_PREFIXES)
+        for token in tokens
+    )
+
+
+def _qmd_collection_name(atlas: Atlas, settings: dict[str, object]) -> str | None:
+    configured = str(settings.get("default_collection", "")).strip()
+    if configured:
+        return configured
+    return qmd.collection_name_for_path(atlas.root)
+
+
+def _qmd_query_paths(atlas: Atlas, expr: str) -> list[str]:
+    if not _supports_qmd_query(expr):
+        return []
+
+    settings = _qmd_settings(atlas)
+    enabled = str(settings.get("enabled", "auto")).strip().lower() or "auto"
+    if enabled == "off":
+        return []
+
+    if not qmd.is_available():
+        if enabled == "on":
+            raise click.ClickException(
+                "qmd.enabled=on but `qmd` is not installed or not on PATH"
+            )
+        return []
+
+    collection = _qmd_collection_name(atlas, settings)
+    if collection is None:
+        if enabled == "on":
+            raise click.ClickException(
+                "qmd.enabled=on but no qmd collection points at this atlas. run `cart qmd bootstrap`"
+            )
+        return []
+
+    try:
+        min_score = float(settings.get("min_score", 0.35))
+    except (TypeError, ValueError):
+        min_score = 0.35
+
+    hits = qmd.query(
+        expr,
+        collection=collection,
+        min_score=min_score,
+        mode="query",
+    )
+    deduped_paths: list[str] = []
+    seen: set[str] = set()
+    for hit in hits:
+        resolved = qmd.resolve_path(hit.path, fallback_root=atlas.root)
+        if resolved is None or not resolved.exists():
+            continue
+        path = str(resolved)
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped_paths.append(path)
+    return deduped_paths
+
+
+def _bootstrap_qmd(atlas: Atlas) -> dict[str, object]:
+    if not qmd.is_available():
+        return {"available": False}
+
+    collection_name, created = qmd.ensure_collection(atlas.root, preferred_name="atlas")
+    if collection_name is None:
+        raise click.ClickException(
+            f"unable to create or locate a qmd collection for {atlas.root}"
+        )
+
+    if created:
+        qmd.add_context(f"qmd://{collection_name}/", _ATLAS_QMD_CONTEXT)
+
+    updated_config = copy.deepcopy(atlas.config)
+    qmd_config = updated_config.get("qmd", {})
+    if not isinstance(qmd_config, dict):
+        qmd_config = {}
+        updated_config["qmd"] = qmd_config
+    qmd_config["enabled"] = str(qmd_config.get("enabled", "auto")).strip().lower() or "auto"
+    qmd_config["default_collection"] = collection_name
+    save_config(updated_config, root=atlas.root)
+
+    return {
+        "available": True,
+        "collection": collection_name,
+        "created": created,
+        "config_path": atlas.root / ".cartographer" / "config.toml",
+        "embed_ok": qmd.embed_full(),
+    }
+
+
 def resolve_query_paths(atlas: Atlas, expr: str) -> list[str]:
     if "type:task" in expr or any(
         token in expr for token in ("priority:", "project:", "due:")
     ):
         return sorted({str(task.path) for task in query_tasks(atlas.root, expr)})
+    qmd_paths = _qmd_query_paths(atlas, expr)
+    if qmd_paths:
+        return qmd_paths
     return ensure_index_current(atlas).query(expr)
 
 
@@ -118,6 +240,29 @@ def init(path: str, no_vimwiki: bool, no_obsidian: bool) -> None:
         "index: "
         f"{result['index']['notes']} notes, {result['index']['blocks']} blocks, {result['index']['refs']} refs"
     )
+
+
+@main.command("completion")
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+@click.option(
+    "--prog-name",
+    default="cart",
+    show_default=True,
+    help="Command name to generate completions for.",
+)
+def completion(shell: str, prog_name: str) -> None:
+    """Print a shell completion script for cart."""
+    completion_class = get_completion_class(shell)
+    if completion_class is None:
+        raise click.ClickException(f"unsupported shell: {shell}")
+    complete_var = f"_{prog_name.replace('-', '_').replace('.', '_').upper()}_COMPLETE"
+    generator = completion_class(
+        cli=main,
+        ctx_args={},
+        prog_name=prog_name,
+        complete_var=complete_var,
+    )
+    click.echo(generator.source())
 
 
 @main.command()
@@ -263,6 +408,33 @@ def show(note_id: str) -> None:
             raise click.ClickException(f"note not found: {note_id}")
         path = partial_matches[0]
     click.echo(path.read_text(encoding="utf-8"), nl=False)
+
+
+@main.group("qmd")
+def qmd_group() -> None:
+    """optional qmd search helpers."""
+
+
+@qmd_group.command("bootstrap")
+def qmd_bootstrap() -> None:
+    atlas = get_atlas()
+    result = _bootstrap_qmd(atlas)
+    if not result["available"]:
+        click.echo(
+            "qmd not installed; cart will use built-in search. See https://github.com/tobilu/qmd to enable enhanced recall."
+        )
+        return
+    collection = str(result["collection"])
+    created = bool(result["created"])
+    click.echo(
+        f"qmd: {'created' if created else 'using'} atlas collection `{collection}` for {atlas.root}"
+    )
+    click.echo(f"config: wrote default_collection = \"{collection}\"")
+    if result["embed_ok"]:
+        click.echo("embed: complete")
+    else:
+        click.echo("embed: qmd embed failed; run `qmd embed` manually")
+    click.echo("next: `cart query \"plain language query\"` now prefers qmd for atlas-scoped matches")
 
 
 @main.command()

@@ -14,6 +14,7 @@ from .config import atlas_root, load_config, save_config
 from .agent_memory import ensure_master_summary_note
 from .hooks import ensure_hook_dir
 from .index import Index
+from .integrations import qmd
 from .notes import Note
 from .obsidian import bootstrap as bootstrap_obsidian
 from .obsidian import detect_external_vault
@@ -338,7 +339,14 @@ class Atlas:
         }
 
     def refresh_index(self) -> dict[str, Any]:
-        return Index(self.root).rebuild()
+        result = Index(self.root).rebuild()
+        qmd_config = self.config.get("qmd", {})
+        if isinstance(qmd_config, dict):
+            enabled = str(qmd_config.get("enabled", "auto")).strip().lower() or "auto"
+            incremental_on_save = bool(qmd_config.get("incremental_on_save", True))
+            if enabled != "off" and incremental_on_save:
+                qmd.embed_incremental()
+        return result
 
     def _editor_command(self) -> list[str]:
         config_editor = self.config.get("editor", {}).get("command")

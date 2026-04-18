@@ -1,0 +1,15 @@
+#!/usr/bin/env zsh
+# maps · cassette.help · MIT
+set -euo pipefail
+ROOT=${0:A:h:h}
+cd "$ROOT"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+from shutil import which
+from cartographer.config import atlas_root, load_config
+from cartographer.integrations import qmd
+root = atlas_root(load_config())
+print(f"atlas={root}")
+print("cart_cli=ok")
+print(f"garden={'ok' if which('garden') else 'missing'}")
+print(f"qmd={'ok' if qmd.is_available() else 'missing'}")
+PY

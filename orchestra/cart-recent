@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+# maps · cassette.help · MIT
+set -euo pipefail
+ROOT=${0:A:h:h}
+cd "$ROOT"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 - "${1:-10}" <<'PY'
+from cartographer.agent_memory import iter_learning_blocks
+from cartographer.config import atlas_root, load_config
+import sys
+count = max(1, int(sys.argv[1])); root = atlas_root(load_config())
+rows = sorted(iter_learning_blocks(root), key=lambda item: (item.attrs.get("date", ""), item.path.name, item.block_id), reverse=True)[:count]
+print("\n".join(f"{item.attrs.get('date', 'unknown')} | {item.agent or 'unknown'} | {item.topic} | {' '.join(item.content.split())[:200]}" for item in rows) or "no learning blocks")
+PY

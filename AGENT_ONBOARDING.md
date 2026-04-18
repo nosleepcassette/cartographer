@@ -3,6 +3,7 @@
 # updated: 2026-04-17
 # purpose: bring any agent up to speed on the full system
 # read this before doing any substantive work with maps
+# for multi-agent routing rules see AGENT_DISPATCHER.md
 
 ---
 

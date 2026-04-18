@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+# maps · cassette.help · MIT
+set -euo pipefail
+ROOT=${0:A:h:h}
+cd "$ROOT"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+from datetime import date
+from cartographer.config import atlas_root, load_config
+from cartographer.patterns import entries_since, load_state_log
+root = atlas_root(load_config()); rows = entries_since(load_state_log(root), date.today().isoformat())
+print("\n".join(f"{r.day} | {r.state or 'unknown'} | sleep={r.sleep or 'unknown'} | energy={r.energy or 'unknown'} | pain={r.pain or 'unknown'} | arcs={', '.join(r.arcs_active) or 'none'}" for r in rows) or "no mapsOS STATE entries for today")
+PY

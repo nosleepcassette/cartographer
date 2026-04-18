@@ -35,6 +35,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "sync": {"method": "git"},
     "daily": {"mode": "bidirectional"},
+    "qmd": {
+        "enabled": "auto",
+        "default_collection": "",
+        "min_score": 0.35,
+        "incremental_on_save": True,
+    },
     "mapsos": {
         "tasks_file": "tasks/mapsos.md",
         "snapshot_dir": "agents/mapsOS",

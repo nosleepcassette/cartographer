@@ -42,6 +42,7 @@ cartographer assumes both exist and treats them as first-class:
 - **Files are the API.** Delete cartographer. Your notes are still readable Markdown with YAML frontmatter. Git is the database. SQLite is an index, not a prison.
 - **Block-addressable by default.** `[[note-id#block-id]]` transclusion. Backlinks tracked automatically. The relational layer Obsidian promised but never fully delivered.
 - **Imports are idempotent.** Run `cart session-import` a hundred times. Zero duplicates. Just an always-current graph.
+- **Optional semantic search without lock-in.** If `qmd` is installed, plain-language `cart query` can use hybrid retrieval over the atlas. If not, cart stays on its built-in SQLite/FTS path.
 - **Built for neurodivergent workflows.** Qualitative state tracking, capacity-aware context, honest about when you're not okay. Paired with mapsOS. Configurable for any brain.
 - **Plugin economy.** stdin/stdout JSON contract. If it speaks that, it joins. The long-term goal is Vim-scale extensibility.
 
@@ -79,6 +80,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai conversation exports
 - Graph export: all notes as nodes, all links as edges (JSON)
+- Optional qmd-backed plain-language atlas search
 - Textual atlas TUI (`cart tui`) with graph navigation, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -132,6 +134,22 @@ pipx install -e .
 
 Three equivalent entrypoints: `cart`, `cartog`, `cartographer`.
 
+### shell completion
+
+Cart can print native completion scripts for Bash, Zsh, and Fish:
+
+```zsh
+cart completion zsh > ~/.zfunc/_cart
+autoload -Uz compinit && compinit
+```
+
+Other common setups:
+
+```bash
+cart completion bash > ~/.local/share/bash-completion/completions/cart
+cart completion fish > ~/.config/fish/completions/cart.fish
+```
+
 ---
 
 ## quickstart
@@ -171,10 +189,34 @@ cart edit project-alpha
 ### query + backlinks
 
 ```zsh
+cart query 'session drift in hermetica'   # plain language; prefers qmd when configured
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
 cart backlinks project-alpha
+```
+
+Plain-language queries stay atlas-scoped. Cart only uses qmd when it can map the atlas root to a qmd collection; otherwise it falls back to the built-in index automatically.
+
+### optional enhanced search with qmd
+
+```zsh
+npm install -g @tobilu/qmd
+cart qmd bootstrap
+cart query 'what do we know about Chris'
+```
+
+What this does:
+
+- creates or reuses a qmd collection pointing at your atlas root
+- writes `qmd.default_collection` into `~/atlas/.cartographer/config.toml`
+- runs `qmd embed` once so future plain-text `cart query` calls can use hybrid retrieval
+
+Structured cart queries still use the built-in engine:
+
+```zsh
+cart query 'type:project tag:income'
+cart query 'text:"Twilio" modified:>2026-04-01'
 ```
 
 ### tasks
@@ -394,7 +436,14 @@ Repos:
 
 - `SPEC.md` - product spec and locked decisions
 - `AGENT_ONBOARDING.md` - context for any agent joining the system
+- `AGENT_DISPATCHER.md` - routing protocol for multi-agent handoff and anti-recursion
 - `CART_PHASE3_SPEC.md` - phase 3 implementation record
+- `CART_PHASE4_SPEC.md` - deferred deep-sync and robustness work
+- `CART_PHASE5_SPEC.md` - scoped CLI and TUI upgrade plan
+- `CART_PHASE5_BUILDSHEET.md` - implementation order for the next cart upgrade
+- `QMD_OPTIONAL_SPEC.md` - implementation notes for optional qmd search
+- `orchestra/` - short allowlist-friendly shell wrappers for common cart operations
+- `skills/create-skill/SKILL.md` - guided conversation for drafting new Claude skills
 - `DEVELOPERS.md` - extension points and developer-facing framing
 
 ---
