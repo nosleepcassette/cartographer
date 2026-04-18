@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -492,6 +493,52 @@ def build_visual_graph_text(
     return content
 
 
+def build_wire_neighborhood_markdown(
+    records: dict[str, NoteRecord],
+    wire_summary: dict[str, list[dict[str, Any]]],
+    *,
+    backlinks: list[tuple[str, int]] | None = None,
+    show_backlinks: bool = False,
+) -> str:
+    lines = ["## Wire Neighborhood", ""]
+
+    outgoing = wire_summary.get("outgoing", [])
+    incoming = wire_summary.get("incoming", [])
+    if outgoing:
+        lines.extend(["### Outgoing", ""])
+        for item in outgoing:
+            note_id = str(item.get("note_id") or "")
+            predicate = str(item.get("predicate") or "")
+            label = records[note_id].label if note_id in records else note_id
+            suffix = f" ({label})" if label and label != note_id else ""
+            lines.append(f"- → {predicate} → [{note_id}](note://{note_id}){suffix}")
+        lines.append("")
+    else:
+        lines.extend(["### Outgoing", "", "- _none_", ""])
+
+    if incoming:
+        lines.extend(["### Incoming", ""])
+        for item in incoming:
+            note_id = str(item.get("note_id") or "")
+            predicate = str(item.get("predicate") or "")
+            label = records[note_id].label if note_id in records else note_id
+            suffix = f" ({label})" if label and label != note_id else ""
+            lines.append(f"- ← {predicate} ← [{note_id}](note://{note_id}){suffix}")
+        lines.append("")
+    else:
+        lines.extend(["### Incoming", "", "- _none_", ""])
+
+    if show_backlinks:
+        lines.extend(["### Backlinks", ""])
+        for ref_note, count in backlinks or []:
+            lines.append(f"- ← [{ref_note}](note://{ref_note}) ({count} refs)")
+        if not backlinks:
+            lines.append("- _none_")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def resolve_transclusions(
     body: str,
     records: dict[str, NoteRecord],
@@ -707,13 +754,6 @@ class CartTUI(App[None]):
         background: #111111;
         color: {HIGHLIGHT};
     }}
-    #graph-visual {{
-        height: 9;
-        margin: 0 0 1 0;
-        padding: 0 0 1 0;
-        border-bottom: solid {BORDER};
-        color: {PRIMARY};
-    }}
     #graph-scroll, #note-scroll {{
         height: 1fr;
     }}
@@ -722,7 +762,7 @@ class CartTUI(App[None]):
         color: {HIGHLIGHT};
         padding: 0 0 1 0;
     }}
-    #note-backlinks {{
+    #note-neighborhood {{
         padding: 1 0 0 0;
         color: {DIM};
     }}
@@ -779,7 +819,6 @@ class CartTUI(App[None]):
         self.focus_target = "graph"
         self.show_backlinks = False
         self.show_help = False
-        self.show_visual_graph = True
         self.collapsed_groups: set[str] = set()
         self.note_body_cache: dict[str, tuple[float, str]] = {}
         self.backlinks_cache: dict[str, list[tuple[str, int]]] = {}
@@ -790,20 +829,20 @@ class CartTUI(App[None]):
         self._last_rendered_note_modified: float | None = None
         self._last_rendered_group: str | None = None
         self._filter_debounce_handle: Any = None
+        self.last_filter_duration_ms: float | None = None
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
         with Horizontal(id="main-row"):
             with GraphPane(id="graph-pane"):
                 yield Input(placeholder="filter atlas...", id="graph-filter")
-                yield Static(id="graph-visual")
                 with VerticalScroll(id="graph-scroll"):
                     yield Static(id="graph-body")
             with NotePane(id="note-pane"):
                 yield Static(id="note-header")
                 with VerticalScroll(id="note-scroll"):
                     yield Markdown(id="note-body")
-                    yield Static(id="note-backlinks")
+                    yield Markdown(id="note-neighborhood")
         yield StateStrip(id="state-strip")
         yield FooterStrip(id="footer-strip")
         yield Input(placeholder="new note title", id="new-note-input")
@@ -832,7 +871,6 @@ class CartTUI(App[None]):
         self.rebuild_graph_view(select_note_id=select_note_id)
         self.render_header()
         self.render_graph()
-        self.render_graph_visual()
         self.render_note()
         self.render_state_strip()
         self.render_footer()
@@ -949,26 +987,6 @@ class CartTUI(App[None]):
                 text.append("\n")
         body.update(text)
 
-    def render_graph_visual(self) -> None:
-        visual = self.query_one("#graph-visual", Static)
-        visual.display = self.show_visual_graph
-        if not self.show_visual_graph:
-            return
-        current_section = graph_section_for_group(self.graph_sections, self._current_group())
-        preview_note_id = self.selected_note_id
-        if preview_note_id is None and current_section and current_section.note_ids:
-            preview_note_id = current_section.note_ids[0]
-        visual.update(
-            build_visual_graph_text(
-                self.records,
-                self.neighbor_map,
-                preview_note_id,
-                visible_count=len(self._visible_graph_rows()),
-                filter_text=self.filter_text,
-                wire_summary=self._load_wires(preview_note_id) if preview_note_id else None,
-            )
-        )
-
     def _load_note_body(self, note_id: str) -> str:
         record = self.records[note_id]
         cached = self.note_body_cache.get(note_id)
@@ -995,7 +1013,7 @@ class CartTUI(App[None]):
     def render_note(self) -> None:
         header = self.query_one("#note-header", Static)
         body = self.query_one("#note-body", Markdown)
-        backlinks = self.query_one("#note-backlinks", Static)
+        neighborhood = self.query_one("#note-neighborhood", Markdown)
         current_group = self._current_group()
         current_section = graph_section_for_group(self.graph_sections, current_group)
 
@@ -1004,8 +1022,7 @@ class CartTUI(App[None]):
             if self._last_rendered_group != current_section.group or self._last_rendered_note_id is not None:
                 body.update(build_section_submenu_markdown(self.records, current_section))
                 self.query_one("#note-scroll", VerticalScroll).scroll_home(animate=False)
-            backlinks.update("")
-            backlinks.display = False
+            neighborhood.update("")
             self._last_rendered_group = current_section.group
             self._last_rendered_note_id = None
             self._last_rendered_note_modified = None
@@ -1015,7 +1032,7 @@ class CartTUI(App[None]):
             header.update(Text("no note selected", style=DIM))
             if self._last_rendered_group is not None or self._last_rendered_note_id is not None:
                 body.update("Select a note from the graph.")
-            backlinks.display = False
+                neighborhood.update("")
             self._last_rendered_group = None
             self._last_rendered_note_id = None
             self._last_rendered_note_modified = None
@@ -1042,19 +1059,14 @@ class CartTUI(App[None]):
         self._last_rendered_note_modified = record.modified
 
         backlink_rows = self._load_backlinks(record.note_id)
-        if self.show_backlinks and backlink_rows:
-            backlink_text = Text()
-            backlink_text.append("backlinks\n", style=f"bold {PRIMARY}")
-            for ref_note, count in backlink_rows:
-                backlink_text.append(
-                    f"← [[{ref_note}]] ({count} refs)\n",
-                    style=DIM,
-                )
-            backlinks.update(backlink_text)
-            backlinks.display = True
-        else:
-            backlinks.update("")
-            backlinks.display = False
+        neighborhood.update(
+            build_wire_neighborhood_markdown(
+                self.records,
+                self._load_wires(record.note_id),
+                backlinks=backlink_rows,
+                show_backlinks=self.show_backlinks,
+            )
+        )
 
     def render_state_strip(self) -> None:
         strip = self.query_one("#state-strip", StateStrip)
@@ -1085,23 +1097,35 @@ class CartTUI(App[None]):
         elif self.show_help:
             left = Text(
                 "[h/l] panes  [tab] cycle  [j/k] move or scroll  [/] filter  "
-                "[`[`/`]`] sections  [1-5] jump section  [c] collapse  [g] graph  "
-                "[enter] edit or expand  [n] new  [m] mapsOS  [r] rebuild  [b] backlinks  [t] tasks  [q] quit",
+                "[`[`/`]`] sections  [1-5] jump section  [c] collapse  "
+                "[enter] edit or expand  [n] new  [m] mapsOS  [r] rebuild  "
+                "[b] backlinks  [t] tasks  [q] quit",
                 style=DIM,
             )
-            right = Text("", style=DIM)
+            right = Text(
+                ""
+                if self.last_filter_duration_ms is None
+                else f"filter {self.last_filter_duration_ms:.0f}ms",
+                style=DIM,
+            )
         elif self.focus_target == "note":
             left = Text(
                 "[h/l] panes  [j/k] scroll  [b] backlinks  [c] collapse  [`[`/`]`] sections  [enter] edit or expand  [m] mapsOS  [q] quit",
                 style=DIM,
             )
-            right = Text("[?] for all keys", style=DIM)
+            suffix = "[?] for all keys"
+            if self.last_filter_duration_ms is not None:
+                suffix = f"{suffix}  ·  filter {self.last_filter_duration_ms:.0f}ms"
+            right = Text(suffix, style=DIM)
         else:
             left = Text(
-                "[h/l] panes  [j/k] move  [/] filter  [`[`/`]`] sections  [1-5] jump  [c] collapse  [g] graph  [enter] edit or expand  [m] mapsOS  [q] quit",
+                "[h/l] panes  [j/k] move  [/] filter  [`[`/`]`] sections  [1-5] jump  [c] collapse  [enter] edit or expand  [m] mapsOS  [q] quit",
                 style=DIM,
             )
-            right = Text("[?] for all keys", style=DIM)
+            suffix = "[?] for all keys"
+            if self.last_filter_duration_ms is not None:
+                suffix = f"{suffix}  ·  filter {self.last_filter_duration_ms:.0f}ms"
+            right = Text(suffix, style=DIM)
         footer.update(Columns([left, right], expand=True))
 
     def render_tasks(self) -> None:
@@ -1149,7 +1173,6 @@ class CartTUI(App[None]):
         if self.selected_note_id in self.records:
             self.selected_group = _group_for_type(self.records[self.selected_note_id].note_type)
         self.render_graph()
-        self.render_graph_visual()
         self.render_note()
 
     def jump_section(self, delta: int) -> None:
@@ -1165,7 +1188,6 @@ class CartTUI(App[None]):
             next_group = visible_groups[next_index]
         self._set_current_group(next_group, preserve_note=False)
         self.render_graph()
-        self.render_graph_visual()
         self.render_note()
 
     def move_note_scroll(self, delta: int) -> None:
@@ -1187,7 +1209,6 @@ class CartTUI(App[None]):
             self.filter_text = ""
             self.rebuild_graph_view(select_note_id=self.selected_note_id)
             self.render_graph()
-            self.render_graph_visual()
             self.render_note()
         filter_input.display = False
         self.set_focus(None)
@@ -1216,11 +1237,6 @@ class CartTUI(App[None]):
         if overlay.display:
             self.render_tasks()
 
-    def toggle_visual_graph(self) -> None:
-        self.show_visual_graph = not self.show_visual_graph
-        self.render_graph_visual()
-        self.render_footer()
-
     def toggle_current_group(self) -> None:
         group = self._current_group()
         if group is None:
@@ -1232,7 +1248,6 @@ class CartTUI(App[None]):
         self.rebuild_graph_view(select_note_id=self.selected_note_id)
         self._set_current_group(group, preserve_note=group not in self.collapsed_groups)
         self.render_graph()
-        self.render_graph_visual()
         self.render_note()
         self.render_footer()
 
@@ -1279,11 +1294,11 @@ class CartTUI(App[None]):
     def _apply_filter_debounced(self) -> None:
         """Apply filter with debounce to avoid rebuilding on every keystroke."""
         self._filter_debounce_handle = None
+        started = time.perf_counter()
         previous_note_id = self.selected_note_id
         previous_group = self._current_group()
         self.rebuild_graph_view(select_note_id=self.selected_note_id)
         self.render_graph()
-        self.render_graph_visual()
         current_section = graph_section_for_group(self.graph_sections, self._current_group())
         if (
             self.selected_note_id != previous_note_id
@@ -1291,14 +1306,16 @@ class CartTUI(App[None]):
             or (current_section is not None and current_section.collapsed)
         ):
             self.render_note()
+        self.last_filter_duration_ms = (time.perf_counter() - started) * 1000
+        self.render_footer()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "graph-filter":
             return
         self.filter_text = event.value
         if self._filter_debounce_handle is not None:
-            self.remove_timer(self._filter_debounce_handle)
-        self._filter_debounce_handle = self.set_timer(self._apply_filter_debounced, interval=0.2, repeat=False)
+            self._filter_debounce_handle.stop()
+        self._filter_debounce_handle = self.set_timer(0.1, self._apply_filter_debounced)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "graph-filter":
@@ -1308,6 +1325,19 @@ class CartTUI(App[None]):
             value = event.value
             self.close_new_note_prompt()
             self.action_new_note(value)
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        if not event.href.startswith("note://"):
+            return
+        note_id = event.href.removeprefix("note://").split("#", 1)[0].strip()
+        if note_id not in self.records:
+            return
+        self.selected_note_id = note_id
+        self.selected_group = _group_for_type(self.records[note_id].note_type)
+        self.render_graph()
+        self.render_note()
+        self.render_footer()
+        event.stop()
 
     def on_key(self, event: Key) -> None:
         key = event.key
@@ -1414,7 +1444,6 @@ class CartTUI(App[None]):
             if index < len(groups):
                 self._set_current_group(groups[index], preserve_note=False)
                 self.render_graph()
-                self.render_graph_visual()
                 self.render_note()
             event.stop()
             return
@@ -1432,10 +1461,6 @@ class CartTUI(App[None]):
             return
         if key == "c":
             self.toggle_current_group()
-            event.stop()
-            return
-        if key == "g":
-            self.toggle_visual_graph()
             event.stop()
             return
         if key == "b":

@@ -80,12 +80,20 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     html = output_path.read_text(encoding="utf-8")
     assert "atlasGraphPayload" in html
-    assert "Knowledge Graph V1" in html
-    assert "type browser" in html
+    assert "Atlas Constellation 3D" in html
+    assert "show-sessions" in html
     assert "show-all-types" in html
-    assert "cycleSelection" in html
+    assert "export-png" in html
+    assert "copy-link" in html
+    assert "const THREE = {" in html
+    assert "new THREE.WebGLRenderer" in html
     assert "hide-names" in html
-    assert "highlight-links" in html
+    assert "show-wires" in html
+    assert "smartFitCamera" in html
+    assert "renderPreviewMarkdown" in html
+    assert "detailPreviewEl.innerHTML" in html
+    assert "wiki-link" in html
+    assert ".preview table" in html
     assert '"id": "alpha"' in html
     assert '"source": "alpha"' in html
 
@@ -168,6 +176,27 @@ def test_graph_payload_includes_semantic_wires(tmp_path) -> None:
             "bidirectional": False,
         }
     ]
+
+
+def test_graph_payload_includes_preview_and_session_flag(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "agents" / "sessions" / "nightly.md",
+        note_id="nightly",
+        title="Nightly",
+        note_type="session",
+        body="# Nightly\n\nThis is the reflected preview body.",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    node = next(item for item in payload["nodes"] if item["id"] == "nightly")
+
+    assert node["is_session"] is True
+    assert node["preview"].startswith("# Nightly")
+    assert "\n\n" in node["preview"]
+    assert "reflected preview body" in node["preview"].lower()
 
 
 def test_graph_payload_promotes_entity_people_to_person_type(tmp_path) -> None:

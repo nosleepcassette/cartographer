@@ -11,7 +11,7 @@ from cartographer.tui import (
     build_graph_sections,
     build_graph_rows,
     build_state_strip_lines,
-    build_visual_graph_text,
+    build_wire_neighborhood_markdown,
     resolve_transclusions,
 )
 
@@ -202,7 +202,7 @@ class TUIHelperTests(unittest.TestCase):
             self.assertIn("P0: 1 open", line_one)
             self.assertIn("last session: 2026-04-17", line_two)
 
-    def test_build_visual_graph_text_surfaces_focus_and_neighbor_counts(self) -> None:
+    def test_build_wire_neighborhood_markdown_formats_directional_links(self) -> None:
         records = {
             "alpha": NoteRecord(
                 note_id="alpha",
@@ -232,64 +232,25 @@ class TUIHelperTests(unittest.TestCase):
                 modified=8,
             ),
         }
-        neighbor_map = {
-            "alpha": {"beta", "gamma"},
-            "beta": {"alpha"},
-            "gamma": {"alpha"},
-        }
-
-        text = build_visual_graph_text(
+        text = build_wire_neighborhood_markdown(
             records,
-            neighbor_map,
-            "alpha",
-            visible_count=3,
-            filter_text="alp",
-            wire_summary=None,
-        ).plain
-
-        self.assertIn("GRAPH FOCUS", text)
-        self.assertIn("Alpha", text)
-        self.assertIn("Beta", text)
-        self.assertIn("Gamma", text)
-        self.assertIn("2 direct", text)
-        self.assertIn("filter: alp", text)
-
-    def test_build_visual_graph_text_surfaces_semantic_wires(self) -> None:
-        records = {
-            "alpha": NoteRecord(
-                note_id="alpha",
-                path=Path("/tmp/alpha.md"),
-                title="Alpha",
-                note_type="project",
-                status="active",
-                tags=[],
-                modified=10,
-            ),
-            "beta": NoteRecord(
-                note_id="beta",
-                path=Path("/tmp/beta.md"),
-                title="Beta",
-                note_type="entity",
-                status=None,
-                tags=[],
-                modified=9,
-            ),
-        }
-
-        text = build_visual_graph_text(
-            records,
-            {"alpha": {"beta"}, "beta": {"alpha"}},
-            "alpha",
-            visible_count=2,
             wire_summary={
                 "outgoing": [{"note_id": "beta", "predicate": "supports", "bidirectional": False}],
-                "incoming": [],
+                "incoming": [{"note_id": "gamma", "predicate": "grounds", "bidirectional": False}],
             },
-        ).plain
+            backlinks=[("beta", 2)],
+            show_backlinks=True,
+        )
 
-        self.assertIn("SEMANTIC WIRES", text)
+        self.assertIn("## Wire Neighborhood", text)
+        self.assertIn("### Outgoing", text)
+        self.assertIn("### Incoming", text)
+        self.assertIn("### Backlinks", text)
         self.assertIn("supports", text)
-        self.assertIn("Beta", text)
+        self.assertIn("grounds", text)
+        self.assertIn("[beta](note://beta)", text)
+        self.assertIn("[gamma](note://gamma)", text)
+        self.assertIn("(2 refs)", text)
 
 
 if __name__ == "__main__":

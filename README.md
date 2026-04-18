@@ -9,7 +9,7 @@ Agents and humans write to the same substrate. Nothing is trapped in an app.
 
 <table>
 <tr>
-<td align="center"><img src="1.png" width="400"><br><sub>atlas TUI — graph pane + note view</sub></td>
+<td align="center"><img src="1.png" width="400"><br><sub>atlas TUI — note view + semantic wire neighborhood</sub></td>
 <td align="center"><img src="2.png" width="400"><br><sub>block transclusion rendering</sub></td>
 </tr>
 <tr>
@@ -52,11 +52,11 @@ cartographer assumes both exist and treats them as first-class:
 
 This is the release where atlas starts to feel like a real operating surface instead of just a filesystem plus commands.
 
-- **A real atlas interface.** `cart tui` gives you a Textual TUI with section-aware graph navigation, collapsible groups that open into submenus, a native graph-focus view, note rendering, backlinks, tasks overlay, and vim-style movement.
+- **The visual graph is finally a real browser surface.** `cart graph --format html` now exports a self-contained Three.js scene with deterministic clustered layout, semantic wire rendering, smart auto-fit, privacy toggles, shareable camera state, PNG/JSON export, and a Firefox-safe local-file path.
+- **Note previews read like notes now.** The graph detail pane renders markdown headings, lists, code, blockquotes, and basic tables instead of dumping flattened text.
+- **The atlas TUI got sharper instead of busier.** `cart tui` now focuses on section-aware note navigation, markdown rendering, semantic wire neighborhoods, `note://` jumps, tasks overlay, backlinks, and measured filter latency.
 - **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
-- **State is visible inside memory now.** The atlas TUI reads the latest mapsOS export directly and shows current qualitative state, active arcs, and open P0 load in the state strip.
 - **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
-- **The developer framing is explicit.** This repo is not just "my notes tool." It is infrastructure for agents, plugins, shared memory, and weird local-first systems that need durable context.
 
 ---
 
@@ -80,14 +80,14 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai conversation exports
 - Graph export: all notes as nodes, all links as edges (JSON)
-- Visual knowledge graph HTML export with local search, pan/zoom, dragging, and node inspection
+- Visual knowledge graph HTML export as a self-contained 3D scene with search, smart fit, semantic wires, markdown preview, and offline Firefox-safe rendering
 - Optional qmd-backed plain-language atlas search
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
 - Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence`
 - File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
-- Textual atlas TUI (`cart tui`) with section jumps, collapsed-section submenus, native graph-focus rendering, semantic wire neighborhood, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
+- Textual atlas TUI (`cart tui`) with section jumps, collapsed-section submenus, semantic wire neighborhood, `note://` jumps, note rendering, backlinks, tasks overlay, measured filter timing, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
 - Learning audit loop
@@ -200,8 +200,9 @@ Key navigation:
 - `1`-`5` jumps directly to the visible section slots
 - `c` collapses or expands the current section
 - collapsed sections open as a submenu in the note pane
-- `g` toggles the graph-focus pane
 - `/` filters the graph
+- `t` toggles the task overlay
+- `m` hands off into mapsOS
 
 ### notes
 
@@ -324,18 +325,22 @@ cart graph --format html
 cart graph --format html --open
 ```
 
-JSON output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}`
+JSON output includes atlas metadata plus enriched nodes and edges:
+
+- nodes: `id`, `title`, `type`, `path`, `tags`, `degree`, `color`, `preview`, `is_session`
+- edges: `source`, `target`, `kind`, and wire metadata such as `predicate`
 
 HTML output is a self-contained visual graph with:
 
-- type-colored nodes
-- semantic wire edges rendered distinctly from plain wikilinks
-- degree-scaled sizing and larger hit targets
+- Firefox-safe offline rendering from a single exported HTML file
+- a deterministic clustered 3D layout instead of free-floating SVG drift
+- type-colored, degree-scaled nodes with brighter semantic wires
 - local search by note title, id, type, or tag
-- stable clustered layout instead of free-floating drift
-- category toggles, privacy mode (`hide names`), wire/connection spotlighting, and a type browser
-- keyboard navigation (`j`/`k`, arrows, `/`, `f`, `x`, `v`)
-- pan/zoom, dragging, and a detail pane for the selected node
+- category toggles, session hiding, privacy mode (`hide names`), wire toggles, and a type browser
+- smarter `fit view` that prefers the current search, type lens, or selected neighborhood
+- keyboard navigation (`j`/`k`, arrows, `/`, `s`, `w`, `x`, `r`, `0`, `enter`)
+- PNG/JSON export and shareable URL state
+- markdown-rendered note previews with headings, lists, code blocks, blockquotes, and basic tables
 
 ### mapsOS bridge
 
