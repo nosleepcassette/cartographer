@@ -1,5 +1,15 @@
 # cartographer
 
+<p align="center">
+  <a href="./media/atlas-demo-part-1.mp4">
+    <img src="./media/atlas-demo-part-1.jpg" width="49%" alt="Atlas demo part 1">
+  </a>
+  <a href="./media/atlas-demo-part-2.mp4">
+    <img src="./media/atlas-demo-part-2.jpg" width="49%" alt="Atlas demo part 2">
+  </a>
+</p>
+<p align="center"><sub>Click either preview to watch the full demo clip.</sub></p>
+
 > Your agents should know how you're actually doing - and remember everything they learn.
 
 Local-first knowledge filesystem and agent memory layer.
@@ -30,6 +40,25 @@ That's the idea.
 
 **atlas** is the substrate. cartographer is what builds and queries it.
 mapsOS is what keeps it honest about how you're actually doing.
+
+---
+
+## where this is going
+
+The next phase of the maps -> atlas -> cartographer stack is not "better journaling." It's a real-time intervention layer.
+
+mapsOS should notice meaningful state shifts as they happen. atlas should remember what those states have tended to cost before. cartographer should surface the right memory, pattern, and next action while the loop is still forming, not days later when the damage is already compounded.
+
+That means building toward:
+
+- **Real-time pattern detection.** Catch relationship drift, project stall, spending spirals, burnout slides, conflict avoidance, and other recurring loops while they're starting, not after they calcify into "history."
+- **State-dependent memory as a live tool.** When someone is in a narrowed or depleted state, the system should be able to say: "this feels wise right now, but here is what your steadier self learned last time, and here is what the costs looked like."
+- **Somatic interruption plus accountability.** Not just insight. Grounding, presence, tiny next actions, and visible feedback on whether the user stayed, followed through, or ran.
+- **Compassionate interruption instead of shame.** The point is not to nag. The point is to recognize that self-protection is real, while still helping the user choose something better than silent drift.
+
+Maybe the pattern is not texting someone back. Maybe it's dodging a scary PR review, letting an invoice queue rot, going quiet on a collaborator, disappearing from a product launch when energy crashes, or leaving an incident half-triaged because your nervous system wants out. The long-term goal is the same: catch the loop in the moment, surface the memory that matters, and help the user stay with reality long enough to choose on purpose.
+
+The reflection layer still matters. That's long-term medicine. The next build is the tourniquet.
 
 ---
 
