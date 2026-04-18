@@ -52,7 +52,7 @@ cartographer assumes both exist and treats them as first-class:
 
 This is the release where atlas starts to feel like a real operating surface instead of just a filesystem plus commands.
 
-- **A real atlas interface.** `cart tui` gives you a Textual TUI with a structured graph pane, note pane, transclusion rendering, backlinks, tasks overlay, and vim-style movement.
+- **A real atlas interface.** `cart tui` gives you a Textual TUI with a structured graph pane, a native graph-focus view, collapsible groups, note rendering, backlinks, tasks overlay, and vim-style movement.
 - **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
 - **State is visible inside memory now.** The atlas TUI reads the latest mapsOS export directly and shows current qualitative state, active arcs, and open P0 load in the state strip.
 - **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
@@ -83,7 +83,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Visual knowledge graph HTML export with local search, pan/zoom, dragging, and node inspection
 - Optional qmd-backed plain-language atlas search
 - CLI health + JSON surfaces via `cart doctor`, `cart status --json`, and JSON task/query output
-- Textual atlas TUI (`cart tui`) with graph navigation, note rendering, backlinks, tasks overlay, and mapsOS handoff
+- Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
 - Learning audit loop
