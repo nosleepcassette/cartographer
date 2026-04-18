@@ -413,9 +413,10 @@ JSON output includes atlas metadata plus enriched nodes and edges:
 HTML output is a self-contained visual graph with:
 
 - Firefox-safe offline rendering from a single exported HTML file
+- export driven from the current atlas index rather than whatever stale DB happened to be on disk
 - a deterministic clustered 3D layout instead of free-floating SVG drift
 - emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
-- brighter semantic wires with emotional metadata in the detail pane
+- brighter semantic wires with explicit emotional topology in the detail pane
 - local search by note title, id, type, or tag
 - category toggles, session hiding, privacy mode (`hide names`), wire toggles, and a type browser
 - smarter `fit view` that prefers the current search, type lens, or selected neighborhood

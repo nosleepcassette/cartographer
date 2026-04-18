@@ -2568,11 +2568,7 @@ def graph_export(export_path: str | None, fmt: str, open_in_browser: bool) -> No
     from .graph_export import load_graph_payload, render_graph_html
 
     atlas = get_atlas()
-    db_path = atlas.root / ".cartographer" / "index.db"
-    if not db_path.exists():
-        atlas.refresh_index()
-    if not db_path.exists():
-        raise click.ClickException("atlas index not found — run `cart status` first")
+    ensure_index_current(atlas)
     payload = load_graph_payload(atlas.root)
 
     out_path = (

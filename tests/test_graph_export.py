@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -92,6 +93,8 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "smartFitCamera" in html
     assert "renderPreviewMarkdown" in html
     assert "detailPreviewEl.innerHTML" in html
+    assert "Emotional Topology" in html
+    assert "detail-emotional" in html
     assert "wiki-link" in html
     assert ".preview table" in html
     assert '"id": "alpha"' in html
@@ -120,6 +123,57 @@ def test_graph_export_json_still_writes_payload(tmp_path, monkeypatch) -> None:
     payload = output_path.read_text(encoding="utf-8")
     assert '"node_count":' in payload
     assert '"id": "solo"' in payload
+
+
+def test_graph_export_command_rebuilds_stale_index_before_export(tmp_path, monkeypatch) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    alpha_path = atlas_root / "projects" / "alpha.md"
+    _write_note(
+        alpha_path,
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body="# Alpha\n",
+    )
+    _write_note(
+        atlas_root / "entities" / "maps.md",
+        note_id="maps",
+        title="maps",
+        note_type="entity",
+        body="# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    alpha_path.write_text(
+        (
+            "---\n"
+            "id: alpha\n"
+            "title: Alpha\n"
+            "type: project\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+            "---\n\n"
+            "# Alpha\n\n"
+            '<!-- cart:wire target="maps" predicate="active-project" relationship="active-project" emotional_valence="positive" energy_impact="energizing" avoidance_risk="medium" growth_edge="true" current_state="building" -->\n'
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    output_path = atlas_root / "graph.json"
+    monkeypatch.setenv("CARTOGRAPHER_ROOT", str(atlas_root))
+
+    result = runner.invoke(main, ["graph", "--format", "json", "--export", str(output_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    alpha = next(node for node in payload["nodes"] if node["id"] == "alpha")
+    wire = next(edge for edge in payload["edges"] if edge.get("kind") == "wire")
+    assert alpha["emotional_valence"] == "positive"
+    assert alpha["avoidance_risk"] == "medium"
+    assert wire["predicate"] == "active-project"
+    assert wire["emotional_valence"] == "positive"
 
 
 def test_graph_payload_normalizes_path_targets_to_canonical_ids(tmp_path) -> None:

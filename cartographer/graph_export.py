@@ -203,7 +203,8 @@ def _vendor_script_text(filename: str) -> str:
     )
 
 
-def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
+def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
+    atlas_root = Path(atlas_root)
     db_path = atlas_root / ".cartographer" / "index.db"
     if not db_path.exists():
         raise FileNotFoundError(db_path)
@@ -956,6 +957,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         </div>
 
         <div class="card">
+          <div class="eyebrow">Emotional Topology</div>
+          <div class="mono" id="detail-emotional">No emotional topology on this node yet.</div>
+          <div class="subtle" id="detail-emotional-note"></div>
+        </div>
+
+        <div class="card">
           <div class="eyebrow">Linked Context</div>
           <ul class="list" id="neighbor-list"></ul>
         </div>
@@ -1059,6 +1066,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const detailPreviewEl = document.getElementById('detail-preview');
     const detailPathEl = document.getElementById('detail-path');
     const detailTagsEl = document.getElementById('detail-tags');
+    const detailEmotionalEl = document.getElementById('detail-emotional');
+    const detailEmotionalNoteEl = document.getElementById('detail-emotional-note');
     const neighborListEl = document.getElementById('neighbor-list');
     const incomingWireListEl = document.getElementById('incoming-wire-list');
     const outgoingWireListEl = document.getElementById('outgoing-wire-list');
@@ -1388,6 +1397,32 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         bits.push(`state ${edge.current_state}`);
       }
       return bits.join(' · ') || 'wire';
+    }
+
+    function nodeEmotionalSummary(node) {
+      const bits = [];
+      if (node.emotional_valence) {
+        bits.push(`valence ${node.emotional_valence}`);
+      }
+      if (node.energy_impact) {
+        bits.push(`energy ${node.energy_impact}`);
+      }
+      if (node.avoidance_risk) {
+        bits.push(`avoidance ${node.avoidance_risk}`);
+      }
+      if (node.growth_edge) {
+        bits.push('growth-edge');
+      }
+      if (node.current_state) {
+        bits.push(`state ${node.current_state}`);
+      }
+      if (node.since) {
+        bits.push(`since ${node.since}`);
+      }
+      if (node.until) {
+        bits.push(`until ${node.until}`);
+      }
+      return bits;
     }
 
     function activeNodes() {
@@ -1931,6 +1966,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         detailPathEl.textContent = '—';
         openNoteEl.href = '#';
         detailTagsEl.innerHTML = '';
+        detailEmotionalEl.textContent = 'No emotional topology on this node yet.';
+        detailEmotionalNoteEl.textContent = '';
         selectionStatusEl.textContent = 'awaiting selection';
         renderList(neighborListEl, [], 'No linked context.');
         renderList(incomingWireListEl, [], 'No incoming wires.');
@@ -1964,6 +2001,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         chip.textContent = value;
         detailTagsEl.appendChild(chip);
       }
+      const emotionalBits = nodeEmotionalSummary(node);
+      detailEmotionalEl.textContent = emotionalBits.length
+        ? emotionalBits.join(' · ')
+        : 'No emotional topology on this node yet.';
+      detailEmotionalNoteEl.textContent = node.valence_note || '';
 
       const linked = Array.from(neighbors.get(node.id) || [])
         .map((id) => nodeById.get(id))
