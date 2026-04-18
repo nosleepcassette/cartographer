@@ -924,7 +924,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       </div>
 
       <div class="toggle-grid">
-        <label class="toggle"><input id="demo-mode" type="checkbox" checked> demo view</label>
+        <label class="toggle"><input id="demo-mode" type="checkbox" checked> obscure relationships</label>
         <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
         <label class="toggle"><input id="hide-names" type="checkbox"> anonymize labels</label>
         <label class="toggle"><input id="show-sessions" type="checkbox"> show sessions</label>
@@ -2037,13 +2037,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       selectionStatusEl.textContent = `${displayNodeName(node)} · ${node.type}`;
 
       detailTagsEl.innerHTML = '';
+      const obscureEmotional = state.demoMode && node.type === 'person';
       for (const value of [
         node.type,
-        node.emotional_valence,
-        node.energy_impact,
-        node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
-        node.growth_edge ? 'growth-edge' : null,
-        node.current_state ? `state:${node.current_state}` : null,
+        !obscureEmotional && node.emotional_valence,
+        !obscureEmotional && node.energy_impact,
+        !obscureEmotional && node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
+        !obscureEmotional && node.growth_edge ? 'growth-edge' : null,
+        !obscureEmotional && node.current_state ? `state:${node.current_state}` : null,
         ...(node.tags || []).slice(0, 8),
       ]) {
         if (!value) {
@@ -2054,11 +2055,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         chip.textContent = value;
         detailTagsEl.appendChild(chip);
       }
-      const emotionalBits = nodeEmotionalSummary(node);
-      detailEmotionalEl.textContent = emotionalBits.length
-        ? emotionalBits.join(' · ')
-        : 'No emotional topology on this node yet.';
-      detailEmotionalNoteEl.textContent = node.valence_note || '';
+      if (obscureEmotional) {
+        detailEmotionalEl.textContent = '(emotional data hidden in demo mode)';
+        detailEmotionalNoteEl.textContent = '';
+      } else {
+        const emotionalBits = nodeEmotionalSummary(node);
+        detailEmotionalEl.textContent = emotionalBits.length
+          ? emotionalBits.join(' · ')
+          : 'No emotional topology on this node yet.';
+        detailEmotionalNoteEl.textContent = node.valence_note || '';
+      }
 
       const linked = Array.from(neighbors.get(node.id) || [])
         .map((id) => nodeById.get(id))
@@ -2118,9 +2124,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const needle = searchInput.value.trim();
       const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
       for (const node of nodes) {
-        const isDemohidden = state.demoMode && node.type === 'person';
         const isFolderFiltered = state.folderFilter && node.folder !== state.folderFilter;
-        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isDemohidden && !isFolderFiltered;
+        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isFolderFiltered;
         const visible = node.visibleByToggle;
         const connected = !!selectedNode && selectedNeighbors.has(node.id);
         const dimForSearch = needle && !node.matched && node !== selectedNode;
