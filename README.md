@@ -91,27 +91,34 @@ cartographer assumes both exist and treats them as first-class:
 
 ## what shipped in this push
 
-This is the release where atlas starts to feel like a real operating surface instead of just a filesystem plus commands.
+**The emotional topology layer is live.** This is where avoidance detection becomes real.
 
-- **The visual graph is finally a real browser surface.** `cart graph --format html` now exports a self-contained Three.js scene with deterministic clustered layout, semantic wire rendering, smart auto-fit, privacy toggles, shareable camera state, PNG/JSON export, and a Firefox-safe local-file path.
-- **Note previews read like notes now.** The graph detail pane renders markdown headings, lists, code, blockquotes, and basic tables instead of dumping flattened text.
-- **The atlas TUI got sharper instead of busier.** `cart tui` now focuses on section-aware note navigation, markdown rendering, semantic wire neighborhoods, `note://` jumps, tasks overlay, backlinks, and measured filter latency.
-- **mapsOS handoff is built in.** Hit `m` from the cartographer TUI to drop into mapsOS. Hit `C` in mapsOS to come back. mapsOS exports ingest back into the atlas on exit.
-- **Therapy integration is real.** Cassette's therapy plugin detects emotional spirals (RSD, isolation, executive paralysis, shame cycles) and surfaces grounded counter-evidence at the moment it matters. Builds pattern libraries of what interventions actually work. Respects autonomy first.
-- **The system is more clearly one thing.** mapsOS is the qualitative layer. cartographer is the memory and task layer. atlas is the substrate underneath both.
+- **Semantic wiring with emotional predicates.** Wires now capture what relationships *feel* like, not just their existence. `cart wire add sarah maps --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge` tells the system: pining territory, energizing but risky, growth work. Wires index by emotional metadata; queries filter avoidance-risk, energy-impact, valence.
+- **Separate graphs for signal clarity.** Session logs now link only to projects/days/agent (not auto-linked to people). The exocortex (relationship graph) stays clean. Activity timeline (sessions) tracks what you worked on. Two mental models, cross-referenceable.
+- **Real-time avoidance detection.** Therapy plugin queries emotional topology: "You haven't responded to Sarah in 3 days. That's your avoidance pattern (high-risk territory, building state). Last time: somatic grounding worked 99%. Want to try?"
+- **Capacity-aware routing.** When energy is low, surface support people (positive-valence, low-risk). When energy is high, surface growth-edges (growth-edge: yes, avoidance-risk: high). mapsOS state + emotional topology = right people at right time.
+- **Emotional visualization.** HTML graph colors nodes by emotional-valence (green=positive, red=negative, purple=mixed). Sizes by avoidance-risk (larger = higher risk). Wires show relationship types. Detail pane shows full emotional context.
+- **Pattern evolution tracking.** Therapy plugin logs outcomes ("stayed with grief 2 hours"). Wires track growth: maggie.avoidance-risk: high → medium over 6 months. The graph itself becomes feedback.
+- **The visual graph is a real operating surface.** Deterministic 3D clustered layout, emotional metadata rendering, smart navigation, offline rendering, search, filters, PNG/JSON export, shareable state.
+- **The atlas TUI is now a navigation tool, not a graph renderer.** Section jumps, semantic wire neighborhood, markdown rendering, tasks overlay, backlinks, mapsOS handoff (`m` key). Responsive. Clean.
+- **Therapy integration is real and data-driven.** Cassette's plugin detects spirals (RSD, isolation, shame, executive paralysis). Surfaces grounded counter-evidence ranked by success rate. Builds pattern library: "somatic grounding: 99% success, typical duration 20min". Tracks outcomes. Updates wires with growth data.
+- **The system is three integrated layers.** mapsOS (state tracking) → cartographer (memory + wiring) → therapy-plugin (real-time intervention). Each feeds the next. Together: a system that catches avoidance as it forms.
 
 ---
 
 ## current status
 
-**Phase 4 is live.** The closed loop is local and usable:
+**Phase 5 is live.** The emotional topology layer is complete:
 
 ```text
-session -> export -> cart ingest -> atlas update -> daily brief -> next session
+session → export → cart ingest → atlas update → emotional wires → daily brief → therapy detection → next session
 ```
+
+Avoidance detection is now real-time. The system knows where you run from and surfaces it the moment it matters.
 
 ### implemented
 
+**Core infrastructure:**
 - Atlas initialization (`cart init`)
 - Markdown notes with YAML frontmatter
 - SQLite indexing for full-text search
@@ -119,26 +126,50 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Block transclusion rendering in the atlas TUI
 - Task CRUD with priorities
 - Plugin system (JSON stdin/stdout)
+
+**Session + Import layer:**
 - Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai conversation exports
-- Graph export: all notes as nodes, all links as edges (JSON)
-- Visual knowledge graph HTML export as a self-contained 3D scene with search, smart fit, semantic wires, markdown preview, and offline Firefox-safe rendering
+- Session logs link to projects/days/agents (NOT auto-linked to people)
 - Optional qmd-backed plain-language atlas search
-- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`, and JSON task/query output
-- File-backed working set via `cart working-set ...` for role-scoped temporary memory
-- Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
-- Cassette therapy plugin MVP integration via `cart therapy review` and `cart therapy counter-evidence` — pattern detection (RSD, isolation, shame cycles), grounded counter-evidence queries, autonomy-first interventions
-- File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces — enables relationship mapping beyond raw frequency, foundation for avoidance detection
-- Textual atlas TUI (`cart tui`) with section jumps, collapsed-section submenus, semantic wire neighborhood, `note://` jumps, note rendering, backlinks, tasks overlay, measured filter timing, and mapsOS handoff
-- mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
-- Learning audit loop
 
-### still moving
+**Semantic wiring + Emotional topology:**
+- File-backed semantic wires via `cart wire ...` with full emotional predicates
+- Emotional metadata: valence (positive/negative/mixed/neutral), energy-impact (draining/energizing), avoidance-risk (high/medium/low), growth-edge (yes/no), current-state (active/grieving/building)
+- Wires indexed for traversal, emotional querying, and temporal versioning
+- `cart wire emotional-summary <person>` shows relationship topology
+- `cart wire query --avoidance-risk high` detects avoidance territory
+- Separate graphs: exocortex (relationships) vs activity timeline (sessions)
 
+**Visual layer:**
+- Graph export: nodes + edges with emotional metadata (JSON)
+- HTML 3D visual graph with emotional-valence node coloring (green=positive, red=negative, purple=mixed)
+- Avoidance-aware node sizing (larger = higher avoidance-risk)
+- Semantic wires with emotional metadata in detail pane
+- Offline Firefox-safe rendering, search, navigation, PNG/JSON export
+
+**Therapy integration:**
+- Cassette therapy plugin MVP with pattern detection (RSD, isolation, shame cycles, executive paralysis)
+- Real-time avoidance detection via emotional wire queries
+- Therapy review + counter-evidence surfaces grounded evidence at moment of spiral
+- Pattern library tracks what interventions work (somatic grounding: 99% success)
+- Autonomy-first operation (suggest, never command)
+
+**Operational layer:**
+- mapsOS bridge: state tracking correlates with emotional topology
+- Capacity-aware routing: show support people when energy low, growth-edges when energy high
+- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`
+- File-backed working set via `cart working-set ...` for role-scoped temporary memory
+- Textual atlas TUI with section jumps, semantic wire neighborhood, mapsOS handoff
+
+### in progress
+
+- Graph grouping by folder structure (soft clustering + filter dropdown)
+- Temporal versioning of emotional predicates (when relationships change)
+- Cross-graph queries (activity timeline with exocortex relationship context)
 - Concurrent write protection under heavier multi-agent load
 - Model-backed summary backends
-- Richer shared-atlas and multi-user workflows
 - Deeper mapsOS task write-back
 
 ---
