@@ -80,7 +80,9 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai conversation exports
 - Graph export: all notes as nodes, all links as edges (JSON)
+- Visual knowledge graph HTML export with local search, pan/zoom, dragging, and node inspection
 - Optional qmd-backed plain-language atlas search
+- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, and JSON task/query output
 - Textual atlas TUI (`cart tui`) with graph navigation, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
@@ -157,6 +159,7 @@ cart completion fish > ~/.config/fish/completions/cart.fish
 ```zsh
 cart init
 cart status
+cart doctor
 cart daily-brief
 cart tui
 cart session-import claude --latest 1
@@ -171,6 +174,8 @@ cart session-import claude --latest 1
 ```zsh
 cart init [path]
 cart status
+cart doctor
+cart status --json
 cart tui
 cart backup
 cart index rebuild
@@ -193,6 +198,7 @@ cart query 'session drift in hermetica'   # plain language; prefers qmd when con
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
+cart query --json 'type:agent-log'
 cart backlinks project-alpha
 ```
 
@@ -226,6 +232,7 @@ cart todo list
 cart todo add "ship the thing" -p P0 --project project-alpha
 cart todo done t123abc
 cart todo query 'priority:P0 status:open'
+cart todo query --json 'status:open'
 ```
 
 ### session import
@@ -249,9 +256,18 @@ Both support `--latest N` and `--force`. All imports are deduped.
 
 ```zsh
 cart graph --export
+cart graph --format html
+cart graph --format html --open
 ```
 
-Output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}`.
+JSON output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}`
+
+HTML output is a self-contained visual graph with:
+
+- type-colored nodes
+- degree-scaled sizing
+- local search by note title, id, type, or tag
+- pan/zoom, dragging, and a detail pane for the selected node
 
 ### mapsOS bridge
 
@@ -427,7 +443,7 @@ Repos:
 
 - Not a SaaS notes app
 - Not a proprietary memory store
-- Not a visual knowledge graph first, even though `cart graph --export` gives you one
+- Not a graph-native editor, even though `cart graph --format html` now renders one
 - Not pretending the surface area is finished
 
 ---
@@ -441,6 +457,10 @@ Repos:
 - `CART_PHASE4_SPEC.md` - deferred deep-sync and robustness work
 - `CART_PHASE5_SPEC.md` - scoped CLI and TUI upgrade plan
 - `CART_PHASE5_BUILDSHEET.md` - implementation order for the next cart upgrade
+- `CART_MODEL_SUMMARIES_SPEC.md` - next-pass summary profiles, provenance, and cache rules
+- `CART_RUNTIME_AUTOMATION_SPEC.md` - scoped hooks, validation, notification, and registry upgrades
+- `CART_VISUAL_GRAPH_V1_SPEC.md` - shipped first-pass visual graph scope
+- `MAPSOS_BRIDGE_V2_SPEC.md` - structured bridge contract for cartographer and mapsOS
 - `QMD_OPTIONAL_SPEC.md` - implementation notes for optional qmd search
 - `orchestra/` - short allowlist-friendly shell wrappers for common cart operations
 - `skills/create-skill/SKILL.md` - guided conversation for drafting new Claude skills

@@ -7,6 +7,7 @@ import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 from click.shell_completion import get_completion_class
@@ -72,6 +73,130 @@ def ensure_index_current(atlas: Atlas) -> Index:
 
 def coming_soon(message: str) -> None:
     click.echo(message)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _emit_json(payload: Any) -> None:
+    click.echo(json.dumps(_jsonable(payload), indent=2, ensure_ascii=False))
+
+
+def _format_timestamp(value: float | None) -> str:
+    if value is None:
+        return "never"
+    return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M")
+
+
+def _task_payload(task: Any) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "path": str(task.path),
+        "text": task.text,
+        "status": task.status,
+        "priority": task.priority,
+        "project": task.project,
+        "due": task.due,
+        "done": task.done,
+    }
+
+
+def _doctor_payload(atlas: Atlas) -> dict[str, Any]:
+    initialized = atlas.is_initialized()
+    warnings: list[str] = []
+
+    index_payload: dict[str, Any] = {
+        "path": str(atlas.index_db_path),
+        "exists": atlas.index_db_path.exists(),
+        "needs_rebuild": None,
+        "notes": 0,
+        "blocks": 0,
+        "last_rebuild": None,
+    }
+    if initialized and atlas.index_db_path.exists():
+        index = Index(atlas.root)
+        index_status = index.status()
+        index_payload.update(index_status)
+        index_payload["needs_rebuild"] = index.needs_rebuild()
+        if index_payload["needs_rebuild"]:
+            warnings.append("atlas index is stale; run `cart index rebuild`")
+    elif initialized:
+        warnings.append("atlas index does not exist yet; run `cart status` or `cart index rebuild`")
+
+    mapsos_settings = atlas.config.get("mapsos", {})
+    export_dir = Path(
+        str(mapsos_settings.get("export_dir") or Path.home() / ".mapsOS" / "exports")
+    ).expanduser()
+    intake_dir = Path(
+        str(mapsos_settings.get("intake_dir") or Path.home() / "dev" / "mapsOS" / "intakes")
+    ).expanduser()
+    export_files = sorted(export_dir.glob("*.json")) if export_dir.exists() else []
+    intake_files = sorted(intake_dir.glob("*.md")) if intake_dir.exists() else []
+    if not export_files:
+        warnings.append("no mapsOS exports found")
+
+    qmd_settings = _qmd_settings(atlas)
+    qmd_mode = str(qmd_settings.get("enabled", "auto")).strip().lower() or "auto"
+    qmd_available = qmd.is_available()
+    configured_collection = str(qmd_settings.get("default_collection", "")).strip() or None
+    detected_collection = qmd.collection_name_for_path(atlas.root) if qmd_available else None
+    effective_collection = configured_collection or detected_collection
+    if qmd_mode == "on" and not qmd_available:
+        warnings.append("qmd.enabled=on but `qmd` is not available on PATH")
+    if qmd_available and qmd_mode != "off" and effective_collection is None:
+        warnings.append("qmd is available but no atlas collection is configured")
+
+    plugin_dir = atlas.root / ".cartographer" / "plugins"
+    plugin_files = (
+        sorted(path.name for path in plugin_dir.iterdir() if path.is_file() and not path.name.startswith("."))
+        if plugin_dir.exists()
+        else []
+    )
+
+    payload = {
+        "root": str(atlas.root),
+        "initialized": initialized,
+        "config_path": str(atlas.config_path),
+        "index": {
+            **index_payload,
+            "last_rebuild_text": _format_timestamp(index_payload["last_rebuild"]),
+        },
+        "qmd": {
+            "mode": qmd_mode,
+            "available": qmd_available,
+            "configured_collection": configured_collection,
+            "detected_collection": detected_collection,
+            "effective_collection": effective_collection,
+        },
+        "mapsos": {
+            "export_dir": str(export_dir),
+            "export_dir_exists": export_dir.exists(),
+            "export_count": len(export_files),
+            "latest_export": None if not export_files else str(export_files[-1]),
+            "intake_dir": str(intake_dir),
+            "intake_dir_exists": intake_dir.exists(),
+            "intake_count": len(intake_files),
+            "latest_intake": None if not intake_files else str(intake_files[-1]),
+        },
+        "plugins": {
+            "dir": str(plugin_dir),
+            "exists": plugin_dir.exists(),
+            "count": len(plugin_files),
+            "names": plugin_files,
+        },
+        "git": atlas.git_status_summary() if initialized else "not initialized",
+        "warnings": warnings,
+    }
+    if not initialized:
+        payload["warnings"].insert(0, f"atlas is not initialized at {atlas.root}")
+    return payload
 
 
 _STRUCTURED_QUERY_PREFIXES = (
@@ -266,15 +391,15 @@ def completion(shell: str, prog_name: str) -> None:
 
 
 @main.command()
-def status() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def status(as_json: bool) -> None:
+    """Show atlas health, task counts, and session totals."""
     atlas = get_atlas()
     info = atlas.status()
-    last_rebuild = info["index"]["last_rebuild"]
-    last_rebuild_text = (
-        "never"
-        if last_rebuild is None
-        else datetime.fromtimestamp(last_rebuild).strftime("%Y-%m-%d %H:%M")
-    )
+    if as_json:
+        _emit_json(info)
+        return
+    last_rebuild_text = _format_timestamp(info["index"]["last_rebuild"])
     tasks = info["tasks"]
     priorities = tasks["by_priority"]
     worklog = info["worklog"]
@@ -295,6 +420,51 @@ def status() -> None:
     )
     click.echo(f"git: {info['git']}")
     click.echo(f"worklog: {len(worklog['in_progress'])} in-progress tasks")
+
+
+@main.command()
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def doctor(as_json: bool) -> None:
+    """Check atlas, qmd, mapsOS, and plugin health in one pass."""
+    atlas = Atlas()
+    payload = _doctor_payload(atlas)
+    if as_json:
+        _emit_json(payload)
+        return
+
+    click.echo(f"atlas: {'ok' if payload['initialized'] else 'warn'}  {payload['root']}")
+    click.echo(f"config: {payload['config_path']}")
+    index = payload["index"]
+    click.echo(
+        "index: "
+        f"{'ok' if index['exists'] and not index['needs_rebuild'] else 'warn'}  "
+        f"{index['notes']} notes, {index['blocks']} blocks, rebuilt {index['last_rebuild_text']}"
+    )
+    qmd_payload = payload["qmd"]
+    qmd_state = "ok" if qmd_payload["mode"] == "off" or qmd_payload["available"] else "warn"
+    qmd_collection = qmd_payload["effective_collection"] or "none"
+    click.echo(
+        "qmd: "
+        f"{qmd_state}  mode={qmd_payload['mode']}  available={qmd_payload['available']}  collection={qmd_collection}"
+    )
+    mapsos_payload = payload["mapsos"]
+    click.echo(
+        "mapsOS: "
+        f"{'ok' if mapsos_payload['export_count'] else 'warn'}  "
+        f"{mapsos_payload['export_count']} exports  latest={mapsos_payload['latest_export'] or 'none'}"
+    )
+    plugins = payload["plugins"]
+    click.echo(
+        "plugins: "
+        f"{'ok' if plugins['exists'] else 'warn'}  {plugins['count']} files in {plugins['dir']}"
+    )
+    click.echo(f"git: {payload['git']}")
+    if payload["warnings"]:
+        click.echo(f"warnings: {len(payload['warnings'])}")
+        for warning in payload["warnings"]:
+            click.echo(f"- {warning}")
+    else:
+        click.echo("warnings: none")
 
 
 @main.command("tui")
@@ -384,10 +554,15 @@ def edit(note_id: str) -> None:
 
 @main.command()
 @click.argument("expression", nargs=-1, required=True)
-def query(expression: tuple[str, ...]) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def query(expression: tuple[str, ...], as_json: bool) -> None:
+    """Query atlas notes by structured tokens or plain text."""
     atlas = get_atlas()
     expr = " ".join(expression)
     results = resolve_query_paths(atlas, expr)
+    if as_json:
+        _emit_json({"expression": expr, "results": results})
+        return
     for result in results:
         click.echo(result)
 
@@ -460,9 +635,14 @@ def todo() -> None:
 
 
 @todo.command("list")
-def todo_list() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def todo_list(as_json: bool) -> None:
     atlas = get_atlas()
-    for task in sort_tasks(query_tasks(atlas.root, "status:open")):
+    tasks = sort_tasks(query_tasks(atlas.root, "status:open"))
+    if as_json:
+        _emit_json({"query": "status:open", "tasks": [_task_payload(task) for task in tasks]})
+        return
+    for task in tasks:
         parts = [task.id, task.priority, task.text]
         if task.project:
             parts.append(f"project={task.project}")
@@ -494,9 +674,16 @@ def todo_done(task_id: str) -> None:
 
 @todo.command("query")
 @click.argument("expression", nargs=-1, required=True)
-def todo_query(expression: tuple[str, ...]) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def todo_query(expression: tuple[str, ...], as_json: bool) -> None:
+    """Query tasks by status, priority, project, due date, or text."""
     atlas = get_atlas()
-    for task in query_tasks(atlas.root, " ".join(expression)):
+    expr = " ".join(expression)
+    tasks = query_tasks(atlas.root, expr)
+    if as_json:
+        _emit_json({"expression": expr, "tasks": [_task_payload(task) for task in tasks]})
+        return
+    for task in tasks:
         parts = [task.id, task.status, task.priority, task.text]
         if task.project:
             parts.append(f"project={task.project}")
@@ -511,9 +698,13 @@ def worklog() -> None:
 
 
 @worklog.command("status")
-def worklog_status() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def worklog_status(as_json: bool) -> None:
     atlas = get_atlas()
     data = Worklog(atlas.worklog_db_path).status()
+    if as_json:
+        _emit_json(data)
+        return
     click.echo(f"current_session: {data['current_session_id'] or 'none'}")
     click.echo(f"in_progress: {len(data['in_progress'])}")
     if data["last_session"]:
@@ -1267,14 +1458,21 @@ def plugin_run(name: str, args: tuple[str, ...]) -> None:
     "--export",
     "export_path",
     default=None,
-    help="Path for JSON export (default: ~/atlas/graph-export.json).",
+    help="Path for graph export (default: graph-export.json or graph-view.html).",
 )
 @click.option(
-    "--format", "fmt", default="json", type=click.Choice(["json"]), show_default=True
+    "--format",
+    "fmt",
+    default="json",
+    type=click.Choice(["json", "html"]),
+    show_default=True,
 )
-def graph_export(export_path: str | None, fmt: str) -> None:
-    """Export the atlas note graph as a JSON file (nodes + edges)."""
-    import sqlite3 as _sqlite3
+@click.option("--open", "open_in_browser", is_flag=True, help="Open HTML graph after export.")
+def graph_export(export_path: str | None, fmt: str, open_in_browser: bool) -> None:
+    """Export the atlas note graph as JSON or an interactive HTML view."""
+    import webbrowser
+
+    from .graph_export import load_graph_payload, render_graph_html
 
     atlas = get_atlas()
     db_path = atlas.root / ".cartographer" / "index.db"
@@ -1282,54 +1480,27 @@ def graph_export(export_path: str | None, fmt: str) -> None:
         atlas.refresh_index()
     if not db_path.exists():
         raise click.ClickException("atlas index not found — run `cart status` first")
-
-    con = _sqlite3.connect(str(db_path))
-    con.row_factory = _sqlite3.Row
-    try:
-        rows = con.execute(
-            "SELECT id, title, type, tags, links FROM notes ORDER BY type, id"
-        ).fetchall()
-        ref_rows = con.execute(
-            "SELECT DISTINCT from_note, to_note FROM block_refs WHERE from_note != to_note"
-        ).fetchall()
-    finally:
-        con.close()
-
-    nodes = []
-    for row in rows:
-        try:
-            tags = json.loads(row["tags"]) if row["tags"] else []
-        except Exception:
-            tags = []
-        nodes.append(
-            {
-                "id": row["id"],
-                "title": row["title"] or row["id"],
-                "type": row["type"] or "note",
-                "tags": tags,
-            }
-        )
-
-    edges = [{"source": r["from_note"], "target": r["to_note"]} for r in ref_rows]
-
-    payload = {
-        "generated": _today_string(),
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-        "nodes": nodes,
-        "edges": edges,
-    }
+    payload = load_graph_payload(atlas.root)
 
     out_path = (
         Path(export_path).expanduser()
         if export_path
-        else atlas.root / "graph-export.json"
+        else atlas.root / ("graph-view.html" if fmt == "html" else "graph-export.json")
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    if fmt == "json":
+        out_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    else:
+        out_path.write_text(render_graph_html(payload), encoding="utf-8")
+    click.echo(
+        f"graph exported: {out_path} ({payload['node_count']} nodes, {payload['edge_count']} edges)"
     )
-    click.echo(f"graph exported: {out_path} ({len(nodes)} nodes, {len(edges)} edges)")
+    if open_in_browser:
+        if fmt != "html":
+            raise click.ClickException("--open only works with --format html")
+        webbrowser.open(out_path.resolve().as_uri())
 
 
 # ---------------------------------------------------------------------------
