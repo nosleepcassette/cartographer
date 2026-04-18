@@ -745,9 +745,16 @@ def backup() -> None:
 
 @main.command()
 @click.argument("parts", nargs=-1, required=True)
-@click.option("-p", "--priority", default="P2", show_default=True)
-@click.option("--agent", default="hermes", show_default=True)
+@click.option("-p", "--priority", default="P2", show_default=True, help="Task priority (P0-P4). Default is P2.")
+@click.option("--agent", default="hermes", show_default=True, help="Agent origin for this note.")
 def new(parts: tuple[str, ...], priority: str, agent: str) -> None:
+    """Create a new note or task.
+
+    PARTS: either a title (creates 'note' type), or TYPE and TITLE separately.
+
+    Example: cart new "My note" → creates a note titled "My note"
+    Example: cart new project "Foo" → creates a project note titled "Foo"
+    """
     if len(parts) == 1:
         note_type = "note"
         title = parts[0]
@@ -780,9 +787,15 @@ def open(note_id: str) -> None:
 
 
 @main.command("ls")
-@click.option("--type", "note_type", help="Filter by note type.")
-@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--type", "note_type", help="Filter by note type (e.g., project, entity, session).")
+@click.option("--limit", default=20, type=int, show_default=True, help="Maximum notes to display.")
 def ls_notes(note_type: str | None, limit: int) -> None:
+    """List notes with ID, type, and title.
+
+    Example: cart ls
+    Example: cart ls --type project
+    Example: cart ls --limit 50
+    """
     atlas = get_atlas()
     index = ensure_index_current(atlas)
     if note_type:
@@ -807,7 +820,11 @@ def edit(note_id: str) -> None:
 @click.argument("expression", nargs=-1, required=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def query(expression: tuple[str, ...], as_json: bool) -> None:
-    """Query atlas notes by structured tokens or plain text."""
+    """Query atlas notes by structured tokens or plain text.
+
+    Use structured queries like: type:project tag:urgent
+    Or free-text: cart query "machine learning"
+    """
     atlas = get_atlas()
     expr = " ".join(expression)
     results = resolve_query_paths(atlas, expr)
@@ -821,6 +838,11 @@ def query(expression: tuple[str, ...], as_json: bool) -> None:
 @main.command()
 @click.argument("note_id")
 def show(note_id: str) -> None:
+    """Display note contents. Supports partial ID matching.
+
+    Example: cart show hopeagent-session-001
+    Example: cart show hopeagent (matches first note with ID containing 'hopeagent')
+    """
     atlas = get_atlas()
     path = atlas.resolve_note_path(note_id)
     if path is None:
@@ -1146,12 +1168,13 @@ def backlinks(target: str, block_mode: bool) -> None:
 
 @main.group()
 def todo() -> None:
-    """todo commands."""
+    """Task and todo management commands."""
 
 
 @todo.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def todo_list(as_json: bool) -> None:
+    """List all open tasks, sorted by priority."""
     atlas = get_atlas()
     tasks = sort_tasks(query_tasks(atlas.root, "status:open"))
     if as_json:
@@ -1173,10 +1196,15 @@ def todo_list(as_json: bool) -> None:
 
 @todo.command("add")
 @click.argument("text")
-@click.option("-p", "--priority", default="P2", show_default=True)
-@click.option("--project")
-@click.option("--due")
+@click.option("-p", "--priority", default="P2", show_default=True, help="Task priority (P0-P4).")
+@click.option("--project", help="Associate with a project.")
+@click.option("--due", help="Due date (e.g., 2026-04-25 or 'tomorrow').")
 def todo_add(text: str, priority: str, project: str | None, due: str | None) -> None:
+    """Add a new task or todo.
+
+    Example: cart todo add "Fix cart TUI performance" -p P1
+    Example: cart todo add "Review PR" --project hopeagent --due tomorrow
+    """
     atlas = get_atlas()
     task = append_task(atlas.root, text, priority=priority, project=project, due=due)
     atlas.refresh_index()
@@ -1186,6 +1214,10 @@ def todo_add(text: str, priority: str, project: str | None, due: str | None) -> 
 @todo.command("done")
 @click.argument("task_id")
 def todo_done(task_id: str) -> None:
+    """Mark a task as complete.
+
+    Example: cart todo done task-12345
+    """
     atlas = get_atlas()
     task = mark_done(atlas.root, task_id)
     atlas.refresh_index()
@@ -1219,7 +1251,7 @@ def todo_query(expression: tuple[str, ...], as_json: bool) -> None:
 
 @main.group()
 def worklog() -> None:
-    """worklog commands."""
+    """Activity and completion logging."""
 
 
 @worklog.command("status")
@@ -1259,11 +1291,15 @@ def worklog_log(text: str) -> None:
 
 @main.group()
 def index() -> None:
-    """index commands."""
+    """Database index maintenance and status commands."""
 
 
 @index.command("rebuild")
 def index_rebuild() -> None:
+    """Rebuild the SQLite index from scratch.
+
+    Use when index is out of sync or corrupted. This is safe—it re-indexes all notes.
+    """
     atlas = get_atlas()
     result = Index(atlas.root).rebuild()
     click.echo(
@@ -1273,6 +1309,7 @@ def index_rebuild() -> None:
 
 @index.command("status")
 def index_status() -> None:
+    """Show index statistics (note count, block count, reference count)."""
     atlas = get_atlas()
     status_info = ensure_index_current(atlas).status()
     click.echo(f"notes: {status_info['notes']}")
@@ -1519,7 +1556,7 @@ def obsidian_sync(use_dataview: bool) -> None:
 
 @main.group()
 def sessions() -> None:
-    """session note surfaces."""
+    """Session note and agent log management."""
 
 
 @sessions.command("recent")
@@ -1951,7 +1988,7 @@ def bootstrap_populate(
 
 @main.group()
 def entities() -> None:
-    """entity note maintenance."""
+    """Entity (person/organization) note maintenance and operations."""
 
 
 @entities.command("clean-imports")
@@ -1967,7 +2004,7 @@ def entities_clean_imports() -> None:
 
 @main.group()
 def mapsos() -> None:
-    """mapsOS bridge commands."""
+    """Qualitative state tracking via mapsOS integration."""
 
 
 @mapsos.command("ingest")
@@ -2198,7 +2235,7 @@ def export_note(
 
 @main.group()
 def plugin() -> None:
-    """plugin commands."""
+    """Plugin installation, listing, and execution."""
 
 
 @plugin.command("list")

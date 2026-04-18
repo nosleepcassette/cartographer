@@ -789,6 +789,7 @@ class CartTUI(App[None]):
         self._last_rendered_note_id: str | None = None
         self._last_rendered_note_modified: float | None = None
         self._last_rendered_group: str | None = None
+        self._filter_debounce_handle: Any = None
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -1275,12 +1276,11 @@ class CartTUI(App[None]):
         self.atlas.refresh_index()
         self.refresh_from_source(select_note_id=self.selected_note_id)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "graph-filter":
-            return
+    def _apply_filter_debounced(self) -> None:
+        """Apply filter with debounce to avoid rebuilding on every keystroke."""
+        self._filter_debounce_handle = None
         previous_note_id = self.selected_note_id
         previous_group = self._current_group()
-        self.filter_text = event.value
         self.rebuild_graph_view(select_note_id=self.selected_note_id)
         self.render_graph()
         self.render_graph_visual()
@@ -1291,6 +1291,14 @@ class CartTUI(App[None]):
             or (current_section is not None and current_section.collapsed)
         ):
             self.render_note()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "graph-filter":
+            return
+        self.filter_text = event.value
+        if self._filter_debounce_handle is not None:
+            self.remove_timer(self._filter_debounce_handle)
+        self._filter_debounce_handle = self.call_later(self._apply_filter_debounced, delay=0.2)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "graph-filter":
