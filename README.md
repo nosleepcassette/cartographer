@@ -86,7 +86,7 @@ session -> export -> cart ingest -> atlas update -> daily brief -> next session
 - File-backed working set via `cart working-set ...` for role-scoped temporary memory
 - Therapy handoff export scaffolding via `cart therapy export` writing into `notes/therapy/exports`
 - File-backed semantic wires via `cart wire ...` with doctor, validate, gc, and traversal surfaces
-- Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
+- Textual atlas TUI (`cart tui`) with graph navigation, native graph-focus rendering, semantic wire neighborhood, collapsible groups, note rendering, backlinks, tasks overlay, and mapsOS handoff
 - mapsOS bridge: ingest exports, synthesize patterns, and read state back into the atlas surface
 - Daily brief generation
 - Learning audit loop
@@ -307,6 +307,7 @@ JSON output: `{nodes: [{id, title, type, tags}], edges: [{source, target}]}`
 HTML output is a self-contained visual graph with:
 
 - type-colored nodes
+- semantic wire edges rendered distinctly from plain wikilinks
 - degree-scaled sizing
 - local search by note title, id, type, or tag
 - pan/zoom, dragging, and a detail pane for the selected node

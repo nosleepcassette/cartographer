@@ -113,3 +113,40 @@ def test_graph_payload_normalizes_path_targets_to_canonical_ids(tmp_path) -> Non
 
     assert ("alpha", "entities-index") in edges
     assert all(edge["target"] != "entities/index" for edge in payload["edges"])
+
+
+def test_graph_payload_includes_semantic_wires(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "projects" / "alpha.md",
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body=(
+            "# Alpha\n\n"
+            '<!-- cart:wire target="beta" predicate="supports" -->\n'
+        ),
+    )
+    _write_note(
+        atlas_root / "projects" / "beta.md",
+        note_id="beta",
+        title="Beta",
+        note_type="project",
+        body="# Beta\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    wire_edges = [edge for edge in payload["edges"] if edge.get("kind") == "wire"]
+
+    assert payload["wire_count"] == 1
+    assert wire_edges == [
+        {
+            "source": "alpha",
+            "target": "beta",
+            "kind": "wire",
+            "predicate": "supports",
+            "bidirectional": False,
+        }
+    ]

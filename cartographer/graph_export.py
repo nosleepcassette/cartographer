@@ -7,6 +7,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .wires import VALID_WIRE_PREDICATES
+
 
 TYPE_COLORS = {
     "project": "#d97757",
@@ -58,11 +60,18 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
             ORDER BY from_note ASC, to_note ASC
             """
         ).fetchall()
+        wire_rows = connection.execute(
+            """
+            SELECT source_note, target_note, predicate, bidirectional
+            FROM wires
+            ORDER BY source_note ASC, target_note ASC, predicate ASC
+            """
+        ).fetchall()
     finally:
         connection.close()
 
     aliases = _alias_map(atlas_root, note_rows)
-    edge_pairs: set[tuple[str, str]] = set()
+    edge_pairs: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
     unresolved_edge_count = 0
     for row in note_rows:
         source = aliases.get(str(row["id"]))
@@ -80,7 +89,11 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
                 if target_id is None:
                     unresolved_edge_count += 1
                 continue
-            edge_pairs.add((source, target_id))
+            edge_pairs[(source, target_id, "wikilink", None)] = {
+                "source": source,
+                "target": target_id,
+                "kind": "wikilink",
+            }
 
     for row in ref_rows:
         source = aliases.get(str(row["from_note"]).strip())
@@ -90,11 +103,37 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
             continue
         if source == target:
             continue
-        edge_pairs.add((source, target))
+        edge_pairs[(source, target, "wikilink", None)] = {
+            "source": source,
+            "target": target,
+            "kind": "wikilink",
+        }
+
+    valid_predicates = set(VALID_WIRE_PREDICATES)
+    wire_count = 0
+    for row in wire_rows:
+        predicate = str(row["predicate"] or "").strip()
+        if predicate not in valid_predicates:
+            continue
+        source = aliases.get(str(row["source_note"]).strip())
+        target = aliases.get(str(row["target_note"]).strip())
+        if source is None or target is None:
+            unresolved_edge_count += 1
+            continue
+        if source == target:
+            continue
+        edge_pairs[(source, target, "wire", predicate)] = {
+            "source": source,
+            "target": target,
+            "kind": "wire",
+            "predicate": predicate,
+            "bidirectional": bool(row["bidirectional"]),
+        }
+        wire_count += 1
 
     edges = [
-        {"source": source, "target": target}
-        for source, target in sorted(edge_pairs)
+        edge_pairs[key]
+        for key in sorted(edge_pairs)
     ]
     degree_counts: Counter[str] = Counter()
     for edge in edges:
@@ -129,6 +168,7 @@ def load_graph_payload(atlas_root: Path) -> dict[str, Any]:
         "atlas_root": str(atlas_root),
         "node_count": len(nodes),
         "edge_count": len(edges),
+        "wire_count": wire_count,
         "unresolved_edge_count": unresolved_edge_count,
         "type_counts": dict(sorted(type_counts.items())),
         "nodes": nodes,
@@ -382,6 +422,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       stroke: rgba(233, 196, 106, 0.45);
       stroke-width: 1.6;
     }}
+    .edge.edge-wire {{
+      stroke: rgba(244, 162, 97, 0.5);
+      stroke-dasharray: 6 4;
+    }}
     .node circle {{
       stroke: rgba(0, 0, 0, 0.55);
       stroke-width: 1.4;
@@ -560,6 +604,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       .map((edge) => ({{
         source: nodeById.get(edge.source),
         target: nodeById.get(edge.target),
+        kind: edge.kind || "wikilink",
+        predicate: edge.predicate || "",
       }}))
       .filter((edge) => edge.source && edge.target);
 
@@ -572,7 +618,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const edgeEls = [];
     for (const edge of edges) {{
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("class", "edge");
+      line.setAttribute("class", edge.kind === "wire" ? "edge edge-wire" : "edge");
       edgeLayer.appendChild(line);
       edgeEls.push({{ edge, line }});
     }}

@@ -208,6 +208,7 @@ class TUIHelperTests(unittest.TestCase):
             "alpha",
             visible_count=3,
             filter_text="alp",
+            wire_summary=None,
         ).plain
 
         self.assertIn("GRAPH FOCUS", text)
@@ -216,6 +217,43 @@ class TUIHelperTests(unittest.TestCase):
         self.assertIn("Gamma", text)
         self.assertIn("2 direct", text)
         self.assertIn("filter: alp", text)
+
+    def test_build_visual_graph_text_surfaces_semantic_wires(self) -> None:
+        records = {
+            "alpha": NoteRecord(
+                note_id="alpha",
+                path=Path("/tmp/alpha.md"),
+                title="Alpha",
+                note_type="project",
+                status="active",
+                tags=[],
+                modified=10,
+            ),
+            "beta": NoteRecord(
+                note_id="beta",
+                path=Path("/tmp/beta.md"),
+                title="Beta",
+                note_type="entity",
+                status=None,
+                tags=[],
+                modified=9,
+            ),
+        }
+
+        text = build_visual_graph_text(
+            records,
+            {"alpha": {"beta"}, "beta": {"alpha"}},
+            "alpha",
+            visible_count=2,
+            wire_summary={
+                "outgoing": [{"note_id": "beta", "predicate": "supports", "bidirectional": False}],
+                "incoming": [],
+            },
+        ).plain
+
+        self.assertIn("SEMANTIC WIRES", text)
+        self.assertIn("supports", text)
+        self.assertIn("Beta", text)
 
 
 if __name__ == "__main__":

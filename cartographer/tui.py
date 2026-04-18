@@ -24,6 +24,7 @@ from .atlas import Atlas
 from .index import Index
 from .notes import Note, parse_link_target
 from .tasks import query_tasks, sort_tasks
+from .wires import VALID_WIRE_PREDICATES
 
 
 BACKGROUND = "#0d0d0d"
@@ -353,6 +354,7 @@ def build_visual_graph_text(
     *,
     visible_count: int,
     filter_text: str = "",
+    wire_summary: dict[str, list[dict[str, Any]]] | None = None,
 ) -> Text:
     if selected_note_id is None or selected_note_id not in records:
         return Text("select a note to inspect the graph focus", style=DIM)
@@ -420,6 +422,28 @@ def build_visual_graph_text(
     if filter_text.strip():
         meta += f" · filter: {filter_text.strip()}"
     content.append(meta, style=DIM)
+    wire_summary = wire_summary or {"outgoing": [], "incoming": []}
+    semantic_lines: list[tuple[str, dict[str, Any]]] = []
+    for item in wire_summary.get("outgoing", [])[:2]:
+        semantic_lines.append(("out", item))
+    for item in wire_summary.get("incoming", [])[:2]:
+        semantic_lines.append(("in", item))
+    if semantic_lines:
+        content.append("\n\nSEMANTIC WIRES\n", style=f"bold {HIGHLIGHT}")
+        for direction, item in semantic_lines:
+            note_id = str(item.get("note_id") or "")
+            predicate = str(item.get("predicate") or "")
+            bidirectional = bool(item.get("bidirectional"))
+            label = records[note_id].label if note_id in records else note_id
+            marker = "->" if direction == "out" else "<-"
+            content.append(f"{direction:3} {predicate} {marker} ", style=DIM)
+            if note_id in records:
+                _append_node_label(content, records[note_id], limit=18)
+            else:
+                content.append(label, style=MUTED_BLUE)
+            if bidirectional:
+                content.append(" [bi]", style=DIM)
+            content.append("\n")
     return content
 
 
@@ -483,6 +507,52 @@ def load_backlinks(db_path: Path, note_id: str) -> list[tuple[str, int]]:
             (note_id,),
         ).fetchall()
     return [(str(row["from_note"]), int(row["ref_count"])) for row in rows]
+
+
+def load_wire_summary(db_path: Path, note_id: str) -> dict[str, list[dict[str, Any]]]:
+    valid_predicates = tuple(VALID_WIRE_PREDICATES)
+    placeholders = ", ".join("?" for _ in valid_predicates)
+    with _sqlite_connect(db_path) as connection:
+        outgoing_rows = connection.execute(
+            f"""
+            SELECT target_note, target_block, predicate, bidirectional
+            FROM wires
+            WHERE source_note = ? AND predicate IN ({placeholders})
+            ORDER BY path ASC, line ASC
+            LIMIT 6
+            """,
+            (note_id, *valid_predicates),
+        ).fetchall()
+        incoming_rows = connection.execute(
+            f"""
+            SELECT source_note, source_block, predicate, bidirectional
+            FROM wires
+            WHERE target_note = ? AND predicate IN ({placeholders})
+            ORDER BY path ASC, line ASC
+            LIMIT 6
+            """,
+            (note_id, *valid_predicates),
+        ).fetchall()
+    return {
+        "outgoing": [
+            {
+                "note_id": str(row["target_note"]),
+                "block_id": None if row["target_block"] is None else str(row["target_block"]),
+                "predicate": str(row["predicate"]),
+                "bidirectional": bool(row["bidirectional"]),
+            }
+            for row in outgoing_rows
+        ],
+        "incoming": [
+            {
+                "note_id": str(row["source_note"]),
+                "block_id": None if row["source_block"] is None else str(row["source_block"]),
+                "predicate": str(row["predicate"]),
+                "bidirectional": bool(row["bidirectional"]),
+            }
+            for row in incoming_rows
+        ],
+    }
 
 
 def read_mapsos_state() -> dict[str, Any]:
@@ -667,6 +737,7 @@ class CartTUI(App[None]):
         self.collapsed_groups: set[str] = set()
         self.note_body_cache: dict[str, tuple[float, str]] = {}
         self.backlinks_cache: dict[str, list[tuple[str, int]]] = {}
+        self.wire_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self.tasks_cache: list[Any] = []
         self.mapsos_state: dict[str, Any] = {}
 
@@ -729,6 +800,15 @@ class CartTUI(App[None]):
         for note_id in list(self.backlinks_cache):
             if note_id not in current_ids:
                 self.backlinks_cache.pop(note_id, None)
+                continue
+            if previous_modified.get(note_id) != self.records[note_id].modified:
+                self.backlinks_cache.pop(note_id, None)
+        for note_id in list(self.wire_cache):
+            if note_id not in current_ids:
+                self.wire_cache.pop(note_id, None)
+                continue
+            if previous_modified.get(note_id) != self.records[note_id].modified:
+                self.wire_cache.pop(note_id, None)
 
     def _visible_graph_rows(self) -> list[GraphRow]:
         return flatten_graph_rows(self.graph_sections)
@@ -794,6 +874,7 @@ class CartTUI(App[None]):
                 self.selected_note_id,
                 visible_count=len(self._visible_graph_rows()),
                 filter_text=self.filter_text,
+                wire_summary=self._load_wires(self.selected_note_id) if self.selected_note_id else None,
             )
         )
 
@@ -814,6 +895,11 @@ class CartTUI(App[None]):
         if note_id not in self.backlinks_cache:
             self.backlinks_cache[note_id] = load_backlinks(self.atlas.index_db_path, note_id)
         return self.backlinks_cache[note_id]
+
+    def _load_wires(self, note_id: str) -> dict[str, list[dict[str, Any]]]:
+        if note_id not in self.wire_cache:
+            self.wire_cache[note_id] = load_wire_summary(self.atlas.index_db_path, note_id)
+        return self.wire_cache[note_id]
 
     def render_note(self) -> None:
         header = self.query_one("#note-header", Static)
