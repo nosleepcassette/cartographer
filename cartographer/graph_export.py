@@ -430,10 +430,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
     .app {
       display: grid;
-      grid-template-columns: 22rem 1fr 23rem;
-      gap: 0.9rem;
+      grid-template-columns: 19rem 1fr 20rem;
+      gap: 0.65rem;
       height: 100vh;
-      padding: 0.9rem;
+      padding: 0.65rem;
     }
     .panel {
       min-height: 0;
@@ -446,8 +446,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .sidebar, .detail {
       display: flex;
       flex-direction: column;
-      gap: 0.95rem;
-      padding: 1rem;
+      gap: 0.65rem;
+      padding: 0.7rem;
       overflow: hidden;
     }
     .canvas-panel {
@@ -485,27 +485,27 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     h1, h2, p { margin: 0; }
     h1 {
       font-family: "Baskerville", "Iowan Old Style", serif;
-      font-size: 1.9rem;
+      font-size: 1.55rem;
       line-height: 1;
       color: var(--accent);
     }
-    h2 { font-size: 1.35rem; line-height: 1.1; }
-    .subtle { color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+    h2 { font-size: 1.08rem; line-height: 1.1; }
+    .subtle { color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 0.7rem;
     }
     .stat, .card {
-      padding: 0.85rem;
-      border-radius: 0.95rem;
+      padding: 0.6rem;
+      border-radius: 0.8rem;
       background: var(--surface);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
     .stat strong {
       display: block;
       color: var(--accent);
-      font-size: 1.35rem;
+      font-size: 1.1rem;
     }
     .label { color: var(--muted); font-size: 0.8rem; }
     .search-wrap { display: grid; gap: 0.45rem; }
@@ -630,11 +630,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       gap: 0.45rem;
     }
     .list li {
-      padding: 0.55rem 0.62rem;
-      border-radius: 0.75rem;
+      padding: 0.4rem 0.5rem;
+      border-radius: 0.7rem;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.04);
       cursor: pointer;
+      font-size: 0.78rem;
     }
     .list li.empty {
       cursor: default;
@@ -645,7 +646,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       overflow: auto;
       padding-right: 0.2rem;
       display: grid;
-      gap: 0.8rem;
+      gap: 0.55rem;
     }
     .preview {
       color: #f3ead9;
@@ -656,15 +657,15 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .preview h2,
     .preview h3,
     .preview h4 {
-      margin: 0 0 0.8rem;
+      margin: 0 0 0.5rem;
       font-family: "Baskerville", "Iowan Old Style", serif;
-      line-height: 1.08;
+      line-height: 1.05;
       color: #fff0c9;
     }
-    .preview h1 { font-size: 1.45rem; }
-    .preview h2 { font-size: 1.24rem; }
-    .preview h3 { font-size: 1.08rem; }
-    .preview h4 { font-size: 0.98rem; }
+    .preview h1 { font-size: 1.2rem; }
+    .preview h2 { font-size: 1rem; }
+    .preview h3 { font-size: 0.92rem; }
+    .preview h4 { font-size: 0.86rem; }
     .preview p,
     .preview ul,
     .preview ol,
@@ -672,19 +673,20 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .preview pre,
     .preview table,
     .preview hr {
-      margin: 0 0 0.9rem;
+      margin: 0 0 0.5rem;
     }
     .preview p,
     .preview li {
-      line-height: 1.68;
+      line-height: 1.45;
       color: #f0e5d0;
+      font-size: 0.85rem;
     }
     .preview ul,
     .preview ol {
-      padding-left: 1.35rem;
+      padding-left: 1.1rem;
     }
     .preview li + li {
-      margin-top: 0.35rem;
+      margin-top: 0.15rem;
     }
     .preview strong {
       color: #fff7e1;
@@ -879,6 +881,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       </div>
 
       <div class="toggle-grid">
+        <label class="toggle"><input id="demo-mode" type="checkbox" checked> demo view</label>
         <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
         <label class="toggle"><input id="hide-names" type="checkbox"> anonymize labels</label>
         <label class="toggle"><input id="show-sessions" type="checkbox"> show sessions</label>
@@ -1046,8 +1049,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
     const ANON_STORAGE_KEY = 'atlas.graph.hideNames';
     const WIRES_STORAGE_KEY = 'atlas.graph.showWires';
+    const DEMO_MODE_KEY = 'atlas.graph.demoMode';
 
     const searchInput = document.getElementById('search');
+    const demoModeToggle = document.getElementById('demo-mode');
     const showLabelsToggle = document.getElementById('show-labels');
     const hideNamesToggle = document.getElementById('hide-names');
     const showSessionsToggle = document.getElementById('show-sessions');
@@ -1110,6 +1115,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       showLabels: storageBool(LABEL_STORAGE_KEY, false),
       hideNames: storageBool(ANON_STORAGE_KEY, false),
       showWires: storageBool(WIRES_STORAGE_KEY, true),
+      demoMode: storageBool(DEMO_MODE_KEY, true), // Default to true for safe demo view
     };
 
     const initialHashState = readHashState();
@@ -1126,6 +1132,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     searchInput.value = state.search;
+    demoModeToggle.checked = state.demoMode;
     showLabelsToggle.checked = state.showLabels;
     hideNamesToggle.checked = state.hideNames;
     showSessionsToggle.checked = state.showSessions;
@@ -1579,6 +1586,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       window.localStorage.setItem(LABEL_STORAGE_KEY, state.showLabels ? '1' : '0');
       window.localStorage.setItem(ANON_STORAGE_KEY, state.hideNames ? '1' : '0');
       window.localStorage.setItem(WIRES_STORAGE_KEY, state.showWires ? '1' : '0');
+      window.localStorage.setItem(DEMO_MODE_KEY, state.demoMode ? '1' : '0');
     }
 
     function writeHashState() {
@@ -2065,7 +2073,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const needle = searchInput.value.trim();
       const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
       for (const node of nodes) {
-        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session);
+        const isDemohidden = state.demoMode && node.type === 'person';
+        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isDemohidden;
         const visible = node.visibleByToggle;
         const connected = !!selectedNode && selectedNeighbors.has(node.id);
         const dimForSearch = needle && !node.matched && node !== selectedNode;
@@ -2501,6 +2510,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       state.showLabels = showLabelsToggle.checked;
       saveToggles();
       refreshSceneState();
+      writeHashState();
+    });
+    demoModeToggle.addEventListener('change', () => {
+      state.demoMode = demoModeToggle.checked;
+      saveToggles();
+      layoutNodes();
+      applySearch();
+      renderTypeBrowser();
+      refreshSceneState();
+      smartFitCamera();
       writeHashState();
     });
     hideNamesToggle.addEventListener('change', () => {
