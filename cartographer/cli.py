@@ -2692,5 +2692,141 @@ def import_claude_web(export_file: str, latest: int | None, force: bool) -> None
         click.echo("  (use --force to re-import skipped)")
 
 
+@main.command("summary")
+@click.option("--emotional", is_flag=True, help="Summarize emotional topology of all wires.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def summary(emotional: bool, as_json: bool) -> None:
+    """Synthesize insights from semantic wires and emotional topology."""
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+
+    # Query all wires
+    all_wires = index.query_wires(note_id=None)
+
+    if not all_wires:
+        click.echo("no wires found")
+        return
+
+    # Synthesize emotional insights
+    avoidance_high = [w for w in all_wires if w.get("avoidance_risk") == "high"]
+    avoidance_medium = [w for w in all_wires if w.get("avoidance_risk") == "medium"]
+
+    support_energizing = [w for w in all_wires if w.get("energy_impact") == "energizing" and w.get("avoidance_risk") in ("low", "none")]
+
+    growth_edges = [w for w in all_wires if w.get("growth_edge") is True]
+
+    # Current state distribution
+    states = {}
+    for w in all_wires:
+        state = w.get("current_state")
+        if state:
+            states[state] = states.get(state, 0) + 1
+
+    # Emotional valence distribution
+    valences = {}
+    for w in all_wires:
+        val = w.get("emotional_valence")
+        if val:
+            valences[val] = valences.get(val, 0) + 1
+
+    # Energy distribution
+    energies = {}
+    for w in all_wires:
+        eng = w.get("energy_impact")
+        if eng:
+            energies[eng] = energies.get(eng, 0) + 1
+
+    payload = {
+        "total_wires": len(all_wires),
+        "emotional_topology": {
+            "avoidance_patterns": {
+                "high_risk": len(avoidance_high),
+                "medium_risk": len(avoidance_medium),
+                "high_risk_nodes": [
+                    {
+                        "source": w.get("source_note"),
+                        "target": w.get("target_note"),
+                        "state": w.get("current_state"),
+                        "valence_note": w.get("valence_note"),
+                    }
+                    for w in avoidance_high[:10]
+                ],
+            },
+            "support_network": {
+                "energizing_low_risk": len(support_energizing),
+                "nodes": [
+                    {
+                        "source": w.get("source_note"),
+                        "target": w.get("target_note"),
+                        "energy": w.get("energy_impact"),
+                        "state": w.get("current_state"),
+                    }
+                    for w in support_energizing[:10]
+                ],
+            },
+            "growth_edges": {
+                "count": len(growth_edges),
+                "nodes": [
+                    {
+                        "source": w.get("source_note"),
+                        "target": w.get("target_note"),
+                        "valence": w.get("emotional_valence"),
+                        "state": w.get("current_state"),
+                    }
+                    for w in growth_edges[:10]
+                ],
+            },
+            "capacity_state": {
+                "distribution": states,
+                "dominant_state": max(states, key=states.get) if states else None,
+            },
+            "valence_distribution": valences,
+            "energy_distribution": energies,
+        },
+    }
+
+    if as_json:
+        _emit_json(_with_schema(payload, surface="summary.emotional"))
+        return
+
+    # Human-readable output
+    click.echo(f"emotional topology summary — {len(all_wires)} wires")
+    click.echo()
+
+    click.echo(f"avoidance patterns:")
+    click.echo(f"  high-risk: {len(avoidance_high)} wires")
+    click.echo(f"  medium-risk: {len(avoidance_medium)} wires")
+    if avoidance_high:
+        click.echo(f"  top high-risk territory:")
+        for w in avoidance_high[:5]:
+            click.echo(f"    {w.get('source_note')} ↔ {w.get('target_note')} ({w.get('current_state')})")
+    click.echo()
+
+    click.echo(f"support network:")
+    click.echo(f"  energizing + low-risk: {len(support_energizing)} wires")
+    if support_energizing:
+        click.echo(f"  support people/projects:")
+        for w in support_energizing[:5]:
+            click.echo(f"    {w.get('source_note')} ↔ {w.get('target_note')} ({w.get('energy_impact')})")
+    click.echo()
+
+    click.echo(f"growth edges:")
+    click.echo(f"  count: {len(growth_edges)}")
+    if growth_edges:
+        click.echo(f"  edges in play:")
+        for w in growth_edges[:5]:
+            click.echo(f"    {w.get('source_note')} ↔ {w.get('target_note')} ({w.get('emotional_valence')})")
+    click.echo()
+
+    click.echo(f"capacity state:")
+    for state, count in sorted(states.items(), key=lambda x: -x[1]):
+        click.echo(f"  {state}: {count}")
+    click.echo()
+
+    click.echo(f"emotional distribution:")
+    for val, count in sorted(valences.items(), key=lambda x: -x[1]):
+        click.echo(f"  {val}: {count}")
+
+
 if __name__ == "__main__":
     main()
