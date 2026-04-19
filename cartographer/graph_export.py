@@ -1126,6 +1126,32 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       box-shadow: var(--shadow);
       backdrop-filter: blur(14px);
     }
+    #graph-error {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 4;
+      width: min(34rem, calc(100% - 2rem));
+      padding: 1rem 1.1rem;
+      border-radius: 1rem;
+      border: 1px solid rgba(255, 120, 120, 0.34);
+      background: rgba(19, 8, 12, 0.92);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+      color: #ffd4d4;
+      backdrop-filter: blur(14px);
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    #graph-error strong {
+      display: block;
+      margin-bottom: 0.4rem;
+      color: #fff3f3;
+      font-size: 0.88rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #graph-error[hidden] { display: none; }
     #help-overlay[hidden] { display: none; }
     #help-overlay-header {
       display: flex;
@@ -1282,6 +1308,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         </ul>
       </div>
 
+      <div id="graph-error" hidden></div>
       <div id="graph-canvas"></div>
       <div id="label-layer" aria-hidden="true"></div>
     </main>
@@ -1557,9 +1584,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const canvasHost = document.getElementById('graph-canvas');
     const labelLayer = document.getElementById('label-layer');
     const helpOverlay = document.getElementById('help-overlay');
+    const graphErrorEl = document.getElementById('graph-error');
     const toggleHelpButton = document.getElementById('toggle-help');
     const closeHelpButton = document.getElementById('close-help');
     const showAllFoldersButton = document.getElementById('show-all-folders');
+
+    function showGraphError(error) {
+      const message = error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error || 'Unknown graph error');
+      graphErrorEl.hidden = false;
+      graphErrorEl.innerHTML = `<strong>Graph Render Error</strong>${message}`;
+      window.__graphLastError = message;
+    }
+
+    window.addEventListener('error', (event) => {
+      if (event.error) {
+        showGraphError(event.error);
+      }
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      showGraphError(event.reason);
+    });
 
     function resolveThemePreset(themeName) {
       return THEME_PRESETS[themeName] || THEME_PRESETS.baseline;
@@ -2730,12 +2777,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           node.mesh.scale.setScalar(node.radius);
           if (node.sigil) {
             node.sigil.position.copy(node.position);
-            const glyphScale = glyphScaleByType[node.type] || 3;
+            const glyphFamily = glyphFamilyForType(node.type);
+            const glyphScale = glyphScaleByFamily[glyphFamily] || 3;
             node.sigil.scale.set(node.radius * glyphScale, node.radius * glyphScale, 1);
           }
           if (node.halo) {
             node.halo.position.copy(node.position);
-            const haloScale = haloScaleByType[node.type] || 5.4;
+            const glyphFamily = glyphFamilyForType(node.type);
+            const haloScale = haloScaleByFamily[glyphFamily] || 5.4;
             node.halo.scale.set(node.radius * haloScale, node.radius * haloScale, 1);
           }
         });
@@ -3845,8 +3894,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             ? 1 + Math.sin(now * 2.2 + node.index * 0.12) * 0.018
             : 1;
         node.mesh.scale.setScalar(node.renderScale * pulse);
+        const glyphFamily = glyphFamilyForType(node.type);
         if (node.sigil) {
-          const glyphScale = glyphScaleByType[node.type] || 3;
+          const glyphScale = glyphScaleByFamily[glyphFamily] || 3;
           node.sigil.scale.set(
             node.renderScale * glyphScale * pulse,
             node.renderScale * glyphScale * pulse,
@@ -3854,7 +3904,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           );
         }
         if (node.halo) {
-          const haloScale = haloScaleByType[node.type] || 5.4;
+          const haloScale = haloScaleByFamily[glyphFamily] || 5.4;
           const haloPulse = node === selectedNode
             ? 1 + Math.sin(now * 4.4) * 0.045
             : pulse;
@@ -4162,23 +4212,28 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
     }, true);
 
-    resizeRenderer();
-    layoutNodes();
-    restoreHashSelection();
-    renderLegend();
-    renderFolderChips();
-    applySearch();
-    renderTypeBrowser();
-    refreshSceneState();
-    if (selectedNode && selectedNode.visibleByToggle) {
-      updateDetail(selectedNode);
-    } else {
-      ensureSelectionVisible();
+    try {
+      resizeRenderer();
+      layoutNodes();
+      restoreHashSelection();
+      renderLegend();
+      renderFolderChips();
+      applySearch();
+      renderTypeBrowser();
+      refreshSceneState();
+      if (selectedNode && selectedNode.visibleByToggle) {
+        updateDetail(selectedNode);
+      } else {
+        ensureSelectionVisible();
+      }
+      if (!initialHashState || !initialHashState.cameraPosition) {
+        resetCamera();
+      }
+      animate();
+    } catch (error) {
+      console.error('graph init failed', error);
+      showGraphError(error);
     }
-    if (!initialHashState || !initialHashState.cameraPosition) {
-      resetCamera();
-    }
-    animate();
     })();
   </script>
 </body>
