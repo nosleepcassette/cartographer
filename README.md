@@ -1,10 +1,6 @@
 # cartographer
 
-<div style="position: relative; width: 100%; padding-bottom: 56.25%; height: 0; overflow: hidden;">
-  <iframe style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;" src="https://www.youtube.com/embed/hA2xTcY_tmU" allowfullscreen="" loading="lazy"></iframe>
-</div>
-
-> Your agents should know how you're actually doing — and remember everything they learn.
+Your agents should know how you're actually doing — and remember everything they learn.
 Your agents should know how you're actually doing — and remember everything they learn.
 
 Local-first knowledge filesystem and agent memory layer.
