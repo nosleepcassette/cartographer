@@ -88,7 +88,10 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "copy-link" in html
     assert "const THREE = {" in html
     assert "new THREE.WebGLRenderer" in html
-    assert "hide-names" in html
+    assert "privacy-mode" in html
+    assert "show-all-folders" in html
+    assert "folder-chip-list" in html
+    assert "toggle-help" in html
     assert "show-wires" in html
     assert "smartFitCamera" in html
     assert "renderPreviewMarkdown" in html
@@ -331,3 +334,24 @@ def test_graph_payload_surfaces_emotional_topology_on_nodes_and_edges(tmp_path) 
     assert wire_edge["emotional_valence"] == "mixed"
     assert wire_edge["avoidance_risk"] == "high"
     assert wire_edge["valence_note"] == "growth territory"
+
+
+def test_graph_payload_embeds_graph_config_defaults(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "entities" / "maps.md",
+        note_id="maps",
+        title="maps",
+        note_type="entity",
+        body="# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    graph_config = payload["graph_config"]
+
+    assert graph_config["theme_preset"] == "antiquarian"
+    assert graph_config["always_visible_people"] == ["maps", "cassette"]
+    assert graph_config["privacy"]["mode"] == "off"
+    assert graph_config["privacy"]["person_order"] == ["maps", "maggie", "sarah"]

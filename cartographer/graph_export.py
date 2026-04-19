@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .config import load_config
 from .notes import parse_frontmatter
 from .wires import VALID_WIRE_PREDICATES
 
@@ -39,6 +40,37 @@ AVOIDANCE_RISK_SCALE = {
 }
 
 SESSION_NOTE_TYPES = {"agent-log", "session", "daily"}
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
+    config = load_config(root=atlas_root)
+    graph = config.get("graph", {}) if isinstance(config, dict) else {}
+    if not isinstance(graph, dict):
+        graph = {}
+    privacy = graph.get("privacy", {})
+    if not isinstance(privacy, dict):
+        privacy = {}
+    mode = str(privacy.get("mode") or "off").strip().lower()
+    if mode not in {"off", "labels", "relationships", "full"}:
+        mode = "off"
+    return {
+        "theme_preset": str(graph.get("theme_preset") or "antiquarian").strip().lower(),
+        "show_people": bool(graph.get("show_people", True)),
+        "always_visible_people": _string_list(graph.get("always_visible_people")),
+        "visible_people": _string_list(graph.get("visible_people")),
+        "hidden_people": _string_list(graph.get("hidden_people")),
+        "privacy": {
+            "mode": mode,
+            "never_redact_ids": _string_list(privacy.get("never_redact_ids")),
+            "person_order": _string_list(privacy.get("person_order")),
+        },
+    }
 
 
 def _wire_metadata_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -224,6 +256,7 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
     db_path = atlas_root / ".cartographer" / "index.db"
     if not db_path.exists():
         raise FileNotFoundError(db_path)
+    graph_config = _graph_config_payload(atlas_root)
 
     connection = sqlite3.connect(str(db_path))
     connection.row_factory = sqlite3.Row
@@ -400,6 +433,7 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
     return {
         "generated": date.today().isoformat(),
         "atlas_root": str(atlas_root),
+        "graph_config": graph_config,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "wire_count": wire_count,
@@ -679,6 +713,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       background: rgba(237, 203, 128, 0.12);
       font-size: 0.7rem;
     }
+    .chip-button {
+      border: 1px solid rgba(237, 203, 128, 0.12);
+      border-radius: 999px;
+      padding: 0.28rem 0.55rem;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.72rem;
+      transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    }
+    .chip-button:hover {
+      border-color: rgba(237, 203, 128, 0.32);
+    }
+    .chip-button.active {
+      background: rgba(237, 203, 128, 0.18);
+      border-color: rgba(237, 203, 128, 0.42);
+      color: #fff4d4;
+    }
+    .chip-button.inactive {
+      opacity: 0.48;
+      filter: saturate(0.72);
+    }
     .list {
       list-style: none;
       margin: 0;
@@ -863,6 +920,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       color: var(--muted);
       font-size: 0.7rem;
     }
+    .stage-toolbar .actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
     .stage-toolbar .status { color: var(--accent); font-size: 0.72rem; }
     #help-overlay {
       position: absolute;
@@ -878,6 +940,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       backdrop-filter: blur(14px);
     }
     #help-overlay[hidden] { display: none; }
+    #help-overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.65rem;
+    }
     #help-overlay ul {
       list-style: none;
       margin: 0;
@@ -930,16 +999,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       </div>
 
       <div class="search-wrap">
-        <label class="eyebrow" for="folder-filter">Folder</label>
-        <select id="folder-filter">
-          <option value="">all folders</option>
-        </select>
-      </div>
-
-      <div class="controls">
         <button id="reset-layout" type="button">re-layout</button>
         <button id="fit-view" type="button">fit view</button>
-        <button id="show-all-types" type="button">show all types</button>
+        <button id="show-all-types" type="button">reset visibility</button>
+      </div>
+
+      <div class="card">
+        <div class="detail-meta">
+          <div class="eyebrow">Folders</div>
+          <button id="show-all-folders" type="button">show all folders</button>
+        </div>
+        <div class="chips" id="folder-chip-list"></div>
       </div>
 
       <div class="controls">
@@ -956,10 +1026,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
       <details class="card">
         <summary class="eyebrow">privacy</summary>
-        <div class="toggle-grid" style="margin-top: 0.4rem;">
-          <label class="toggle"><input id="anonymize-labels" type="checkbox"> anonymize labels</label>
-          <label class="toggle"><input id="anonymize-people" type="checkbox" checked> anonymize people</label>
+        <div class="search-wrap" style="margin-top: 0.4rem;">
+          <label class="eyebrow" for="privacy-mode">Mode</label>
+          <select id="privacy-mode">
+            <option value="off">off</option>
+            <option value="labels">labels only</option>
+            <option value="relationships">labels + names + relationship info</option>
+            <option value="full">full redact</option>
+          </select>
         </div>
+        <p class="subtle">`maps` and `cassette` always stay visible.</p>
       </details>
 
       <div class="card">
@@ -984,25 +1060,34 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         <div class="keys">
           <span>drag orbit</span>
           <span>wheel zoom</span>
-          <span>arrows traverse</span>
+          <span>↑/↓ group</span>
+          <span>←/→ lateral</span>
           <span>j/k cycle</span>
           <span>/ search</span>
           <span>s sessions</span>
           <span>w wires</span>
           <span>h help</span>
         </div>
-        <div class="status" id="selection-status">awaiting selection</div>
+        <div class="actions">
+          <div class="status" id="selection-status">awaiting selection</div>
+          <button id="toggle-help" type="button">help</button>
+        </div>
       </div>
 
       <div id="help-overlay" hidden>
-        <div class="eyebrow">Keybindings</div>
+        <div id="help-overlay-header">
+          <div class="eyebrow">Keybindings</div>
+          <button id="close-help" type="button">close</button>
+        </div>
         <ul>
           <li><code>/</code> focus search.</li>
-          <li><code>Arrow keys</code> move to the nearest visible node in that direction.</li>
+          <li><code>↑</code> / <code>↓</code> move inside the current structural group.</li>
+          <li><code>←</code> / <code>→</code> move across adjacent structural groups.</li>
           <li><code>j</code> / <code>k</code> cycle visible nodes.</li>
           <li><code>s</code> hide or reveal session notes. Preference is remembered locally.</li>
           <li><code>w</code> toggle semantic wires while keeping wikilinks visible.</li>
-          <li><code>r</code> reset camera, <code>0</code> clear hidden types, <code>x</code> anonymize labels.</li>
+          <li><code>h</code> / <code>?</code> toggle help, <code>Esc</code> closes overlays.</li>
+          <li><code>r</code> reset camera, <code>0</code> clear hidden types and folders.</li>
           <li><code>Enter</code> or <code>Space</code> re-center on the selected node.</li>
         </ul>
       </div>
@@ -1121,15 +1206,22 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
-    const ANONYMIZE_LABELS_KEY = 'atlas.graph.anonymizeLabels';
-    const ANONYMIZE_PEOPLE_KEY = 'atlas.graph.anonymizePeople';
+    const PRIVACY_MODE_KEY = 'atlas.graph.privacyMode';
     const WIRES_STORAGE_KEY = 'atlas.graph.showWires';
+    const graphConfig = atlasGraphPayload.graph_config || {};
+    const privacyConfig = graphConfig.privacy || {};
+    const NEVER_REDACT_IDS = new Set((privacyConfig.never_redact_ids || []).map((value) => String(value).toLowerCase()));
+    const ALWAYS_VISIBLE_PEOPLE = new Set((graphConfig.always_visible_people || []).map((value) => String(value).toLowerCase()));
+    const VISIBLE_PEOPLE = new Set((graphConfig.visible_people || []).map((value) => String(value).toLowerCase()));
+    const HIDDEN_PEOPLE = new Set((graphConfig.hidden_people || []).map((value) => String(value).toLowerCase()));
+    const CONFIGURED_PERSON_ORDER = (privacyConfig.person_order || []).map((value) => String(value).toLowerCase());
+    const PRIVACY_MODES = new Set(['off', 'labels', 'relationships', 'full']);
+    const DEFAULT_PRIVACY_MODE = PRIVACY_MODES.has(privacyConfig.mode) ? privacyConfig.mode : 'off';
 
     const searchInput = document.getElementById('search');
-    const folderFilterSelect = document.getElementById('folder-filter');
+    const folderChipList = document.getElementById('folder-chip-list');
+    const privacyModeSelect = document.getElementById('privacy-mode');
     const showLabelsToggle = document.getElementById('show-labels');
-    const anonymizeLabelsToggle = document.getElementById('anonymize-labels');
-    const anonymizePeopleToggle = document.getElementById('anonymize-people');
     const showSessionsToggle = document.getElementById('show-sessions');
     const showWiresToggle = document.getElementById('show-wires');
     const nodeCountEl = document.getElementById('node-count');
@@ -1156,6 +1248,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const canvasHost = document.getElementById('graph-canvas');
     const labelLayer = document.getElementById('label-layer');
     const helpOverlay = document.getElementById('help-overlay');
+    const toggleHelpButton = document.getElementById('toggle-help');
+    const closeHelpButton = document.getElementById('close-help');
+    const showAllFoldersButton = document.getElementById('show-all-folders');
 
     nodeCountEl.textContent = String(atlasGraphPayload.node_count);
     edgeCountEl.textContent = String(atlasGraphPayload.edge_count);
@@ -1184,13 +1279,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     const state = {
       search: '',
-      folderFilter: '',
+      hiddenFolders: new Set(),
       hiddenTypes: new Set(),
       browserType: null,
       showSessions: storageBool(SESSION_STORAGE_KEY, false),
       showLabels: storageBool(LABEL_STORAGE_KEY, false),
-      anonymizeLabels: storageBool(ANONYMIZE_LABELS_KEY, false),
-      anonymizePeople: storageBool(ANONYMIZE_PEOPLE_KEY, true), // Default: hide person names in demo mode
+      privacyMode: PRIVACY_MODES.has(window.localStorage.getItem(PRIVACY_MODE_KEY) || '')
+        ? (window.localStorage.getItem(PRIVACY_MODE_KEY) || '')
+        : DEFAULT_PRIVACY_MODE,
       showWires: storageBool(WIRES_STORAGE_KEY, true),
     };
 
@@ -1200,8 +1296,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       state.browserType = typeof initialHashState.browserType === 'string' ? initialHashState.browserType : null;
       state.showSessions = initialHashState.showSessions ?? state.showSessions;
       state.showLabels = initialHashState.showLabels ?? state.showLabels;
-      state.hideNames = initialHashState.hideNames ?? state.hideNames;
+      state.privacyMode = PRIVACY_MODES.has(initialHashState.privacyMode) ? initialHashState.privacyMode : state.privacyMode;
       state.showWires = initialHashState.showWires ?? state.showWires;
+      for (const folderName of initialHashState.hiddenFolders || []) {
+        state.hiddenFolders.add(folderName);
+      }
       for (const typeName of initialHashState.hiddenTypes || []) {
         state.hiddenTypes.add(typeName);
       }
@@ -1209,8 +1308,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     searchInput.value = state.search;
     showLabelsToggle.checked = state.showLabels;
-    anonymizeLabelsToggle.checked = state.anonymizeLabels;
-    anonymizePeopleToggle.checked = state.anonymizePeople;
+    privacyModeSelect.value = state.privacyMode;
     showSessionsToggle.checked = state.showSessions;
     showWiresToggle.checked = state.showWires;
 
@@ -1239,6 +1337,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       glowColor: new THREE.Color(node.color).lerp(new THREE.Color('#ffc987'), 0.12),
       baseRadius: node.base_radius || (4.8 + Math.min(node.degree, 14) * 0.55),
       radius: 0,
+      renderScale: 1,
       mesh: null,
       material: null,
       labelEl: document.createElement('div'),
@@ -1254,6 +1353,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const folderNames = Array.from(new Set(nodes.map((node) => node.folder).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    const folderOrder = new Map(folderNames.map((folder, index) => [folder, index]));
+    const configuredPersonRank = new Map(CONFIGURED_PERSON_ORDER.map((id, index) => [id, index]));
+    const orderedPeople = nodes
+      .filter((node) => node.type === 'person')
+      .sort((a, b) => {
+        const aRank = configuredPersonRank.has(a.id.toLowerCase()) ? configuredPersonRank.get(a.id.toLowerCase()) : Number.MAX_SAFE_INTEGER;
+        const bRank = configuredPersonRank.has(b.id.toLowerCase()) ? configuredPersonRank.get(b.id.toLowerCase()) : Number.MAX_SAFE_INTEGER;
+        if (aRank !== bRank) {
+          return aRank - bRank;
+        }
+        return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+      });
+    const personAliasById = new Map(orderedPeople.map((node, index) => [node.id, `Person ${index + 1}`]));
+    const redactionTerms = [];
+    for (const node of orderedPeople) {
+      if (NEVER_REDACT_IDS.has(node.id.toLowerCase())) {
+        continue;
+      }
+      redactionTerms.push({ term: node.title, node });
+      redactionTerms.push({ term: node.id, node });
+    }
+    redactionTerms.sort((left, right) => right.term.length - left.term.length);
     const typeNames = Object.keys(atlasGraphPayload.type_counts).sort(
       (a, b) => atlasGraphPayload.type_counts[b] - atlasGraphPayload.type_counts[a]
     );
@@ -1432,15 +1554,100 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return 'file://' + encodeURI(path);
     }
 
+    function isNeverRedactedNode(node) {
+      return !!node && NEVER_REDACT_IDS.has(String(node.id).toLowerCase());
+    }
+
+    function personAlias(node) {
+      return personAliasById.get(node.id) || 'Person';
+    }
+
+    function shouldHidePerson(node) {
+      if (!node || node.type !== 'person') {
+        return false;
+      }
+      const id = String(node.id).toLowerCase();
+      if (ALWAYS_VISIBLE_PEOPLE.has(id)) {
+        return false;
+      }
+      if (graphConfig.show_people === false) {
+        return true;
+      }
+      if (HIDDEN_PEOPLE.has(id)) {
+        return true;
+      }
+      if (VISIBLE_PEOPLE.size && !VISIBLE_PEOPLE.has(id)) {
+        return true;
+      }
+      return false;
+    }
+
+    function shouldRedactLabel(node) {
+      if (!node || state.privacyMode === 'off' || isNeverRedactedNode(node)) {
+        return false;
+      }
+      return true;
+    }
+
+    function shouldRedactRelationships(node) {
+      if (!node || isNeverRedactedNode(node)) {
+        return false;
+      }
+      return state.privacyMode === 'relationships' || state.privacyMode === 'full';
+    }
+
+    function shouldFullyRedact(node) {
+      if (!node || isNeverRedactedNode(node)) {
+        return false;
+      }
+      return state.privacyMode === 'full';
+    }
+
+    function displayNodeIdentifier(node) {
+      if (!node) {
+        return '—';
+      }
+      if (!shouldRedactLabel(node)) {
+        return node.id;
+      }
+      return node.type === 'person' ? personAlias(node) : `${node.type}-${node.typeOrdinal}`;
+    }
+
+    function escapeRegExp(value) {
+      return String(value).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
+    }
+
+    function redactNames(text) {
+      let output = String(text || '');
+      for (const entry of redactionTerms) {
+        const alias = personAlias(entry.node);
+        const pattern = new RegExp(`(^|[^A-Za-z0-9_])(${escapeRegExp(entry.term)})(?=[^A-Za-z0-9_]|$)`, 'gi');
+        output = output.replace(pattern, (_, prefix) => `${prefix}${alias}`);
+      }
+      return output;
+    }
+
+    function redactRenderedText(text, node, { fullFallback = 'Content redacted by privacy mode.' } = {}) {
+      if (!node) {
+        return String(text || '');
+      }
+      if (shouldFullyRedact(node)) {
+        return fullFallback;
+      }
+      if (!shouldRedactRelationships(node)) {
+        return String(text || '');
+      }
+      return redactNames(text);
+    }
+
     function displayNodeName(node) {
       if (!node) {
         return 'Nothing selected';
       }
-      if (state.anonymizePeople && node.type === 'person') {
-        const personIndex = [...nodes].filter(n => n.type === 'person').indexOf(node) + 1;
-        return `Person ${personIndex}`;
+      if (node.type === 'person' && shouldRedactLabel(node)) {
+        return personAlias(node);
       }
-      return state.anonymizeLabels ? `${node.type} ${node.typeOrdinal}` : node.title;
+      return shouldRedactLabel(node) ? `${node.type} ${node.typeOrdinal}` : node.title;
     }
 
     function detailTypeLabel(node) {
@@ -1448,22 +1655,30 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (node.status) {
         bits.push(node.status);
       }
-      if (node.emotional_valence) {
-        bits.push(`valence ${node.emotional_valence}`);
-      }
-      if (node.avoidance_risk) {
-        bits.push(`avoidance ${node.avoidance_risk}`);
-      }
-      if (node.current_state) {
-        bits.push(`state ${node.current_state}`);
+      if (!shouldRedactRelationships(node)) {
+        if (node.emotional_valence) {
+          bits.push(`valence ${node.emotional_valence}`);
+        }
+        if (node.avoidance_risk) {
+          bits.push(`avoidance ${node.avoidance_risk}`);
+        }
+        if (node.current_state) {
+          bits.push(`state ${node.current_state}`);
+        }
       }
       if (node.raw_type && node.raw_type !== node.type) {
         bits.push(`raw ${node.raw_type}`);
+      }
+      if (node.folder) {
+        bits.push(`folder ${node.folder}`);
       }
       return bits.join(' · ');
     }
 
     function edgeMetaLine(edge) {
+      if (selectedNode && shouldRedactRelationships(selectedNode)) {
+        return 'relationship data redacted';
+      }
       const bits = [];
       if (edge.relationship && edge.relationship !== edge.predicate) {
         bits.push(edge.relationship);
@@ -1487,6 +1702,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     function nodeEmotionalSummary(node) {
+      if (shouldRedactRelationships(node)) {
+        return ['emotional topology redacted'];
+      }
       const bits = [];
       if (node.emotional_valence) {
         bits.push(`valence ${node.emotional_valence}`);
@@ -1515,6 +1733,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function activeNodes() {
       return nodes.filter((node) => {
         if (state.hiddenTypes.has(node.type)) {
+          return false;
+        }
+        if (node.folder && state.hiddenFolders.has(node.folder)) {
+          return false;
+        }
+        if (shouldHidePerson(node)) {
           return false;
         }
         if (!state.showSessions && node.is_session) {
@@ -1664,19 +1888,19 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function saveToggles() {
       window.localStorage.setItem(SESSION_STORAGE_KEY, state.showSessions ? '1' : '0');
       window.localStorage.setItem(LABEL_STORAGE_KEY, state.showLabels ? '1' : '0');
-      window.localStorage.setItem(ANONYMIZE_LABELS_KEY, state.anonymizeLabels ? '1' : '0');
-      window.localStorage.setItem(ANONYMIZE_PEOPLE_KEY, state.anonymizePeople ? '1' : '0');
+      window.localStorage.setItem(PRIVACY_MODE_KEY, state.privacyMode);
       window.localStorage.setItem(WIRES_STORAGE_KEY, state.showWires ? '1' : '0');
     }
 
     function writeHashState() {
       const payload = {
         search: state.search,
+        hiddenFolders: [...state.hiddenFolders],
         hiddenTypes: [...state.hiddenTypes],
         browserType: state.browserType,
         showSessions: state.showSessions,
         showLabels: state.showLabels,
-        hideNames: state.hideNames,
+        privacyMode: state.privacyMode,
         showWires: state.showWires,
         selected: selectedNode ? selectedNode.id : null,
         cameraPosition: camera.position.toArray().map((value) => Number(value.toFixed(3))),
@@ -2070,31 +2294,28 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         return;
       }
 
-      const anonymizePersonName = state.anonymizePeople && node.type === 'person';
-      const anonymizeNodeName = state.anonymizeLabels && node.type !== 'person';
-      const personIndex = anonymizePersonName ? [...nodes].filter(n => n.type === 'person').indexOf(node) + 1 : null;
-
-      detailTitleEl.textContent = anonymizePersonName
-        ? `Person ${personIndex}`
-        : anonymizeNodeName
-          ? node.type
-          : displayNodeName(node);
+      detailTitleEl.textContent = displayNodeName(node);
       detailSubtitleEl.textContent = detailTypeLabel(node);
-      detailPreviewEl.innerHTML = renderPreviewMarkdown(node.preview || 'No preview available.');
-      detailPathEl.textContent = (anonymizePersonName && node.type === 'person') ? '—' : (node.path || '—');
+      detailPreviewEl.innerHTML = renderPreviewMarkdown(
+        redactRenderedText(node.preview || 'No preview available.', node)
+      );
+      detailPathEl.textContent = shouldRedactLabel(node) ? '—' : (node.path || '—');
       openNoteEl.href = fileHref(node.path);
-      selectionStatusEl.textContent = `${anonymizePersonName ? `Person ${personIndex}` : (anonymizeNodeName ? node.type : displayNodeName(node))} · ${node.type}`;
+      selectionStatusEl.textContent = `${displayNodeName(node)} · ${node.type}`;
 
+      const detailValues = shouldRedactRelationships(node)
+        ? [node.type, ...(node.tags || []).slice(0, 8)]
+        : [
+            node.type,
+            node.emotional_valence,
+            node.energy_impact,
+            node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
+            node.growth_edge ? 'growth-edge' : null,
+            node.current_state ? `state:${node.current_state}` : null,
+            ...(node.tags || []).slice(0, 8),
+          ];
       detailTagsEl.innerHTML = '';
-      for (const value of [
-        node.type,
-        node.emotional_valence, // Always show
-        node.energy_impact, // Always show
-        node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null, // Always show
-        node.growth_edge ? 'growth-edge' : null, // Always show
-        node.current_state ? `state:${node.current_state}` : null, // Always show
-        ...(node.tags || []).slice(0, 8),
-      ]) {
+      for (const value of detailValues) {
         if (!value) {
           continue;
         }
@@ -2107,7 +2328,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       detailEmotionalEl.textContent = emotionalBits.length
         ? emotionalBits.join(' · ')
         : 'No emotional topology on this node yet.';
-      detailEmotionalNoteEl.textContent = anonymizePersonName ? '' : (node.valence_note || '');
+      detailEmotionalNoteEl.textContent = shouldRedactRelationships(node)
+        ? ''
+        : redactRenderedText(node.valence_note || '', node, { fullFallback: '' });
 
       const linked = Array.from(neighbors.get(node.id) || [])
         .map((id) => nodeById.get(id))
@@ -2117,7 +2340,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((candidate) =>
           makeListItem(
             displayNodeName(candidate),
-            `${candidate.id} · ${detailTypeLabel(candidate)}`,
+            `${displayNodeIdentifier(candidate)} · ${detailTypeLabel(candidate)}`,
             () => selectNode(candidate, true)
           )
         );
@@ -2129,7 +2352,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((edge) =>
           makeListItem(
             `← ${edge.predicate} ← ${displayNodeName(edge.source)}`,
-            `${edge.source.id} · ${edgeMetaLine(edge)}`,
+            `${displayNodeIdentifier(edge.source)} · ${edgeMetaLine(edge)}`,
             () => selectNode(edge.source, true)
           )
         );
@@ -2141,7 +2364,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((edge) =>
           makeListItem(
             `→ ${edge.predicate} → ${displayNodeName(edge.target)}`,
-            `${edge.target.id} · ${edgeMetaLine(edge)}`,
+            `${displayNodeIdentifier(edge.target)} · ${edgeMetaLine(edge)}`,
             () => selectNode(edge.target, true)
           )
         );
@@ -2156,7 +2379,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .map((candidate) =>
           makeListItem(
             displayNodeName(candidate),
-            `${candidate.id} · ${candidate.type}`,
+            `${displayNodeIdentifier(candidate)} · ${candidate.type}`,
             () => selectNode(candidate, true)
           )
         );
@@ -2167,8 +2390,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const needle = searchInput.value.trim();
       const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
       for (const node of nodes) {
-        const isFolderFiltered = state.folderFilter && node.folder !== state.folderFilter;
-        node.visibleByToggle = !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && !isFolderFiltered;
+        const isFolderHidden = !!(node.folder && state.hiddenFolders.has(node.folder));
+        node.visibleByToggle = !state.hiddenTypes.has(node.type)
+          && (state.showSessions || !node.is_session)
+          && !isFolderHidden
+          && !shouldHidePerson(node);
         const visible = node.visibleByToggle;
         const connected = !!selectedNode && selectedNeighbors.has(node.id);
         const dimForSearch = needle && !node.matched && node !== selectedNode;
@@ -2189,7 +2415,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
               ? node.glowColor.clone().multiplyScalar(0.42)
               : node.glowColor.clone().multiplyScalar(dimForSearch || dimForBrowser ? 0.15 : 0.24)
         );
-        node.mesh.scale.setScalar(node.radius * (node === selectedNode ? 1.48 : connected ? 1.18 : node.matched ? 1.08 : 1));
+        const connectivityScale = node.degree >= 12 ? 1.08 : node.degree >= 8 ? 1.04 : 1;
+        node.renderScale = node.radius * connectivityScale * (node === selectedNode ? 1.48 : connected ? 1.18 : node.matched ? 1.08 : 1);
+        node.mesh.scale.setScalar(node.renderScale);
       }
 
       for (const edge of edges) {
@@ -2208,13 +2436,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
               ? edge.baseColor.clone().lerp(new THREE.Color('#ffd7a3'), 0.1)
               : edge.baseColor
         );
-        edge.material.opacity = connected
-          ? (edge.isWire ? 1 : 0.54)
+        edge.renderOpacity = connected
+          ? (edge.isWire ? 1 : 0.64)
           : dimForBrowser
             ? 0.08
             : matches
-              ? (edge.isWire ? 0.68 : 0.22)
-              : 0.07;
+              ? (edge.isWire ? 0.76 : 0.28)
+              : 0.12;
+        edge.material.opacity = edge.renderOpacity;
       }
     }
 
@@ -2264,7 +2493,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       state.search = searchInput.value.trim();
       let matches = 0;
       for (const node of nodes) {
-        node.matched = !!needle && !state.hiddenTypes.has(node.type) && (state.showSessions || !node.is_session) && node.haystack.includes(needle);
+        node.matched = !!needle
+          && !state.hiddenTypes.has(node.type)
+          && (!node.folder || !state.hiddenFolders.has(node.folder))
+          && (state.showSessions || !node.is_session)
+          && !shouldHidePerson(node)
+          && node.haystack.includes(needle);
         if (node.matched) {
           matches += 1;
         }
@@ -2292,7 +2526,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         typeNodeListEl.appendChild(
           makeListItem(
             displayNodeName(node),
-            `${node.id} · degree ${node.degree}`,
+            `${displayNodeIdentifier(node)} · degree ${node.degree}`,
             () => selectNode(node, true)
           )
         );
@@ -2322,6 +2556,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             }
           }
           renderLegend();
+          renderFolderChips();
           renderTypeBrowser();
           refreshSceneState();
           writeHashState();
@@ -2349,6 +2584,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           layoutNodes();
           applySearch();
           renderLegend();
+          renderFolderChips();
           renderTypeBrowser();
           smartFitCamera();
         });
@@ -2360,26 +2596,34 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
     }
 
-    function renderFolderFilter() {
-      // Collect unique folders from nodes
-      const folders = new Set();
-      for (const node of nodes) {
-        if (node.folder && node.visibleByToggle) {
-          folders.add(node.folder);
-        }
-      }
-      const sortedFolders = Array.from(folders).sort();
-
-      // Clear existing options except 'all folders'
-      folderFilterSelect.innerHTML = '<option value="">all folders</option>';
-
-      // Add folder options
-      for (const folder of sortedFolders) {
-        const option = document.createElement('option');
-        option.value = folder;
-        const count = nodes.filter(n => n.folder === folder && n.visibleByToggle).length;
-        option.textContent = `${folder} (${count})`;
-        folderFilterSelect.appendChild(option);
+    function renderFolderChips() {
+      folderChipList.innerHTML = '';
+      for (const folder of folderNames) {
+        const visibleCount = nodes.filter((node) =>
+          node.folder === folder
+          && !state.hiddenTypes.has(node.type)
+          && (state.showSessions || !node.is_session)
+          && !shouldHidePerson(node)
+        ).length;
+        const button = document.createElement('button');
+        button.type = 'button';
+        const active = !state.hiddenFolders.has(folder);
+        button.className = `chip-button${active ? ' active' : ' inactive'}`;
+        button.textContent = `${folder} (${visibleCount})`;
+        button.addEventListener('click', () => {
+          if (state.hiddenFolders.has(folder)) {
+            state.hiddenFolders.delete(folder);
+          } else {
+            state.hiddenFolders.add(folder);
+          }
+          applySearch();
+          renderFolderChips();
+          renderTypeBrowser();
+          refreshSceneState();
+          smartFitCamera();
+          writeHashState();
+        });
+        folderChipList.appendChild(button);
       }
     }
 
@@ -2414,7 +2658,63 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return node.position.clone().project(camera);
     }
 
-    function moveDirectional(direction) {
+    function currentGroupKey(node) {
+      if (!node) {
+        return null;
+      }
+      if (node.type === 'person') {
+        return 'type:person';
+      }
+      return node.folder ? `folder:${node.folder}` : `type:${node.type}`;
+    }
+
+    function groupCandidates(node) {
+      const candidates = navigationCandidates();
+      if (!node) {
+        return candidates;
+      }
+      if (node.type === 'person') {
+        return orderedPeople.filter((candidate) => candidates.includes(candidate));
+      }
+      const key = currentGroupKey(node);
+      return sortNodes(
+        candidates.filter((candidate) => currentGroupKey(candidate) === key)
+      );
+    }
+
+    function structuralGroups() {
+      const candidates = navigationCandidates();
+      const groups = new Map();
+      for (const node of candidates) {
+        const key = currentGroupKey(node);
+        if (!groups.has(key)) {
+          groups.set(key, []);
+        }
+        groups.get(key).push(node);
+      }
+      return [...groups.entries()]
+        .sort((left, right) => {
+          const [leftKey, leftNodes] = left;
+          const [rightKey, rightNodes] = right;
+          const leftNode = leftNodes[0];
+          const rightNode = rightNodes[0];
+          if (leftNode.type === 'person' && rightNode.type !== 'person') {
+            return -1;
+          }
+          if (leftNode.type !== 'person' && rightNode.type === 'person') {
+            return 1;
+          }
+          const leftFolder = folderOrder.get(leftNode.folder || '') ?? Number.MAX_SAFE_INTEGER;
+          const rightFolder = folderOrder.get(rightNode.folder || '') ?? Number.MAX_SAFE_INTEGER;
+          if (leftFolder !== rightFolder) {
+            return leftFolder - rightFolder;
+          }
+          return leftKey.localeCompare(rightKey);
+        })
+        .map(([key, group]) => [key, groupCandidates(group[0])]);
+    }
+
+    function moveWithinGroup(delta) {
       const candidates = navigationCandidates();
       if (!candidates.length) {
         selectNode(null, false);
@@ -2424,43 +2724,43 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         selectNode(candidates[0], true);
         return;
       }
-      const origin = projectNode(selectedNode);
-      let bestNode = null;
-      let bestScore = Infinity;
-      for (const candidate of candidates) {
-        if (candidate === selectedNode) {
-          continue;
-        }
-        const point = projectNode(candidate);
-        const dx = point.x - origin.x;
-        const dy = point.y - origin.y;
-        let primary = 0;
-        let secondary = 0;
-        if (direction === 'left') {
-          primary = -dx;
-          secondary = Math.abs(dy);
-        } else if (direction === 'right') {
-          primary = dx;
-          secondary = Math.abs(dy);
-        } else if (direction === 'up') {
-          primary = dy;
-          secondary = Math.abs(dx);
-        } else {
-          primary = -dy;
-          secondary = Math.abs(dx);
-        }
-        if (primary <= 0.001) {
-          continue;
-        }
-        const score = secondary * 8 + Math.hypot(dx, dy) / primary;
-        if (score < bestScore) {
-          bestScore = score;
-          bestNode = candidate;
-        }
+      const group = groupCandidates(selectedNode);
+      if (!group.length) {
+        selectNode(candidates[0], true);
+        return;
       }
-      if (bestNode) {
-        selectNode(bestNode, true);
+      const currentIndex = group.findIndex((candidate) => candidate.id === selectedNode.id);
+      const nextIndex = currentIndex < 0
+        ? 0
+        : (currentIndex + delta + group.length) % group.length;
+      selectNode(group[nextIndex], true);
+    }
+
+    function moveAcrossGroups(delta) {
+      const groups = structuralGroups();
+      if (!groups.length) {
+        selectNode(null, false);
+        return;
       }
+      if (!selectedNode) {
+        selectNode(groups[0][1][0], true);
+        return;
+      }
+      const currentKey = currentGroupKey(selectedNode);
+      const groupIndex = groups.findIndex(([key]) => key === currentKey);
+      const normalizedGroupIndex = groupIndex < 0 ? 0 : groupIndex;
+      const [, currentGroup] = groups[normalizedGroupIndex];
+      const currentIndex = Math.max(
+        0,
+        currentGroup.findIndex((candidate) => candidate.id === selectedNode.id)
+      );
+      const nextGroupIndex = (normalizedGroupIndex + delta + groups.length) % groups.length;
+      const [, nextGroup] = groups[nextGroupIndex];
+      if (!nextGroup.length) {
+        return;
+      }
+      const nextIndex = Math.min(currentIndex, nextGroup.length - 1);
+      selectNode(nextGroup[nextIndex], true);
     }
 
     function cycleSelection(delta) {
@@ -2529,6 +2829,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     function animate() {
       requestAnimationFrame(animate);
+      const now = performance.now() * 0.001;
       stars.rotation.y += 0.0002;
       stars.rotation.x += 0.00004;
       if (cameraGoal) {
@@ -2545,6 +2846,25 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         }
       } else {
         applyCameraState(0.18);
+      }
+      for (const node of nodes) {
+        if (!node.mesh.visible) {
+          continue;
+        }
+        const pulse = node === selectedNode
+          ? 1 + Math.sin(now * 3.6) * 0.035
+          : node.degree >= 12
+            ? 1 + Math.sin(now * 2.2 + node.index * 0.12) * 0.018
+            : 1;
+        node.mesh.scale.setScalar(node.renderScale * pulse);
+      }
+      for (const edge of edges) {
+        if (!edge.line.visible || !edge.isWire) {
+          continue;
+        }
+        if (selectedNode && (edge.source === selectedNode || edge.target === selectedNode)) {
+          edge.material.opacity = Math.min(1, (edge.renderOpacity || edge.material.opacity) + 0.08 + Math.sin(now * 5.5) * 0.04);
+        }
       }
       renderer.render(scene, camera);
       updateLabels();
@@ -2629,30 +2949,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       refreshSceneState();
       writeHashState();
     });
-    anonymizeLabelsToggle.addEventListener('change', () => {
-      state.anonymizeLabels = anonymizeLabelsToggle.checked;
+    privacyModeSelect.addEventListener('change', () => {
+      state.privacyMode = PRIVACY_MODES.has(privacyModeSelect.value) ? privacyModeSelect.value : DEFAULT_PRIVACY_MODE;
       saveToggles();
       updateDetail(selectedNode);
       renderTypeBrowser();
       refreshSceneState();
-      writeHashState();
-    });
-    anonymizePeopleToggle.addEventListener('change', () => {
-      state.anonymizePeople = anonymizePeopleToggle.checked;
-      saveToggles();
-      updateDetail(selectedNode);
-      renderTypeBrowser();
-      refreshSceneState();
-      writeHashState();
-    });
-    folderFilterSelect.addEventListener('change', () => {
-      state.folderFilter = folderFilterSelect.value;
-      layoutNodes();
-      applySearch();
-      renderFolderFilter();
-      renderTypeBrowser();
-      refreshSceneState();
-      smartFitCamera();
       writeHashState();
     });
     showSessionsToggle.addEventListener('change', () => {
@@ -2661,6 +2963,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       layoutNodes();
       applySearch();
       renderLegend();
+      renderFolderChips();
       renderTypeBrowser();
       smartFitCamera();
     });
@@ -2679,12 +2982,23 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     document.getElementById('fit-view').addEventListener('click', () => smartFitCamera({ preferSelection: true }));
     document.getElementById('show-all-types').addEventListener('click', () => {
       state.hiddenTypes.clear();
+      state.hiddenFolders.clear();
       state.browserType = null;
       renderLegend();
       layoutNodes();
       applySearch();
+      renderFolderChips();
       renderTypeBrowser();
       smartFitCamera();
+    });
+    showAllFoldersButton.addEventListener('click', () => {
+      state.hiddenFolders.clear();
+      applySearch();
+      renderFolderChips();
+      renderTypeBrowser();
+      refreshSceneState();
+      smartFitCamera();
+      writeHashState();
     });
     document.getElementById('export-png').addEventListener('click', exportPng);
     document.getElementById('export-json').addEventListener('click', exportVisibleGraph);
@@ -2702,11 +3016,48 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       updateLabels();
     });
 
-    document.addEventListener('keydown', (event) => {
+    function toggleHelp(forceHidden = null) {
+      helpOverlay.hidden = forceHidden === null ? !helpOverlay.hidden : forceHidden;
+    }
+
+    toggleHelpButton.addEventListener('click', () => toggleHelp());
+    closeHelpButton.addEventListener('click', () => toggleHelp(true));
+
+    function isTextEntryTarget(target) {
+      if (!target) {
+        return false;
+      }
+      return target === searchInput
+        || target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.isContentEditable;
+    }
+
+    window.addEventListener('keydown', (event) => {
       if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
-      if (document.activeElement === searchInput) {
+      const key = String(event.key || '');
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === 'h' || key === '?') {
+        event.preventDefault();
+        toggleHelp();
+        return;
+      }
+      if (key === 'Escape') {
+        if (!helpOverlay.hidden) {
+          event.preventDefault();
+          toggleHelp(true);
+          return;
+        }
+        if (document.activeElement === searchInput) {
+          searchInput.value = '';
+          applySearch();
+          searchInput.blur();
+          return;
+        }
+      }
+      if (isTextEntryTarget(document.activeElement)) {
         return;
       }
       if (event.key === '/') {
@@ -2715,30 +3066,19 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         searchInput.select();
         return;
       }
-      if (event.key === 'h') {
-        event.preventDefault();
-        helpOverlay.hidden = !helpOverlay.hidden;
-        return;
-      }
-      if (event.key === 's') {
+      if (lowerKey === 's') {
         event.preventDefault();
         showSessionsToggle.checked = !showSessionsToggle.checked;
         showSessionsToggle.dispatchEvent(new Event('change'));
         return;
       }
-      if (event.key === 'w') {
+      if (lowerKey === 'w') {
         event.preventDefault();
         showWiresToggle.checked = !showWiresToggle.checked;
         showWiresToggle.dispatchEvent(new Event('change'));
         return;
       }
-      if (event.key === 'x') {
-        event.preventDefault();
-        anonymizeLabelsToggle.checked = !anonymizeLabelsToggle.checked;
-        anonymizeLabelsToggle.dispatchEvent(new Event('change'));
-        return;
-      }
-      if (event.key === 'r') {
+      if (lowerKey === 'r') {
         event.preventDefault();
         resetCamera();
         return;
@@ -2746,55 +3086,57 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (event.key === '0') {
         event.preventDefault();
         state.hiddenTypes.clear();
+        state.hiddenFolders.clear();
         state.browserType = null;
         renderLegend();
         layoutNodes();
         applySearch();
+        renderFolderChips();
         renderTypeBrowser();
         smartFitCamera();
         return;
       }
-      if (event.key === 'j') {
+      if (lowerKey === 'j') {
         event.preventDefault();
         cycleSelection(1);
         return;
       }
-      if (event.key === 'k') {
+      if (lowerKey === 'k') {
         event.preventDefault();
         cycleSelection(-1);
         return;
       }
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        moveDirectional('left');
+        moveAcrossGroups(-1);
         return;
       }
       if (event.key === 'ArrowRight') {
         event.preventDefault();
-        moveDirectional('right');
+        moveAcrossGroups(1);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        moveDirectional('up');
+        moveWithinGroup(-1);
         return;
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        moveDirectional('down');
+        moveWithinGroup(1);
         return;
       }
       if ((event.key === 'Enter' || event.key === ' ') && selectedNode) {
         event.preventDefault();
         focusNode(selectedNode);
       }
-    });
+    }, true);
 
     resizeRenderer();
     layoutNodes();
     restoreHashSelection();
     renderLegend();
-    renderFolderFilter();
+    renderFolderChips();
     applySearch();
     renderTypeBrowser();
     refreshSceneState();

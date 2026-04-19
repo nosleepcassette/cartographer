@@ -418,11 +418,26 @@ HTML output is a self-contained visual graph with:
 - emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
 - brighter semantic wires with explicit emotional topology in the detail pane
 - local search by note title, id, type, or tag
-- category toggles, session hiding, privacy mode (`hide names`), wire toggles, and a type browser
+- category toggles, stable folder chips, session hiding, wire toggles, and a type browser
+- privacy modes (`off`, `labels`, `relationships`, `full`) driven by Cart config, with stable person ordering and never-redact ids
 - smarter `fit view` that prefers the current search, type lens, or selected neighborhood
-- keyboard navigation (`j`/`k`, arrows, `/`, `s`, `w`, `x`, `r`, `0`, `enter`)
+- keyboard navigation (`j`/`k`, structural arrows, `/`, `s`, `w`, `h`, `?`, `r`, `0`, `enter`)
 - PNG/JSON export and shareable URL state
 - markdown-rendered note previews with headings, lists, code blocks, blockquotes, and basic tables
+
+Privacy and person ordering come from Cart config. Example atlas-local settings:
+
+```toml
+[graph]
+always_visible_people = ["maps", "cassette"]
+visible_people = []
+hidden_people = []
+
+[graph.privacy]
+mode = "off"
+never_redact_ids = ["maps", "cassette"]
+person_order = ["maps", "maggie", "sarah"]
+```
 
 ### mapsOS bridge
 
@@ -608,17 +623,6 @@ Repos:
 ## repository map
 
 - `SPEC.md` - product spec and locked decisions
-- `AGENT_ONBOARDING.md` - context for any agent joining the system
-- `AGENT_DISPATCHER.md` - routing protocol for multi-agent handoff and anti-recursion
-- `CART_PHASE3_SPEC.md` - phase 3 implementation record
-- `CART_PHASE4_SPEC.md` - deferred deep-sync and robustness work
-- `CART_PHASE5_SPEC.md` - scoped CLI and TUI upgrade plan
-- `CART_PHASE5_BUILDSHEET.md` - implementation order for the next cart upgrade
-- `CART_MODEL_SUMMARIES_SPEC.md` - next-pass summary profiles, provenance, and cache rules
-- `CART_RUNTIME_AUTOMATION_SPEC.md` - scoped hooks, validation, notification, and registry upgrades
-- `CART_VISUAL_GRAPH_V1_SPEC.md` - shipped first-pass visual graph scope
-- `MAPSOS_BRIDGE_V2_SPEC.md` - structured bridge contract for cartographer and mapsOS
-- `QMD_OPTIONAL_SPEC.md` - implementation notes for optional qmd search
 - `orchestra/` - short allowlist-friendly shell wrappers for common cart operations
 - `skills/create-skill/SKILL.md` - guided conversation for drafting new Claude skills
 - `DEVELOPERS.md` - extension points and developer-facing framing

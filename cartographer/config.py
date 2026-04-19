@@ -49,6 +49,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "intake_dir": "~/dev/mapsOS/intakes",
         "export_dir": "~/.mapsOS/exports",
     },
+    "graph": {
+        "theme_preset": "antiquarian",
+        "show_people": True,
+        "always_visible_people": ["maps", "cassette"],
+        "visible_people": [],
+        "hidden_people": [],
+        "privacy": {
+            "mode": "off",
+            "never_redact_ids": ["maps", "cassette"],
+            "person_order": ["maps", "maggie", "sarah"],
+        },
+    },
 }
 
 
