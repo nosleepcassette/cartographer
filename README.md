@@ -1,7 +1,9 @@
 # cartographer
 
-![Cartographer Demo](media/demo.gif)
-
+<video width="100%" controls>
+  <source src="https://raw.githubusercontent.com/nosleepcassette/cartographer/main/media/cartographer-github-1.25x.webm" type="video/webm">
+  Your browser does not support the video tag.
+</video>
 > Your agents should know how you're actually doing — and remember everything they learn.
 
 Local-first knowledge filesystem and agent memory layer.
