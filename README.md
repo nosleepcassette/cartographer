@@ -1,180 +1,290 @@
 # cartographer
 
 <p align="center">
-  <a href="./media/atlas-demo-part-1.mp4">
-    <img src="./media/atlas-demo-part-1.jpg" width="49%" alt="Atlas demo part 1">
-  </a>
-  <a href="./media/atlas-demo-part-2.mp4">
-    <img src="./media/atlas-demo-part-2.jpg" width="49%" alt="Atlas demo part 2">
-  </a>
+  <video src="media/cartographer-github-1.25x.webm" width="800" autoplay loop muted playsinline></video>
 </p>
-<p align="center"><sub>Click either preview to watch the full demo clip.</sub></p>
 
-> Your agents should know how you're actually doing - and remember everything they learn.
+> Your agents should know how you're actually doing — and remember everything they learn.
 
 Local-first knowledge filesystem and agent memory layer.
 
 Plain Markdown. Git history. Queryable graph. Block-addressable text. Agents and humans write to the same substrate. Nothing is trapped in an app.
 
-### who this is for
+---
 
-- **Neurodivergent people** managing ADHD, autism, RSD, emotional flashbacks, and capacity shifts. Your brain varies by state. This system sees that.
-- **Teachers and educators** juggling dozens of students, learning differences, and intervention histories. Remember what worked for each kid.
-- **Therapists and counselors** tracking patterns, interventions, and what actually helps across clients and time.
-- **Caregivers** managing complex family dynamics, medical histories, and relational patterns that repeat.
-- **Anyone with a lot to hold** — complex projects, multiple roles, relationships that matter, knowledge that gets lost between sessions.
-- **Developers** building agents that actually remember and learn.
+## There are a hundred agent memory layers. Why use this one?
 
-This isn't a productivity tool. It's a memory system that knows you're not always the same person.
+Vector databases. Hosted memory APIs. Pinecone, Mem0, raw context stuffing, custom RAG pipelines. They all solve the same narrow problem: *getting context into a prompt.* They're mostly invisible, mostly opaque, mostly locked to whoever built them.
 
-<table>
-<tr>
-<td align="center"><img src="1.png" width="400"><br><sub>atlas TUI — note view + semantic wire neighborhood</sub></td>
-<td align="center"><img src="2.png" width="400"><br><sub>block transclusion rendering</sub></td>
-</tr>
-<tr>
-<td align="center"><img src="3.png" width="400"><br><sub>mapsOS state strip + task overlay</sub></td>
-<td align="center"><img src="4.png" width="400"><br><sub>entity profile with backlinks</sub></td>
-</tr>
-</table>
+cartographer is not a memory layer. It's a **knowledge substrate** that happens to be excellent at agent memory.
 
-<sub>_Note: Entity names censored for public release._</sub>
+**What that means in practice:**
+
+Every conversation your agent has can be imported into a growing atlas of Markdown notes — deduped, linked to projects and day notes, indexed for full-text and semantic search. When the next session starts, `cart daily-brief` seeds it from everything accumulated so far. Context windows close; the graph stays. That's the memory layer part.
+
+But the atlas is also *your* knowledge base. It's where you write. Where your notes live. Where tasks accumulate. Where relationships are modeled. The same files your agent writes to are the same files you read. No parallel universe of embeddings divorced from your actual documents. One substrate, multiple writers.
+
+The graph isn't decorative. Export it as JSON and query it programmatically. Export it as HTML and navigate it interactively — 3D clustered layout, typed semantic wires, emotional topology, theme-switched rendering, privacy modes. The atlas is a living map of a mind (or a project, or a team, or a body of research) and the graph makes that structure visible.
+
+**Why not just use a hosted memory API?**
+
+Because when the service changes its pricing, changes its format, or goes away, your memory goes with it. cartographer is local files and SQLite. Delete cartographer and your notes are still readable Markdown with YAML frontmatter. Git is the database. The SQLite index is a cache that can be rebuilt from scratch at any time. Nothing is trapped.
+
+**Why not just RAG over my existing notes?**
+
+You can do that too — `cart qmd bootstrap` wires in hybrid retrieval over your atlas if you want it. But RAG alone doesn't give you semantic wires between notes, emotional metadata on relationships, block-level transclusion, idempotent session import, or the agent skills and plugin economy built on top. RAG is a search feature. This is a knowledge operating system.
 
 ---
 
-Someone on Discord, after seeing an early scope sheet, wrote:
-*"maybe under an orchestrator project (atlas?)"*
+## I don't use AI at all. I just use Obsidian, or vimwiki. Why would I care about this?
 
-They arrived at the architecture without knowing it already existed.
-That's the idea.
+Fair question. The short answer: cartographer adds structure that Obsidian and vimwiki gestures at but never fully delivers.
 
-**atlas** is the substrate. cartographer is what builds and queries it.
-mapsOS is what keeps it honest about how you're actually doing.
+**Block transclusion that actually works.** Every paragraph can be addressed by ID: `[[project-alpha#b001]]`. Backlinks tracked automatically. Transclusion rendered in the TUI. Obsidian has a version of this. It requires plugins, breaks on mobile, and the link format isn't portable. Cart's block markers are HTML comments — invisible in any Markdown renderer, machine-readable, file-native.
 
----
+**Semantic wires, not just links.** A standard `[[link]]` says "these things are related." A wire says *how*: `supports`, `depends_on`, `part_of`, `intensifies_with`, `contradicts`. You can query "what does this project depend on?" or "what contradicts this belief?" and get structured answers. Teachers tracking what approaches worked for a student. Researchers mapping where their sources agree and disagree. Ops teams modeling which runbook sections relate to which incident types. The typed relationship layer is what transforms a note collection into a knowledge graph.
 
-## where this is going
+**A TUI built for navigation, not just editing.** `cart tui` gives you section jumps (`[`/`]`), a task overlay (`t`), semantic wire neighborhood view, block transclusion rendering, backlinks, and mapsOS handoff — all in a responsive terminal interface that doesn't require Electron.
 
-The next phase of the maps -> atlas -> cartographer stack is not "better journaling." It's a **real-time avoidance detection and intervention system**.
+**Compatible with what you already use.** Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail. Cart uses standard Markdown plus HTML comment block markers. `cart init` can patch vimwiki config to make the atlas your primary wiki.
 
-The problem: Most people's biggest pattern isn't thinking too much. It's **running away**. From hard conversations. From grief. From people they love. From their own nervous system when it feels like too much. Avoidance is how you lose years without noticing.
-
-The goal: Catch avoidance in the moment it starts forming. Before it compounds. Before the damage is done.
-
-That means building toward:
-
-- **Real-time pattern detection.** Detect when you're falling into the pull (silence, numbness, pulling inward, "I'll deal with it later"). Surface it immediately, not days later when the damage calcifies.
-- **State-dependent memory as a live tool.** When your nervous system says "just ignore this, it will be fine," the system can say: "That's the avoidance speaking. Last time you did this, it cost you [X]. Here's what steadier you knows."
-- **Somatic grounding plus accountability.** Not shame. Not pushing. Grounding to help you stay present. Real data about whether you actually showed up.
-- **Compassionate interruption.** The point is not to nag. Self-protection is real. The goal is to recognize it and ask: "What if you stayed with this anyway?"
-
-Maybe it's not texting someone back. Maybe it's ghosting your best friend. Maybe it's dodging a hard conversation. Maybe it's the silence around grief. Maybe it's professional: dodging a scary PR review, letting an invoice rot, disappearing from a collaborator, going quiet when you're overwhelmed, leaving an incident half-triaged. The pattern is the same: your nervous system wants out, so you disappear.
-
-The reflection layer (decision journals, belief evolution, pattern libraries) still matters. That's long-term medicine. This next build is the tourniquet.
+**CLI-native and composable.** Every operation has a `--json` surface. `cart query 'type:project tag:active'` pipes into anything. If your workflow is already built around the terminal, cartographer extends it rather than replacing it with another GUI.
 
 ---
 
-## why this is different
+## Who this is for
 
-Most knowledge tools ignore AI entirely. Most AI tools ignore your history.
-cartographer assumes both exist and treats them as first-class:
+- **Neurodivergent people** managing ADHD, autism, RSD, emotional flashbacks, and capacity shifts — systems that adapt to how your brain actually works rather than demanding your brain adapt to them
+- **Therapists and counselors** accumulating session notes into entity profiles, surfacing patterns across clients, tracking what interventions actually work over time — all local, no vendor, no cloud
+- **Teachers and educators** keeping intervention histories, learning-difference profiles, and cross-year patterns per student — the kind of institutional memory that normally evaporates when you change grade levels
+- **Researchers** where every paper becomes a note, every quote is a block reference, agent session logs link to the papers that informed them, and the query layer answers "what do we know about X"
+- **Operations and engineering teams** where incident reports, runbooks, post-mortems, and architectural decisions all live in the same graph — backlinks show you which runbook section was consulted during which incident, and agents write session logs to the same atlas engineers read
+- **Developers building with LLMs** who are tired of their agents starting every session from zero
+
+---
+
+## Why this is different
+
+Most knowledge tools ignore AI entirely. Most AI tools ignore your history. cartographer assumes both exist and treats them as first-class:
 
 - **Agent memory persists.** Session import turns context windows into a growing graph. `cart daily-brief` seeds tomorrow's session from everything that happened today.
 - **Files are the API.** Delete cartographer. Your notes are still readable Markdown with YAML frontmatter. Git is the database. SQLite is an index, not a prison.
-- **Block-addressable by default.** `[[note-id#block-id]]` transclusion. Backlinks tracked automatically. The relational layer Obsidian promised but never fully delivered.
+- **Block-addressable by default.** `[[note-id#block-id]]` transclusion. Backlinks tracked automatically.
 - **Imports are idempotent.** Run `cart session-import` a hundred times. Zero duplicates. Just an always-current graph.
-- **Optional semantic search without lock-in.** If `qmd` is installed, plain-language `cart query` can use hybrid retrieval over the atlas. If not, cart stays on its built-in SQLite/FTS path.
-- **Built for neurodivergent workflows.** Qualitative state tracking, capacity-aware context, honest about when you're not okay. Paired with mapsOS. Configurable for any brain.
-- **Plugin economy.** stdin/stdout JSON contract. If it speaks that, it joins. The long-term goal is Vim-scale extensibility.
+- **Semantic wires with emotional predicates.** Wires capture what relationships *are*, not just that they exist — valence, energy impact, growth edges, avoidance territory, current state. The emotional topology layer is queryable.
+- **Optional semantic search without lock-in.** If `qmd` is installed, plain-language `cart query` uses hybrid retrieval over the atlas. If not, cart stays on its built-in SQLite/FTS path. The query interface is the same either way.
+- **Plugin economy.** stdin/stdout JSON contract. If it speaks that, it joins. Python, shell, Rust, Lua — anything.
+- **Built for configuration, not customization.** Backend config drives graph themes, privacy modes, person ordering, state vocabulary, arc definitions, mapsOS tracks. The system is designed to be shaped by whoever runs it.
 
 ---
 
-## what shipped in this push
+## configurability — the backend goes deep
 
-**The emotional topology layer is live.** This is where real-time intervention becomes possible.
+The atlas and cartographer are designed to be shaped by whoever runs them. What's configurable:
 
-- **Semantic wiring with emotional predicates.** Wires now capture what relationships *feel* like, not just their existence. `cart wire add contact-a user --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge` tells the system: pining territory, energizing but risky, growth work. Wires index by emotional metadata; queries filter avoidance-risk, energy-impact, valence. Works for any relationship, any configuration.
-- **Separate graphs for signal clarity.** Session logs now link only to projects/days/agent (not auto-linked to people). The exocortex (relationship graph) stays clean. Activity timeline (sessions) tracks what you worked on. Two mental models, cross-referenceable. Removes frequency noise.
-- **Real-time avoidance detection.** Therapy plugin queries emotional topology: "You haven't responded to contact-a in 3 days. That's your avoidance pattern (high-risk territory, building state). Last successful intervention: somatic grounding (99% success). Want to try?" Works for any avoidance-risk territory you've configured.
-- **Capacity-aware routing.** When energy is low, surface support people (positive-valence, low-risk). When energy is high, surface growth-edges (growth-edge: yes, avoidance-risk: high). mapsOS state + emotional topology = right relationships at right time. Adaptive to your energy.
-- **Emotional visualization.** HTML graph colors nodes by emotional-valence (green=positive, red=negative, purple=mixed). Sizes by avoidance-risk (larger = higher risk). Wires show relationship types. Detail pane shows full emotional context. Pattern becomes visible.
-- **Pattern evolution tracking.** Therapy plugin logs outcomes ("stayed with difficult conversation 2 hours"). Wires track growth over time: contact-b.avoidance-risk: high → medium over 6 months. The graph itself becomes feedback. You see yourself improving.
-- **The visual graph is a real operating surface.** Deterministic 3D clustered layout, emotional metadata rendering, smart navigation, offline rendering, search, filters, PNG/JSON export, shareable state. Functional and beautiful.
-- **The atlas TUI is now a navigation tool, not a graph renderer.** Section jumps, semantic wire neighborhood, markdown rendering, tasks overlay, backlinks, mapsOS handoff (`m` key). Responsive. Clean. Focuses on what matters.
-- **Therapy integration is real and data-driven.** Detects emotional spirals (rejection sensitivity, isolation, shame, executive paralysis). Surfaces grounded counter-evidence ranked by success rate in your history. Builds pattern library: "intervention-x: 99% success, typical duration 20min". Tracks outcomes. Updates understanding with growth data.
-- **The system is three integrated layers.** mapsOS (state tracking) → cartographer (memory + wiring) → therapy-plugin (real-time intervention). Each feeds the next. Together: a system that catches your pattern as it forms, before damage compounds.
+**Atlas config (`~/atlas/.cartographer/config.toml`):**
+- Graph theme preset (`baseline`, `astral`, or any `~/atlas/themes/*.js` skin)
+- Privacy modes: `off`, `names`, `names_relationships`, `full` — driven from config, not code
+- Person ordering and never-redact IDs for the graph
+- qmd collection path for hybrid retrieval
+- mapsOS integration settings
+
+**mapsOS (`~/.maps_os_config.yaml`):**
+- Atlas & Cartographer were built atop mapsOS - the qualitative life tracker. Braindump to your agent & it'll parse your data into a detailed & useful map of your entire life.
+- State vocabulary — define what emotional/cognitive states matter for your context
+- Arc definitions — patterns of states that indicate something (hyperfocus cycle, shutdown, recovery arc)
+- Capacity thresholds
+- Track definitions — what to track alongside state (sleep, medication, social contact, whatever)
+- Person entries — who's in your support network and why
+- Automatic task workflow. Builds & maintains your todo list for you. 
+
+**Therapy plugin (`user-configs/<username>.yaml`):**
+- Pattern definitions with custom keywords and counter-queries
+- Intervention library with effectiveness tracking
+- IFS parts map location
+- Modality preferences
+- Crisis protocol
+
+**Agent skills and plugins:**
+- Drop anything into `.cartographer/plugins/` — it runs on `cart plugin run`
+- Templates in `.cartographer/jinja/`
+- Hooks in `.cartographer/hooks/`
+- Agent skill definitions can layer on top of any of this
+
+**Visual graph skins:**
+- Theme JS files in `~/atlas/themes/*.js` are auto-loaded
+- Each theme registers its own node glyph set, wire aspect symbols, color palette, CSS variables, and animation behavior
+- The theme picker in the graph sidebar lets you switch at runtime
+
+The system doesn't tell you what your knowledge should look like. It gives you the shape and lets you fill it.
+
+**I built it for my brain. You can build it for yours.**
 
 ---
 
-## current status
+## The therapy plugin
 
-**Phase 5 is live.** The emotional topology layer is complete:
+`cart therapy` is a real working example of what you can build on the atlas substrate — and it ships with cartographer.
+
+The plugin lives at `~/atlas/agents/cassette/skills/therapy-plugin/`. It's a configurable pattern detection and intervention support system backed by the emotional topology layer. Not an AI chatbot in therapy drag. A data-driven tool that queries the atlas to surface grounded evidence when a spiral pattern is detected.
+
+**What it detects:**
+
+| Pattern | What it looks like |
+|---------|-------------------|
+| RSD spiral | The gap between stimulus and conviction is seconds. "They haven't responded" becomes "they're leaving" before any evidence arrives. |
+| Isolation spiral | Withdrawal feeding more withdrawal. Contact feels impossible because isolation says it is. |
+| Executive paralysis | Knowing exactly what needs doing. Not being able to start. Shame about not starting compounding the paralysis. |
+| Manic flooding | Energy and ideas outrunning capacity. Starting everything, finishing nothing, crash. |
+| Shame spiral (relational) | Connection ended or strained. RSD fills in "I wasn't enough" before anyone said it. |
+| Time blindness cascade | ADHD time perception is unreliable. Perceived gap and actual gap are different numbers. |
+
+**How it responds:**
+
+Not reassurance. Counter-evidence queries against the atlas: "What's their actual response pattern? What did they say?" Micro-tasking for paralysis: not "do the thing," just "open the doc." Smallest possible action. Autonomy-first throughout — it suggests, you decide.
+
+**The configurability:**
+
+Patterns and interventions are YAML files, not code. `user-configs/<username>.yaml` layers on top of the generic plugin:
+
+```yaml
+patterns:
+  RSD-spiral:
+    keywords:
+      - "didn't respond"
+      - "your phrase here"
+    counter_query: "your grounding question here"
+    removed: false
+```
+
+The intervention log tracks what actually works for a specific person over time — effectiveness ratings, usage history, outcome notes. A therapist building a client-specific instance configures the patterns.yaml for that client's actual spirals, the interventions.yaml for what's historically worked, and the system surfaces that history at the moment it matters.
+
+An ADHD coach. A recovery sponsor. A peer support worker. A parent of a kid with RSD. Someone building an agent that supports their own nervous system through difficult periods. The structure is the same; the configuration is yours.
+
+**Under the hood:**
+
+```bash
+echo '{"content": "they haven't responded and I feel like I failed them"}' | \
+  python3 ~/.hermes/skills/therapy-plugin/scripts/pattern-detect.py
+```
+
+```json
+{
+  "patterns": [
+    {
+      "pattern": "RSD-spiral",
+      "keyword_found": "haven't responded",
+      "counter_query": "What's their actual response pattern?"
+    }
+  ]
+}
+```
+
+It's a script that reads stdin and writes JSON. Plugs into any agent that speaks the contract.
+
+**Crisis handling:**
+
+The plugin includes a configurable crisis protocol. Default: trust the person to know their own danger level, surface resources if requested, ask what they need. The protocol is explicit in the YAML — not a black box, not a hotline auto-dialer. You define what appropriate response looks like for your context.
+
+---
+
+## What shipped
+
+**Emotional topology layer:**
+- Semantic wiring with emotional predicates: valence, energy-impact, avoidance-risk, growth-edge, current-state
+- Wire-level queries: `cart wire query --avoidance-risk high`, `cart wire emotional-summary <person>`
+- Separate graph model: exocortex (relationship graph) vs activity timeline (session logs). Two clean mental models, cross-referenceable, no frequency noise.
+- Capacity-aware routing: surface support relationships when energy is low, growth-edges when high
+
+**Visual graph:**
+- Self-contained HTML graph — offline-safe, single exported file
+- Deterministic 3D clustered layout
+- Emotional-valence node coloring, avoidance-aware node sizing
+- Theme system: `baseline`, `astral` (hand-drawn in-scene celestial sigils, alchemical wire labels), plus auto-loaded atlas-local themes
+- Theme picker in graph sidebar — switch without re-export
+- Privacy modes driven from config
+- Local search, category toggles, wire toggles, type browser
+- Keyboard navigation, PNG/JSON export, shareable URL state
+- Markdown-rendered note previews
+
+**Therapy integration:**
+- Pattern detection: RSD spiral, isolation, executive paralysis, manic flooding, shame spiral, time blindness cascade
+- Counter-evidence queries against the atlas
+- Intervention log with effectiveness tracking
+- Configurable per-user via YAML
+- `cart therapy review`, `cart therapy counter-evidence`, `cart therapy export`
+
+**Atlas TUI:**
+- Section jumps (`[`/`]`), direct slot jumps (`1`-`5`)
+- Semantic wire neighborhood
+- Block transclusion rendering
+- Task overlay (`t`), mapsOS handoff (`m`)
+
+**Session import:**
+- Claude Code, Hermes, Codex — deduped, idempotent
+- External: ChatGPT and Claude.ai conversation exports
+- Sessions link to projects, day notes, and agents — not auto-linked to people
+
+---
+
+## Current status
+
+**Phase 5 is live.** Emotional topology, therapy integration, the visual graph, and the atlas TUI are all shipped and working.
 
 ```text
 session → export → cart ingest → atlas update → emotional wires → daily brief → therapy detection → next session
 ```
 
-Avoidance detection is now real-time. The system knows where you run from and surfaces it the moment it matters.
+### Implemented
 
-### implemented
-
-**Core infrastructure:**
+**Core:**
 - Atlas initialization (`cart init`)
 - Markdown notes with YAML frontmatter
 - SQLite indexing for full-text search
-- Block insertion and addressing
-- Block transclusion rendering in the atlas TUI
-- Task CRUD with priorities
+- Block insertion, addressing, and transclusion
+- Task CRUD with priorities and project linking
 - Plugin system (JSON stdin/stdout)
+- Shell completion for Bash, Zsh, Fish
 
-**Session + Import layer:**
+**Session + Import:**
 - Session import: Claude Code, Hermes, Codex (deduped)
-- External import: ChatGPT, Claude.ai conversation exports
-- Session logs link to projects/days/agents (NOT auto-linked to people)
+- External import: ChatGPT, Claude.ai exports
 - Optional qmd-backed plain-language atlas search
 - Daily brief generation
 
 **Semantic wiring + Emotional topology:**
 - File-backed semantic wires via `cart wire ...` with full emotional predicates
-- Emotional metadata: valence (positive/negative/mixed/neutral), energy-impact (draining/energizing), avoidance-risk (high/medium/low), growth-edge (yes/no), current-state (active/grieving/building)
 - Wires indexed for traversal, emotional querying, and temporal versioning
-- `cart wire emotional-summary <person>` shows relationship topology
-- `cart wire query --avoidance-risk high` detects avoidance territory
-- Separate graphs: exocortex (relationships) vs activity timeline (sessions)
+- `cart wire emotional-summary`, `cart wire query --avoidance-risk high`
 
-**Visual layer:**
-- Graph export: nodes + edges with emotional metadata (JSON)
-- HTML 3D visual graph with emotional-valence node coloring (green=positive, red=negative, purple=mixed)
-- Avoidance-aware node sizing (larger = higher avoidance-risk)
-- Semantic wires with emotional metadata in detail pane
-- Offline Firefox-safe rendering, search, navigation, PNG/JSON export
+**Visual graph:**
+- JSON and HTML export with full emotional metadata
+- Offline Firefox-safe rendering
+- Theme system with auto-loaded atlas-local skins
 
-**Therapy integration:**
-- Cassette therapy plugin MVP with pattern detection (RSD, isolation, shame cycles, executive paralysis)
-- Real-time avoidance detection via emotional wire queries
-- Therapy review + counter-evidence surfaces grounded evidence at moment of spiral
-- Pattern library tracks what interventions work (somatic grounding: 99% success)
-- Autonomy-first operation (suggest, never command)
+**Therapy:**
+- Pattern detection and counter-evidence queries
+- Intervention log with effectiveness tracking
+- Configurable per-user
 
-**Operational layer:**
+**Operational:**
 - mapsOS bridge: state tracking correlates with emotional topology
-- Capacity-aware routing: show support people when energy low, growth-edges when energy high
-- CLI health + JSON surfaces via `cart doctor`, `cart status --json`, `cart sessions recent --json`
-- File-backed working set via `cart working-set ...` for role-scoped temporary memory
-- Textual atlas TUI with section jumps, semantic wire neighborhood, mapsOS handoff
+- CLI health + JSON surfaces: `cart doctor`, `cart status --json`, `cart sessions recent --json`
+- Working set via `cart working-set` for role-scoped temporary memory
+- Textual atlas TUI
 
 ### in progress
 
-- Graph grouping by folder structure (soft clustering + filter dropdown)
-- Temporal versioning of emotional predicates (when relationships change)
-- Cross-graph queries (activity timeline with exocortex relationship context)
+- Graph grouping by folder structure
+- Temporal versioning of emotional predicates
+- Cross-graph queries
 - Concurrent write protection under heavier multi-agent load
 - Model-backed summary backends
 - Deeper mapsOS task write-back
 
 ---
 
-## atlas shape
+## Atlas shape
 
 ```text
 ~/atlas/
@@ -193,12 +303,13 @@ Avoidance detection is now real-time. The system knows where you run from and su
 │   └── codex/sessions/
 ├── entities/
 ├── tasks/
+├── themes/             # atlas-local graph skins
 └── ref/
 ```
 
 ---
 
-## install
+## Install
 
 ```zsh
 pipx install git+https://github.com/nosleepcassette/cartographer.git
@@ -215,14 +326,10 @@ Three equivalent entrypoints: `cart`, `cartog`, `cartographer`.
 
 ### shell completion
 
-Cart can print native completion scripts for Bash, Zsh, and Fish:
-
 ```zsh
 cart completion zsh > ~/.zfunc/_cart
 autoload -Uz compinit && compinit
 ```
-
-Other common setups:
 
 ```bash
 cart completion bash > ~/.local/share/bash-completion/completions/cart
@@ -231,21 +338,21 @@ cart completion fish > ~/.config/fish/completions/cart.fish
 
 ---
 
-## quickstart
+## Quickstart
 
 ```zsh
 cart init
 cart status
 cart doctor
 cart daily-brief
-cart sessions recent --json
 cart tui
 cart session-import claude --latest 1
+cart graph --format html --open
 ```
 
 ---
 
-## core commands
+## Core commands
 
 ### atlas + status
 
@@ -266,16 +373,13 @@ cart index rebuild
 cart tui
 ```
 
-Key navigation:
-
-- `j` / `k` moves through visible notes
-- `[` / `]` jumps between top-level sections
-- `1`-`5` jumps directly to the visible section slots
-- `c` collapses or expands the current section
-- collapsed sections open as a submenu in the note pane
-- `/` filters the graph
-- `t` toggles the task overlay
-- `m` hands off into mapsOS
+- `j` / `k` — move through visible notes
+- `[` / `]` — jump between top-level sections
+- `1`-`5` — jump directly to visible section slots
+- `c` — collapse / expand current section
+- `/` — filter the graph
+- `t` — toggle task overlay
+- `m` — hand off into mapsOS
 
 ### notes
 
@@ -290,7 +394,7 @@ cart edit project-alpha
 ### query + backlinks
 
 ```zsh
-cart query 'session drift in hermetica'   # plain language; prefers qmd when configured
+cart query 'session drift in hermetica'   # plain language; uses qmd when configured
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
@@ -298,27 +402,12 @@ cart query --json 'type:agent-log'
 cart backlinks project-alpha
 ```
 
-Plain-language queries stay atlas-scoped. Cart only uses qmd when it can map the atlas root to a qmd collection; otherwise it falls back to the built-in index automatically.
-
 ### optional enhanced search with qmd
 
 ```zsh
 npm install -g @tobilu/qmd
 cart qmd bootstrap
-cart query 'what do we know about Chris'
-```
-
-What this does:
-
-- creates or reuses a qmd collection pointing at your atlas root
-- writes `qmd.default_collection` into `~/atlas/.cartographer/config.toml`
-- runs `qmd embed` once so future plain-text `cart query` calls can use hybrid retrieval
-
-Structured cart queries still use the built-in engine:
-
-```zsh
-cart query 'type:project tag:income'
-cart query 'text:"Twilio" modified:>2026-04-01'
+cart query 'what do we know about this architecture decision'
 ```
 
 ### tasks
@@ -328,7 +417,6 @@ cart todo list
 cart todo add "ship the thing" -p P0 --project project-alpha
 cart todo done t123abc
 cart todo query 'priority:P0 status:open'
-cart todo query --json 'status:open'
 ```
 
 ### session import
@@ -336,57 +424,70 @@ cart todo query --json 'status:open'
 ```zsh
 cart session-import claude --latest 5
 cart session-import hermes --all
-cart session-import claude --force
 cart sessions recent
 cart sessions recent --agent hermes --json
 ```
 
-Session imports now link sessions to projects, day notes, and agent summaries without auto-linking every person mentioned in passing. People stay available as plain-text context until you wire them intentionally.
-
 ### working set
 
 ```zsh
-cart working-set add "RSD counter-evidence candidate" --role intake --scope therapy
+cart working-set add "candidate" --role intake --scope therapy
 cart working-set list --json
 cart working-set gc
 ```
 
-### therapy export
+### therapy
 
 ```zsh
 cart therapy export
 cart therapy export --format json
-cart therapy export --json
 cart therapy review --json
 cart therapy review --write ~/atlas/notes/therapy/reviews/today.md
 cart therapy counter-evidence "I wasn't giving them what they needed"
 ```
 
-`therapy review` is review-first. It compiles therapy working-set entries, recent sessions, open tasks, and the latest mapsOS export, then runs Cassette's MVP therapy plugin from `~/atlas/agents/cassette/skills/therapy-plugin/`. It only writes a note when `--write` is used.
+`therapy review` compiles therapy working-set entries, recent sessions, open tasks, and the latest mapsOS export, then runs the therapy plugin. Writes a note only when `--write` is used.
 
 ### semantic wires
 
 ```zsh
 cart wire predicates
 cart wire add note-a note-b --predicate supports
-cart wire add contact-a user --relationship relates_to_person --emotional-valence mixed --energy-impact energizing --avoidance-risk high --growth-edge --current-state building
-cart wire add contact-b user --relationship relates_to_person --emotional-valence positive --energy-impact energizing --avoidance-risk none --current-state active
+cart wire add person-a user --relationship relates_to_person \
+  --emotional-valence mixed --energy-impact energizing \
+  --avoidance-risk high --growth-edge --current-state building
 cart wire ls note-a --json
 cart wire query --avoidance-risk high --json
-cart wire emotional-summary contact-a
+cart wire emotional-summary person-a
 cart wire traverse note-a --depth 2
 cart wire doctor
 cart wire gc
 ```
 
-Wires are stored inline as HTML comments in notes, for example:
+Wires are stored inline as HTML comments — invisible in any Markdown renderer, machine-readable, file-native. `cart wire add` is idempotent: rerunning the same source/target/predicate updates the comment instead of duplicating it.
 
-```md
-<!-- cart:wire target="note-b#block-id" predicate="supports" relationship="supports" -->
-<!-- cart:wire target="contact-a" predicate="relates_to_person" relationship="relates_to_person" emotional_valence="mixed" energy_impact="energizing" avoidance_risk="high" growth_edge="true" current_state="building" valence_note="pining territory but growth work" -->
+### graph export
+
+```zsh
+cart graph --export
+cart graph --format html
+cart graph --format html --open
 ```
 
-Cart indexes them for traversal and emotional querying, but the file remains the source of truth. `cart wire add` is idempotent now: rerunning the same source/target/predicate updates the inline comment instead of duplicating it.
+HTML output is a self-contained, offline-safe visual graph. Theme and privacy settings come from `~/atlas/.cartographer/config.toml`:
+
+```toml
+[graph]
+theme_preset = "astral"
+always_visible_people = ["maps"]
+
+[graph.privacy]
+mode = "off"
+never_redact_ids = ["maps"]
+person_order = ["maps", "person-b", "person-c"]
+```
+
+Atlas-local theme skins live in `~/atlas/themes/*.js` and are auto-loaded. The graph sidebar theme picker switches between them at runtime.
 
 ### external import
 
@@ -397,61 +498,6 @@ cart import claude-web ~/Downloads/conversations.json
 
 Both support `--latest N` and `--force`. All imports are deduped.
 
-### graph export
-
-```zsh
-cart graph --export
-cart graph --format html
-cart graph --format html --open
-```
-
-JSON output includes atlas metadata plus enriched nodes and edges:
-
-- nodes: `id`, `title`, `type`, `path`, `tags`, `degree`, `color`, `type_color`, `preview`, `is_session`, and emotional topology fields when a node has wired relationship context
-- edges: `source`, `target`, `kind`, and wire metadata such as `predicate`, `relationship`, `emotional_valence`, `energy_impact`, `avoidance_risk`, `growth_edge`, `current_state`, and `valence_note`
-
-HTML output is a self-contained visual graph with:
-
-- Firefox-safe offline rendering from a single exported HTML file
-- export driven from the current atlas index rather than whatever stale DB happened to be on disk
-- a deterministic clustered 3D layout instead of free-floating SVG drift
-- theme presets driven by Cart config, with `baseline` as the default and `astral` as the first shipped visual theme
-- `astral` renders type-specific in-scene sigil nodes and halos instead of reusing the baseline geometric node bodies
-- emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
-- brighter semantic wires with explicit emotional topology in the detail pane
-- astral semantic wires now carry on-graph labels, directional markers, and aspect-flavored route treatment
-- local search by note title, id, type, or tag
-- category toggles, a stable scrollable folder list, session hiding, wire toggles, and a type browser
-- privacy modes (`off`, `names`, `names_relationships`, `full`) driven by Cart config, with stable person ordering, never-redact ids, and person-only redaction
-- smarter `fit view` that prefers the current search, type lens, or selected neighborhood
-- keyboard navigation (`j`/`k`, structural arrows, `/`, `s`, `w`, `F1`, `r`, `0`, `enter`)
-- PNG/JSON export and shareable URL state
-- markdown-rendered note previews with headings, lists, code blocks, blockquotes, and basic tables
-
-Privacy and person ordering come from Cart config. Example atlas-local settings:
-
-```toml
-[graph]
-theme_preset = "baseline"
-always_visible_people = ["maps", "cassette"]
-visible_people = []
-hidden_people = []
-
-[graph.privacy]
-mode = "off"
-never_redact_ids = ["maps", "cassette"]
-person_order = ["maps", "maggie", "sarah"]
-```
-
-To enable the shipped astral preset for a specific atlas:
-
-```toml
-[graph]
-theme_preset = "astral"
-```
-
-Additional graph skins can live in `~/atlas/themes/*.js`. Cart auto-loads those theme files into the HTML graph, and the graph sidebar theme picker lets you switch between shipped and atlas-local variants.
-
 ### mapsOS bridge
 
 ```zsh
@@ -460,30 +506,26 @@ cart mapsos patterns --field state
 cart daily-brief
 ```
 
-Inside the TUIs:
-
-- `cart tui` -> `m` launches mapsOS
-- `maps` -> `C` launches cartographer
-- quitting mapsOS ingests the latest export back into the atlas when `cart` is available
+Inside the TUIs: `cart tui` → `m` launches mapsOS. `maps` → `C` launches cartographer. Quitting mapsOS ingests the latest export when `cart` is available.
 
 ---
 
-## atlas loop
+## Atlas loop
 
 ```text
 agent session
-  -> session import
-  -> atlas note + links + tasks + learnings
-  -> mapsOS export ingested as qualitative state
-  -> daily brief
-  -> next session starts from real memory instead of zero
+  → session import
+  → atlas note + links + tasks + learnings
+  → mapsOS export ingested as qualitative state
+  → daily brief
+  → next session starts from real memory instead of zero
 ```
 
-This is the core promise of the project: context windows close, but the graph stays.
+Context windows close. The graph stays.
 
 ---
 
-## Agent Skills
+## Agent skills
 
 For AI agents working with cartographer/atlas, we publish skill definitions:
 
@@ -494,27 +536,55 @@ For AI agents working with cartographer/atlas, we publish skill definitions:
 | **Cartographer Summary** | Generate and maintain MASTER_SUMMARY.md from context sources | [View Gist](https://gist.github.com/nosleepcassette/e1f9a62546752bebd7afca62a9023f83) |
 | **Cartographer Todo** | Task management with P0-P3 priorities, project linking | [View Gist](https://gist.github.com/nosleepcassette/7983da390c33fb91ad8d904e55de671c) |
 
-These skills encode:
-- CLI commands and workflows
-- Query syntax and composable patterns
-- Master summary generation protocol
-- Task block format and integration with mapsOS
-
-To use in Hermes Agent: place in `~/.hermes/skills/cartographer*/`
+To use in Hermes: place in `~/.hermes/skills/cartographer*/`
 
 To use in Claude Code: add to CLAUDE.md or import via MCP.
 
 ---
 
-## Community Skills & Plugins
+## Developers
 
-**TODO:** Community repository for sharing cartographer plugins, import adapters, query templates, and agent integrations.
+See `DEVELOPERS.md` for the full extension surface. Short version:
 
-If you've built something with cartographer — an import adapter, a query template, a plugin — we want to surface it.
+**The plugin API is 30 seconds to learn:**
+
+Any executable that reads JSON on stdin and writes JSON on stdout is a plugin. Drop it in `.cartographer/plugins/`. Run with `cart plugin run my-plugin`. Python, shell, Rust, Lua — anything.
+
+```json
+// stdin
+{ "command": "my-plugin", "args": {}, "notes": [{"id": "project-alpha", "content": "..."}] }
+
+// stdout
+{ "output": "result text", "writes": [{"path": "agents/mine/output.md", "content": "..."}], "errors": [] }
+```
+
+**What you can build on top of this:**
+
+The atlas is a local-first knowledge graph where agents and humans write to the same files. That's a substrate, not an app. The therapy plugin is one example of what gets built on it. There's a lot more that hasn't been built yet:
+
+- A research assistant that links every paper to the claims that cite it, tracks which sources agree and which contradict, and answers "what does the literature say about X" against your own reading history
+- A shared engineering atlas where every agent on a team writes session logs to the same knowledge graph — `cart query "what did any agent learn about this component"` becomes a real command
+- A client management layer for a therapist or coach — session notes accumulate into entity profiles, pattern detection runs across clients, everything local, no cloud, no HIPAA exposure
+- A mapsOS profile for a different neurotype — the state vocabulary, arc definitions, capacity thresholds, and track definitions are all configurable. A bipolar energy tracking profile looks different from an ADHD hyperfocus profile. Same substrate.
+- A domain-specific atlas stack for ops teams — incident reports, runbooks, post-mortems, architectural decisions all in one graph. Backlinks show which runbook sections were consulted during which incidents. Agents write to the same files the team reads.
+
+**Extension points:**
+
+| surface | how |
+|---------|-----|
+| Plugins | executable in `.cartographer/plugins/` |
+| Templates | Jinja2 in `.cartographer/jinja/` |
+| Hooks | shell scripts in `.cartographer/hooks/` |
+| mapsOS tracks | `tracks:` in `~/.maps_os_config.yaml` |
+| mapsOS state vocab | `state.tags:` in config |
+| Agent adapters | `cart session-import` reads any agent writing the ECC session format |
+| Graph skins | `~/atlas/themes/*.js` — auto-loaded, theme picker in graph sidebar |
+
+This was built for one brain and configured for that brain's specific needs. The whole point is that you configure it for yours. Come build.
 
 ---
 
-## design rules
+## Design rules
 
 1. **Files are the API.** Delete cartographer and your files still make sense.
 2. **Structure lives in frontmatter, not migrations.**
@@ -526,7 +596,7 @@ If you've built something with cartographer — an import adapter, a query templ
 
 ---
 
-## note model
+## Note model
 
 ```markdown
 ---
@@ -552,7 +622,7 @@ Block refs: `[[project-alpha#b001]]`.
 
 ---
 
-## plugin contract
+## Plugin contract
 
 Plugins live in `.cartographer/plugins/`. They're just executables.
 
@@ -574,26 +644,15 @@ Plugins live in `.cartographer/plugins/`. They're just executables.
 }
 ```
 
-Python, shell, Lua, anything that speaks JSON on stdin/stdout.
-
-Machine-readable CLI surfaces now include top-level `schema_version` and `surface` fields so bridge clients can validate what they are consuming over time.
+Machine-readable CLI surfaces include `schema_version` and `surface` fields for bridge client validation.
 
 ---
 
-## hermes integration
+## Integrations
 
-cartographer is the canonical memory layer for Hermes agents:
+### Obsidian
 
-- **Session import:** `cart session-import hermes --all`
-- **Learning capture:** `cart learn "observation" --topic slug`
-- **Daily brief:** Loaded at session start via `cart daily-brief`
-- **Context awareness:** See `skills/context-awareness/SKILL.md` in the Hermes profile
-
-When Hermes learns something durable, it writes to the atlas. When it starts a session, it reads from the atlas. No invisible memory. No context loss between sessions.
-
----
-
-## integrations
+Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail. Cart uses standard Markdown plus HTML comment block markers — Obsidian renders these as notes, cart reads them as structured data.
 
 ### vimwiki
 
@@ -603,42 +662,32 @@ When Hermes learns something durable, it writes to the atlas. When it starts a s
 export CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1
 ```
 
-### obsidian
+### hermes
 
-cartographer uses Markdown plus HTML comment block markers. Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail.
+cartographer is the canonical memory layer for Hermes agents:
 
-### developers
-
-See `DEVELOPERS.md` for the plugin contract, extension points, and what to build on top of the atlas substrate.
-
-Short version:
-
-- Build agent plugins that read atlas context and write durable memory back.
-- Build domain-specific atlas stacks for research, teams, therapy, operations, or neurodivergent life management.
-- Build new surfaces on top of the files-and-graph layer instead of starting from another silo.
-
-Repos:
-
-- cartographer: <https://github.com/nosleepcassette/cartographer>
-- mapsOS: <https://github.com/nosleepcassette/mapsOS>
+- `cart session-import hermes --all`
+- `cart learn "observation" --topic slug`
+- `cart daily-brief` at session start
+- Session logs link to projects, days, agents — not to people unless wired intentionally
 
 ---
 
-## what this is not
+## What this is not
 
 - Not a SaaS notes app
 - Not a proprietary memory store
-- Not a graph-native editor, even though `cart graph --format html` now renders one
+- Not a graph-native editor (though `cart graph --format html` renders one)
 - Not pretending the surface area is finished
 
 ---
 
-## repository map
+## Repository map
 
-- `SPEC.md` - product spec and locked decisions
-- `orchestra/` - short allowlist-friendly shell wrappers for common cart operations
-- `skills/create-skill/SKILL.md` - guided conversation for drafting new Claude skills
-- `DEVELOPERS.md` - extension points and developer-facing framing
+- `SPEC.md` — product spec and locked decisions
+- `DEVELOPERS.md` — extension points and developer-facing framing
+- `orchestra/` — allowlist-friendly shell wrappers for common cart operations
+- `skills/create-skill/SKILL.md` — guided conversation for drafting new Claude skills
 
 ---
 
