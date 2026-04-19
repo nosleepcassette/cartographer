@@ -1931,6 +1931,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       canvas.width = 256;
       canvas.height = 256;
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        haloTexture = new THREE.CanvasTexture(canvas);
+        haloTexture.needsUpdate = true;
+        return haloTexture;
+      }
       const gradient = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
       gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
       gradient.addColorStop(0.25, 'rgba(255,255,255,0.42)');
@@ -1953,6 +1958,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       canvas.width = 192;
       canvas.height = 192;
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        wireMarkerTexture = new THREE.CanvasTexture(canvas);
+        wireMarkerTexture.needsUpdate = true;
+        return wireMarkerTexture;
+      }
       ctx.translate(96, 96);
       ctx.fillStyle = 'rgba(255,255,255,0.96)';
       ctx.beginPath();
@@ -2006,6 +2016,69 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       ctx.stroke();
     }
 
+    function drawTriangle(ctx, radius, inverted = false) {
+      const top = inverted ? radius : -radius;
+      const base = inverted ? -radius : radius;
+      ctx.beginPath();
+      ctx.moveTo(0, top);
+      ctx.lineTo(radius * 0.92, base * 0.72);
+      ctx.lineTo(-radius * 0.92, base * 0.72);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    function drawCross(ctx, size) {
+      ctx.beginPath();
+      ctx.moveTo(-size, 0);
+      ctx.lineTo(size, 0);
+      ctx.moveTo(0, -size);
+      ctx.lineTo(0, size);
+      ctx.stroke();
+    }
+
+    function drawCrucible(ctx) {
+      ctx.beginPath();
+      ctx.moveTo(-74, 56);
+      ctx.quadraticCurveTo(-64, -12, -36, -68);
+      ctx.lineTo(36, -68);
+      ctx.quadraticCurveTo(64, -12, 74, 56);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-48, 22);
+      ctx.lineTo(48, 22);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-18, 56);
+      ctx.lineTo(18, 56);
+      ctx.stroke();
+    }
+
+    function drawDailyMark(ctx) {
+      ctx.beginPath();
+      ctx.arc(0, -8, 64, Math.PI * 0.18, Math.PI * 0.82);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -12);
+      ctx.lineTo(0, 76);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-26, 46);
+      ctx.lineTo(26, 46);
+      ctx.stroke();
+    }
+
+    function drawMetalMark(ctx) {
+      drawDiamond(ctx, 72);
+      ctx.beginPath();
+      ctx.moveTo(-72, 0);
+      ctx.lineTo(72, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -72);
+      ctx.lineTo(0, 72);
+      ctx.stroke();
+    }
+
     function createGlyphTexture(typeName) {
       const cacheKey = glyphCanvasKey(typeName);
       if (glyphTextureCache.has(cacheKey)) {
@@ -2015,105 +2088,73 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       canvas.width = 256;
       canvas.height = 256;
       const ctx = canvas.getContext('2d');
-      ctx.translate(128, 128);
-      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-      ctx.fillStyle = 'rgba(255,255,255,1)';
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.lineWidth = 8;
-      const family = glyphFamilyForType(typeName);
-      const glyph = glyphForType(typeName);
+      if (ctx) {
+        ctx.translate(128, 128);
+        ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+        ctx.fillStyle = 'rgba(255,255,255,1)';
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 8;
+        const family = glyphFamilyForType(typeName);
 
-      switch (family) {
-        case 'person':
-          ctx.beginPath();
-          ctx.arc(0, 0, 72, 0, Math.PI * 2);
-          ctx.stroke();
-          drawOrbitalTicks(ctx, 98, 12, 16, 7);
-          break;
-        case 'project':
-          ctx.beginPath();
-          ctx.arc(0, 0, 82, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(-82, 0);
-          ctx.lineTo(82, 0);
-          ctx.moveTo(0, -82);
-          ctx.lineTo(0, 82);
-          ctx.stroke();
-          break;
-        case 'agent':
-          ctx.beginPath();
-          ctx.moveTo(-86, 78);
-          ctx.lineTo(-52, -84);
-          ctx.lineTo(52, -84);
-          ctx.lineTo(86, 78);
-          ctx.closePath();
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(-38, 18);
-          ctx.lineTo(38, 18);
-          ctx.stroke();
-          break;
-        case 'goal':
-          drawDiamond(ctx, 92);
-          drawGoalReticle(ctx, 56);
-          break;
-        case 'session':
-          ctx.beginPath();
-          ctx.arc(-10, 4, 58, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(42, -36);
-          ctx.lineTo(96, -82);
-          ctx.stroke();
-          break;
-        case 'daily':
-          ctx.beginPath();
-          ctx.arc(0, 0, 82, -Math.PI * 0.2, Math.PI * 1.1);
-          ctx.stroke();
-          break;
-        case 'learning':
-          ctx.beginPath();
-          ctx.moveTo(0, -94);
-          ctx.lineTo(78, 0);
-          ctx.lineTo(0, 94);
-          ctx.lineTo(-78, 0);
-          ctx.closePath();
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(-24, -70);
-          ctx.lineTo(24, 70);
-          ctx.moveTo(24, -70);
-          ctx.lineTo(-24, 70);
-          ctx.stroke();
-          break;
-        case 'task':
-          ctx.beginPath();
-          ctx.moveTo(0, -98);
-          ctx.lineTo(88, 64);
-          ctx.lineTo(-88, 64);
-          ctx.closePath();
-          ctx.stroke();
-          break;
-        case 'index':
-          drawOrbitalTicks(ctx, 96, 4, 22, 8);
-          ctx.beginPath();
-          ctx.arc(0, 0, 58, 0, Math.PI * 2);
-          ctx.stroke();
-          break;
-        default:
-          drawDiamond(ctx, 88);
-          ctx.beginPath();
-          ctx.rect(-64, -64, 128, 128);
-          ctx.stroke();
-          break;
+        switch (family) {
+          case 'person':
+            ctx.beginPath();
+            ctx.arc(0, 0, 72, 0, Math.PI * 2);
+            ctx.stroke();
+            drawOrbitalTicks(ctx, 98, 12, 16, 7);
+            ctx.beginPath();
+            ctx.arc(0, 0, 18, 0, Math.PI * 2);
+            ctx.fill();
+            break;
+          case 'project':
+            ctx.beginPath();
+            ctx.arc(0, 0, 82, 0, Math.PI * 2);
+            ctx.stroke();
+            drawCross(ctx, 72);
+            break;
+          case 'agent':
+            drawCrucible(ctx);
+            break;
+          case 'goal':
+            drawDiamond(ctx, 92);
+            drawGoalReticle(ctx, 56);
+            break;
+          case 'session':
+            drawTriangle(ctx, 88, true);
+            ctx.beginPath();
+            ctx.moveTo(0, -84);
+            ctx.lineTo(0, -24);
+            ctx.stroke();
+            break;
+          case 'daily':
+            drawDailyMark(ctx);
+            break;
+          case 'learning':
+            drawTriangle(ctx, 88, false);
+            ctx.beginPath();
+            ctx.moveTo(-58, 18);
+            ctx.lineTo(58, 18);
+            ctx.stroke();
+            break;
+          case 'task':
+            drawTriangle(ctx, 94, false);
+            break;
+          case 'index':
+            drawOrbitalTicks(ctx, 96, 4, 22, 8);
+            ctx.beginPath();
+            ctx.arc(0, 0, 58, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(-42, 0);
+            ctx.lineTo(42, 0);
+            ctx.stroke();
+            break;
+          default:
+            drawMetalMark(ctx);
+            break;
+        }
       }
-
-      ctx.font = '900 114px "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(glyph, 0, 6);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
@@ -2245,8 +2286,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         node.sigil = sigil;
         node.sigilMaterial = sigilMaterial;
 
-        node.material.opacity = 0.001;
-        node.material.depthWrite = false;
+        node.material.opacity = 0.22;
+        node.material.depthWrite = true;
+        mesh.renderOrder = 1;
+        halo.renderOrder = 2;
+        sigil.renderOrder = 3;
       }
     }
 
