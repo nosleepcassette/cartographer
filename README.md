@@ -1,7 +1,9 @@
 # cartographer
 
 <p align="center">
-  <video src="https://github.com/nosleepcassette/cartographer/raw/refs/heads/main/media/cartographer-github-1.25x.webm" width="800" autoplay loop muted playsinline></video>
+  <a href="https://github.com/nosleepcassette/cartographer/raw/main/media/cartographer-github-1.25x-render.webm">
+    <img alt="Cartographer Demo" src="https://img.shields.io/badge/Demo-Click%20to%20Play-blue?style=for-the-badge" width="300">
+  </a>
 </p>
 
 > Your agents should know how you're actually doing — and remember everything they learn.
