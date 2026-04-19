@@ -416,6 +416,7 @@ HTML output is a self-contained visual graph with:
 - export driven from the current atlas index rather than whatever stale DB happened to be on disk
 - a deterministic clustered 3D layout instead of free-floating SVG drift
 - theme presets driven by Cart config, with `baseline` as the default and `astral` as the first shipped visual theme
+- `astral` renders type-specific in-scene sigil nodes and halos instead of reusing the baseline geometric node bodies
 - emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
 - brighter semantic wires with explicit emotional topology in the detail pane
 - local search by note title, id, type, or tag

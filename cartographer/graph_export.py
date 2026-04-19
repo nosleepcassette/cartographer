@@ -1327,6 +1327,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     __THREE_VENDOR__
 
     const THREE = {
+      CanvasTexture,
       AmbientLight,
       Box3,
       BufferAttribute,
@@ -1346,6 +1347,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       PointsMaterial,
       Raycaster,
       Scene,
+      Sprite,
+      SpriteMaterial,
       Sphere,
       Vector2,
       Vector3,
@@ -1446,6 +1449,28 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       learning: '#f3df9a',
       notes: '#93a7c9',
     };
+    const glyphScaleByType = {
+      person: 3.15,
+      project: 3.05,
+      goal: 3.1,
+      entity: 2.95,
+      'agent-log': 2.85,
+      session: 2.9,
+      daily: 2.95,
+      learning: 2.9,
+      note: 2.75,
+    };
+    const haloScaleByType = {
+      person: 6.2,
+      project: 5.8,
+      goal: 5.9,
+      entity: 5.5,
+      'agent-log': 5.3,
+      session: 5.4,
+      daily: 5.4,
+      learning: 5.4,
+      note: 5.1,
+    };
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
@@ -1504,6 +1529,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     const activeTheme = resolveThemePreset(graphConfig.theme_preset || 'baseline');
     const activeTypeGlyphs = THEME_TYPE_GLYPHS[activeTheme.id] || THEME_TYPE_GLYPHS.baseline;
+    const usingAstralSigils = activeTheme.id === 'astral';
     document.body.dataset.theme = activeTheme.id;
     graphTitleEl.textContent = activeTheme.title;
     graphSubtitleEl.textContent = activeTheme.subtitle;
@@ -1801,6 +1827,168 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return new THREE.BufferGeometry().setFromPoints(vertices);
     }
 
+    const glyphTextureCache = new Map();
+    let haloTexture = null;
+
+    function glyphCanvasKey(typeName) {
+      return `${activeTheme.id}:${typeName}`;
+    }
+
+    function createHaloTexture() {
+      if (haloTexture) {
+        return haloTexture;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
+      gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+      gradient.addColorStop(0.25, 'rgba(255,255,255,0.42)');
+      gradient.addColorStop(0.55, 'rgba(255,255,255,0.14)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 256, 256);
+      haloTexture = new THREE.CanvasTexture(canvas);
+      haloTexture.needsUpdate = true;
+      return haloTexture;
+    }
+
+    function drawOrbitalTicks(ctx, radius, count, length, lineWidth = 8) {
+      ctx.save();
+      ctx.lineWidth = lineWidth;
+      for (let index = 0; index < count; index += 1) {
+        const theta = (index / count) * Math.PI * 2;
+        const inner = radius - length;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(theta) * inner, Math.sin(theta) * inner);
+        ctx.lineTo(Math.cos(theta) * radius, Math.sin(theta) * radius);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawDiamond(ctx, radius) {
+      ctx.beginPath();
+      ctx.moveTo(0, -radius);
+      ctx.lineTo(radius, 0);
+      ctx.lineTo(0, radius);
+      ctx.lineTo(-radius, 0);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    function drawGoalReticle(ctx, radius) {
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-radius - 18, 0);
+      ctx.lineTo(-radius + 6, 0);
+      ctx.moveTo(radius - 6, 0);
+      ctx.lineTo(radius + 18, 0);
+      ctx.moveTo(0, -radius - 18);
+      ctx.lineTo(0, -radius + 6);
+      ctx.moveTo(0, radius - 6);
+      ctx.lineTo(0, radius + 18);
+      ctx.stroke();
+    }
+
+    function createGlyphTexture(typeName) {
+      const cacheKey = glyphCanvasKey(typeName);
+      if (glyphTextureCache.has(cacheKey)) {
+        return glyphTextureCache.get(cacheKey);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(128, 128);
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.fillStyle = 'rgba(255,255,255,1)';
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 8;
+      const glyph = activeTypeGlyphs[typeName] || '·';
+
+      switch (typeName) {
+        case 'person':
+          ctx.beginPath();
+          ctx.arc(0, 0, 72, 0, Math.PI * 2);
+          ctx.stroke();
+          drawOrbitalTicks(ctx, 94, 8, 12, 7);
+          break;
+        case 'project':
+          drawDiamond(ctx, 92);
+          drawOrbitalTicks(ctx, 110, 4, 16, 7);
+          break;
+        case 'goal':
+          drawGoalReticle(ctx, 76);
+          break;
+        case 'entity':
+          ctx.beginPath();
+          ctx.arc(0, 0, 68, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(78, -38, 16, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(-62, 54, 11, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        case 'agent-log':
+          drawOrbitalTicks(ctx, 96, 6, 18, 7);
+          ctx.beginPath();
+          ctx.arc(0, 0, 64, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        case 'session':
+          ctx.beginPath();
+          ctx.arc(-10, 4, 58, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(42, -36);
+          ctx.lineTo(96, -82);
+          ctx.stroke();
+          break;
+        case 'daily':
+          ctx.beginPath();
+          ctx.arc(0, 0, 82, -Math.PI * 0.2, Math.PI * 1.1);
+          ctx.stroke();
+          break;
+        case 'learning':
+          ctx.beginPath();
+          ctx.moveTo(0, -94);
+          ctx.lineTo(78, 0);
+          ctx.lineTo(0, 94);
+          ctx.lineTo(-78, 0);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(-24, -70);
+          ctx.lineTo(24, 70);
+          ctx.moveTo(24, -70);
+          ctx.lineTo(-24, 70);
+          ctx.stroke();
+          break;
+        default:
+          ctx.beginPath();
+          ctx.arc(0, 0, 58, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+      }
+
+      ctx.font = '900 114px "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(glyph, 0, 6);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      glyphTextureCache.set(cacheKey, texture);
+      return texture;
+    }
+
     const biomeObjects = new Map();
     const biomeBaseGeometry = unitLoopGeometry(72, 0.04);
     const biomeOuterGeometry = unitLoopGeometry(88, 0.08);
@@ -1891,6 +2079,41 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       scene.add(mesh);
       node.mesh = mesh;
       node.material = material;
+      node.sigil = null;
+      node.sigilMaterial = null;
+      node.halo = null;
+      node.haloMaterial = null;
+
+      if (usingAstralSigils) {
+        const haloMaterial = new THREE.SpriteMaterial({
+          map: createHaloTexture(),
+          color: node.glowColor.clone(),
+          transparent: true,
+          opacity: 0.18,
+          depthWrite: false,
+        });
+        const halo = new THREE.Sprite(haloMaterial);
+        halo.userData.node = node;
+        scene.add(halo);
+        node.halo = halo;
+        node.haloMaterial = haloMaterial;
+
+        const sigilMaterial = new THREE.SpriteMaterial({
+          map: createGlyphTexture(node.type),
+          color: node.displayColor.clone(),
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: false,
+        });
+        const sigil = new THREE.Sprite(sigilMaterial);
+        sigil.userData.node = node;
+        scene.add(sigil);
+        node.sigil = sigil;
+        node.sigilMaterial = sigilMaterial;
+
+        node.material.opacity = 0.001;
+        node.material.depthWrite = false;
+      }
     }
 
     for (const edge of edges) {
@@ -2309,6 +2532,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           node.position.copy(anchor).add(local);
           node.mesh.position.copy(node.position);
           node.mesh.scale.setScalar(node.radius);
+          if (node.sigil) {
+            node.sigil.position.copy(node.position);
+            const glyphScale = glyphScaleByType[node.type] || 3;
+            node.sigil.scale.set(node.radius * glyphScale, node.radius * glyphScale, 1);
+          }
+          if (node.halo) {
+            node.halo.position.copy(node.position);
+            const haloScale = haloScaleByType[node.type] || 5.4;
+            node.halo.scale.set(node.radius * haloScale, node.radius * haloScale, 1);
+          }
         });
       }
 
@@ -2851,24 +3084,43 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const dimForSearch = needle && !node.matched && node !== selectedNode;
         const dimForBrowser = state.browserType && state.browserType !== node.type && node !== selectedNode;
         node.mesh.visible = visible;
-        node.material.color.copy(
-          node === selectedNode
-            ? node.displayColor.clone().lerp(new THREE.Color('#fffdf4'), 0.2)
-            : connected || node.matched
-              ? node.displayColor
-              : node.baseColor.clone().lerp(new THREE.Color('#f4d7a3'), 0.12)
-        );
-        node.material.opacity = !visible ? 0 : (dimForSearch || dimForBrowser ? 0.28 : connected || node === selectedNode ? 1 : 0.94);
-        node.material.emissive.copy(
-          node === selectedNode
-            ? node.glowColor.clone().multiplyScalar(0.8)
-            : connected || node.matched
-              ? node.glowColor.clone().multiplyScalar(0.42)
-              : node.glowColor.clone().multiplyScalar(dimForSearch || dimForBrowser ? 0.15 : 0.24)
-        );
+        const visibleColor = node === selectedNode
+          ? node.displayColor.clone().lerp(new THREE.Color('#fffdf4'), 0.2)
+          : connected || node.matched
+            ? node.displayColor
+            : node.baseColor.clone().lerp(new THREE.Color('#f4d7a3'), activeTheme.id === 'astral' ? 0.18 : 0.12);
+        const visibleOpacity = !visible ? 0 : (dimForSearch || dimForBrowser ? 0.28 : connected || node === selectedNode ? 1 : 0.94);
+        const glow = node === selectedNode
+          ? node.glowColor.clone().multiplyScalar(0.8)
+          : connected || node.matched
+            ? node.glowColor.clone().multiplyScalar(0.42)
+            : node.glowColor.clone().multiplyScalar(dimForSearch || dimForBrowser ? 0.15 : 0.24);
+        node.material.color.copy(visibleColor);
+        node.material.opacity = usingAstralSigils
+          ? (!visible ? 0 : 0.001)
+          : visibleOpacity;
+        node.material.emissive.copy(glow);
         const connectivityScale = node.degree >= 12 ? 1.08 : node.degree >= 8 ? 1.04 : 1;
         node.renderScale = node.radius * connectivityScale * (node === selectedNode ? 1.48 : connected ? 1.18 : node.matched ? 1.08 : 1);
         node.mesh.scale.setScalar(node.renderScale);
+        if (node.sigil && node.sigilMaterial) {
+          node.sigil.visible = visible;
+          node.sigilMaterial.color.copy(visibleColor);
+          node.sigilMaterial.opacity = !visible ? 0 : (dimForSearch || dimForBrowser ? 0.2 : connected || node === selectedNode ? 1 : 0.92);
+        }
+        if (node.halo && node.haloMaterial) {
+          node.halo.visible = visible;
+          node.haloMaterial.color.copy(glow);
+          node.haloMaterial.opacity = !visible ? 0 : (
+            node === selectedNode
+              ? 0.34
+              : connected
+                ? 0.2
+                : node.degree >= 12
+                  ? 0.14
+                  : 0.1
+          );
+        }
       }
 
       for (const edge of edges) {
@@ -3120,8 +3372,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(nodes.map((node) => node.mesh), false);
-      return hits.find((hit) => hit.object.visible)?.object?.userData?.node || null;
+      const hits = raycaster.intersectObjects(nodes.map((node) => node.mesh), true);
+      for (const hit of hits) {
+        if (!hit.object.visible) {
+          continue;
+        }
+        if (hit.object.userData?.node) {
+          return hit.object.userData.node;
+        }
+      }
+      return null;
     }
 
     function projectNode(node) {
@@ -3340,6 +3600,25 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             ? 1 + Math.sin(now * 2.2 + node.index * 0.12) * 0.018
             : 1;
         node.mesh.scale.setScalar(node.renderScale * pulse);
+        if (node.sigil) {
+          const glyphScale = glyphScaleByType[node.type] || 3;
+          node.sigil.scale.set(
+            node.renderScale * glyphScale * pulse,
+            node.renderScale * glyphScale * pulse,
+            1,
+          );
+        }
+        if (node.halo) {
+          const haloScale = haloScaleByType[node.type] || 5.4;
+          const haloPulse = node === selectedNode
+            ? 1 + Math.sin(now * 4.4) * 0.045
+            : pulse;
+          node.halo.scale.set(
+            node.renderScale * haloScale * haloPulse,
+            node.renderScale * haloScale * haloPulse,
+            1,
+          );
+        }
       }
       for (const edge of edges) {
         if (!edge.line.visible || !edge.isWire) {

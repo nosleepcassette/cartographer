@@ -95,6 +95,8 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "toggle-help" in html
     assert "show-wires" in html
     assert "smartFitCamera" in html
+    assert "createGlyphTexture" in html
+    assert "new THREE.SpriteMaterial" in html
     assert "renderPreviewMarkdown" in html
     assert "detailPreviewEl.innerHTML" in html
     assert "Emotional Topology" in html
