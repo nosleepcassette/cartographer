@@ -450,6 +450,8 @@ To enable the shipped astral preset for a specific atlas:
 theme_preset = "astral"
 ```
 
+Additional graph skins can live in `~/atlas/themes/*.js`. Cart auto-loads those theme files into the HTML graph, and the graph sidebar theme picker lets you switch between shipped and atlas-local variants.
+
 ### mapsOS bridge
 
 ```zsh

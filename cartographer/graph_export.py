@@ -49,6 +49,13 @@ def _string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _discover_theme_files(atlas_root: Path) -> list[Path]:
+    theme_dir = atlas_root / "themes"
+    if not theme_dir.exists():
+        return []
+    return sorted(path for path in theme_dir.glob("*.js") if path.is_file())
+
+
 def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     config = load_config(root=atlas_root)
     graph = config.get("graph", {}) if isinstance(config, dict) else {}
@@ -60,12 +67,15 @@ def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     mode = str(privacy.get("mode") or "off").strip().lower()
     if mode not in {"off", "names", "names_relationships", "full"}:
         mode = "off"
-    theme_preset = str(graph.get("theme_preset") or "baseline").strip().lower()
-    if theme_preset not in SHIPPED_GRAPH_THEMES:
-        theme_preset = "baseline"
+    theme_preset = str(graph.get("theme_preset") or "baseline").strip().lower() or "baseline"
+    theme_files = _discover_theme_files(atlas_root)
+    available_theme_presets = sorted(
+        SHIPPED_GRAPH_THEMES | {path.stem.strip().lower() for path in theme_files if path.stem.strip()}
+    )
     return {
         "theme_preset": theme_preset,
-        "available_theme_presets": sorted(SHIPPED_GRAPH_THEMES),
+        "available_theme_presets": available_theme_presets,
+        "theme_script_paths": [f"./themes/{path.name}" for path in theme_files],
         "show_people": bool(graph.get("show_people", True)),
         "always_visible_people": _string_list(graph.get("always_visible_people")),
         "visible_people": _string_list(graph.get("visible_people")),
@@ -479,12 +489,81 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         .replace("\u2029", "\\u2029")
     )
     vendor_three = _vendor_script_text("three.module.js")
+    graph_config = payload.get("graph_config", {})
+    theme_script_tags = "\n".join(
+        f'  <script src="{path}"></script>'
+        for path in graph_config.get("theme_script_paths", [])
+        if isinstance(path, str) and path.strip()
+    )
     template = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>atlas graph</title>
+  <script>
+    (function() {
+      const registry = window.CART_THEMES || {};
+      const themes = registry._themes || new Map();
+
+      function normalizeTheme(definition) {
+        if (!definition || typeof definition !== 'object') {
+          return null;
+        }
+        const id = String(definition.id || definition.preset?.id || '').trim().toLowerCase();
+        if (!id) {
+          return null;
+        }
+        const preset = definition.preset && typeof definition.preset === 'object'
+          ? { ...definition.preset, id }
+          : { id };
+        const glyphs = definition.glyphs && typeof definition.glyphs === 'object'
+          ? { ...definition.glyphs }
+          : {};
+        const wireAspects = definition.wireAspects && typeof definition.wireAspects === 'object'
+          ? { ...definition.wireAspects }
+          : {};
+        return { id, preset, glyphs, wireAspects };
+      }
+
+      function mergeTheme(baseTheme, overrideTheme) {
+        return {
+          id: overrideTheme.id || baseTheme.id,
+          preset: { ...(baseTheme.preset || {}), ...(overrideTheme.preset || {}), id: overrideTheme.id || baseTheme.id },
+          glyphs: { ...(baseTheme.glyphs || {}), ...(overrideTheme.glyphs || {}) },
+          wireAspects: { ...(baseTheme.wireAspects || {}), ...(overrideTheme.wireAspects || {}) },
+        };
+      }
+
+      registry._themes = themes;
+      registry.register = function(definition) {
+        const normalized = normalizeTheme(definition);
+        if (!normalized) {
+          return;
+        }
+        const existing = themes.get(normalized.id);
+        themes.set(normalized.id, existing ? mergeTheme(existing, normalized) : normalized);
+      };
+      registry.registerBuiltIn = function(definition) {
+        const normalized = normalizeTheme(definition);
+        if (!normalized) {
+          return;
+        }
+        const existing = themes.get(normalized.id);
+        themes.set(normalized.id, existing ? mergeTheme(normalized, existing) : normalized);
+      };
+      registry.get = function(id) {
+        const key = String(id || '').trim().toLowerCase();
+        return themes.get(key) || themes.get('baseline') || null;
+      };
+      registry.list = function() {
+        return Array.from(themes.values()).sort((a, b) =>
+          String(a.preset?.title || a.id).localeCompare(String(b.preset?.title || b.id))
+        );
+      };
+      window.CART_THEMES = registry;
+    })();
+  </script>
   <style>
     :root {
       --panel: rgba(12, 16, 28, 0.92);
@@ -1193,6 +1272,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
     }
   </style>
+  <!-- CART-THEME-SCRIPTS -->
+__THEME_SCRIPT_TAGS__
 </head>
 <body data-theme="__BODY_THEME__">
   <div class="app">
@@ -1202,6 +1283,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           <div class="eyebrow">atlas visual graph</div>
           <h1 id="graph-title">Atlas Graph</h1>
           <p class="subtle" id="graph-subtitle">Deterministic clusters, semantic wires, and camera-state links you can share.</p>
+        </div>
+
+        <div class="search-wrap">
+          <label class="eyebrow" for="theme-picker">Theme</label>
+          <select id="theme-picker"></select>
         </div>
 
         <div class="search-wrap">
@@ -1541,6 +1627,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
     const PRIVACY_MODE_KEY = 'atlas.graph.privacyMode';
     const WIRES_STORAGE_KEY = 'atlas.graph.showWires';
+    const THEME_STORAGE_KEY = 'atlas.graph.themePreset';
     const graphConfig = atlasGraphPayload.graph_config || {};
     const privacyConfig = graphConfig.privacy || {};
     const NEVER_REDACT_IDS = new Set((privacyConfig.never_redact_ids || []).map((value) => String(value).toLowerCase()));
@@ -1550,6 +1637,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const PRIVACY_MODES = new Set(['off', 'names', 'names_relationships', 'full']);
     const DEFAULT_PRIVACY_MODE = PRIVACY_MODES.has(privacyConfig.mode) ? privacyConfig.mode : 'off';
 
+    const themeSelect = document.getElementById('theme-picker');
     const searchInput = document.getElementById('search');
     const folderChipList = document.getElementById('folder-chip-list');
     const privacyModeSelect = document.getElementById('privacy-mode');
@@ -1608,8 +1696,49 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       showGraphError(event.reason);
     });
 
-    function resolveThemePreset(themeName) {
-      return THEME_PRESETS[themeName] || THEME_PRESETS.baseline;
+    function normalizeThemeName(themeName) {
+      return String(themeName || '').trim().toLowerCase();
+    }
+
+    function registerBuiltInThemes() {
+      window.CART_THEMES.registerBuiltIn({
+        id: 'baseline',
+        preset: THEME_PRESETS.baseline,
+        glyphs: THEME_TYPE_GLYPHS.baseline,
+      });
+      window.CART_THEMES.registerBuiltIn({
+        id: 'astral',
+        preset: THEME_PRESETS.astral,
+        glyphs: THEME_TYPE_GLYPHS.astral,
+        wireAspects: ASTRAL_WIRE_ASPECTS,
+      });
+    }
+
+    registerBuiltInThemes();
+
+    function availableThemeVariants() {
+      const variants = window.CART_THEMES?.list?.() || [];
+      return variants.length ? variants : [
+        {
+          id: 'baseline',
+          preset: THEME_PRESETS.baseline,
+          glyphs: THEME_TYPE_GLYPHS.baseline,
+          wireAspects: {},
+        },
+      ];
+    }
+
+    function resolveThemeVariant(themeName) {
+      return (
+        window.CART_THEMES?.get?.(normalizeThemeName(themeName))
+        || window.CART_THEMES?.get?.('baseline')
+        || {
+          id: 'baseline',
+          preset: THEME_PRESETS.baseline,
+          glyphs: THEME_TYPE_GLYPHS.baseline,
+          wireAspects: {},
+        }
+      );
     }
 
     function glyphFamilyForType(typeName) {
@@ -1648,25 +1777,43 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return activeTypeGlyphs[family] || activeTypeGlyphs.cart || '·';
     }
 
-    function astralAspectForEdge(edge) {
-      return ASTRAL_WIRE_ASPECTS[edge.predicate] || '✧';
+    function wireAspectForEdge(edge) {
+      return activeWireAspects[edge.predicate] || '';
     }
 
     function wireLabelText(edge) {
-      if (activeTheme.id === 'astral') {
-        return `${astralAspectForEdge(edge)} ${edge.predicate.replaceAll('_', ' ')}`;
+      const aspect = wireAspectForEdge(edge);
+      if (aspect) {
+        return `${aspect} ${edge.predicate.replaceAll('_', ' ')}`;
       }
       return edge.predicate.replaceAll('_', ' ');
     }
 
-    const activeTheme = resolveThemePreset(graphConfig.theme_preset || 'baseline');
-    const activeTypeGlyphs = THEME_TYPE_GLYPHS[activeTheme.id] || THEME_TYPE_GLYPHS.baseline;
-    const usingAstralSigils = activeTheme.id === 'astral';
+    const storedThemePreset = normalizeThemeName(window.localStorage.getItem(THEME_STORAGE_KEY) || '');
+    const requestedThemePreset = storedThemePreset || normalizeThemeName(graphConfig.theme_preset || 'baseline');
+    const activeThemeVariant = resolveThemeVariant(requestedThemePreset);
+    const activeTheme = activeThemeVariant.preset || THEME_PRESETS.baseline;
+    const activeTypeGlyphs = activeThemeVariant.glyphs || THEME_TYPE_GLYPHS.baseline;
+    const activeWireAspects = activeThemeVariant.wireAspects || {};
+    const usingThemeSigils = activeTheme.id !== 'baseline';
     document.body.dataset.theme = activeTheme.id;
-    graphTitleEl.textContent = activeTheme.title;
-    graphSubtitleEl.textContent = activeTheme.subtitle;
-    surveyMarkEl.textContent = activeTheme.surveyMark;
-    surveyTitleEl.textContent = activeTheme.surveyTitle;
+    graphTitleEl.textContent = activeTheme.title || activeTheme.id || 'Atlas Graph';
+    graphSubtitleEl.textContent = activeTheme.subtitle || '';
+    surveyMarkEl.textContent = activeTheme.surveyMark || '◎';
+    surveyTitleEl.textContent = activeTheme.surveyTitle || graphTitleEl.textContent;
+
+    function renderThemePicker() {
+      themeSelect.innerHTML = '';
+      for (const variant of availableThemeVariants()) {
+        const option = document.createElement('option');
+        option.value = variant.id;
+        option.textContent = variant.preset?.title || variant.id;
+        themeSelect.appendChild(option);
+      }
+      themeSelect.value = activeTheme.id;
+    }
+
+    renderThemePicker();
 
     nodeCountEl.textContent = String(atlasGraphPayload.node_count);
     edgeCountEl.textContent = String(atlasGraphPayload.edge_count);
@@ -1758,12 +1905,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       typeOrdinal: 0,
       baseColor: new THREE.Color(node.color),
       displayColor: new THREE.Color(node.color).lerp(
-        new THREE.Color(activeTheme.id === 'astral' ? '#fff4d4' : '#f4f8ff'),
-        activeTheme.id === 'astral' ? 0.24 : 0.12,
+        new THREE.Color(usingThemeSigils ? '#fff4d4' : '#f4f8ff'),
+        usingThemeSigils ? 0.24 : 0.12,
       ),
       glowColor: new THREE.Color(node.color).lerp(
-        new THREE.Color(activeTheme.id === 'astral' ? '#ffc987' : '#9fc8ff'),
-        activeTheme.id === 'astral' ? 0.18 : 0.08,
+        new THREE.Color(usingThemeSigils ? '#ffc987' : '#9fc8ff'),
+        usingThemeSigils ? 0.18 : 0.08,
       ),
       baseRadius: node.base_radius || (4.8 + Math.min(node.degree, 14) * 0.55),
       radius: 0,
@@ -1785,6 +1932,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const folderNames = Array.from(new Set(nodes.map((node) => node.folder).filter(Boolean))).sort((a, b) => a.localeCompare(b));
     const folderOrder = new Map(folderNames.map((folder, index) => [folder, index]));
+    const folderGlyphFamilyCache = new Map();
+
+    function folderGlyphForName(folder) {
+      if (!folder) {
+        return activeTheme.folderMark || '•';
+      }
+      if (!folderGlyphFamilyCache.has(folder)) {
+        const counts = new Map();
+        for (const node of nodes) {
+          if (node.folder !== folder) {
+            continue;
+          }
+          const family = glyphFamilyForType(node.type);
+          counts.set(family, (counts.get(family) || 0) + 1);
+        }
+        const winner = [...counts.entries()].sort((left, right) =>
+          right[1] - left[1] || left[0].localeCompare(right[0])
+        )[0]?.[0] || null;
+        folderGlyphFamilyCache.set(folder, winner);
+      }
+      const family = folderGlyphFamilyCache.get(folder);
+      return (family && activeTypeGlyphs[family]) || activeTheme.folderMark || '•';
+    }
     const orderedPeople = nodes
       .filter((node) => node.type === 'person')
       .sort((a, b) => {
@@ -2287,9 +2457,9 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     for (const node of nodes) {
       const material = new THREE.MeshStandardMaterial({
         color: node.displayColor.clone(),
-        emissive: node.glowColor.clone().multiplyScalar(activeTheme.id === 'astral' ? 0.22 : 0.16),
-        roughness: activeTheme.id === 'astral' ? 0.2 : 0.3,
-        metalness: activeTheme.id === 'astral' ? 0.18 : 0.08,
+        emissive: node.glowColor.clone().multiplyScalar(usingThemeSigils ? 0.22 : 0.16),
+        roughness: usingThemeSigils ? 0.2 : 0.3,
+        metalness: usingThemeSigils ? 0.18 : 0.08,
         transparent: true,
         opacity: 0.95,
       });
@@ -2304,7 +2474,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       node.halo = null;
       node.haloMaterial = null;
 
-      if (usingAstralSigils) {
+      if (usingThemeSigils) {
         const haloMaterial = new THREE.SpriteMaterial({
           map: createHaloTexture(),
           color: node.glowColor.clone(),
@@ -2349,7 +2519,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const material = new THREE.LineBasicMaterial({
         color: edge.baseColor,
         transparent: true,
-        opacity: edge.isWire ? (activeTheme.id === 'astral' ? 0.72 : 0.62) : 0.2,
+        opacity: edge.isWire ? (usingThemeSigils ? 0.72 : 0.62) : 0.2,
       });
       const line = new THREE.Line(geometry, material);
       line.userData.edge = edge;
@@ -2361,7 +2531,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           map: createWireMarkerTexture(),
           color: edge.baseColor.clone(),
           transparent: true,
-          opacity: activeTheme.id === 'astral' ? 0.58 : 0.36,
+          opacity: usingThemeSigils ? 0.58 : 0.36,
           depthWrite: false,
           depthTest: false,
         });
@@ -2803,7 +2973,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         if (edge.marker) {
           const targetPoint = edge.source.position.clone().lerp(edge.target.position, edge.markerT);
           edge.marker.position.copy(targetPoint);
-          const markerScale = edge.isWire ? (activeTheme.id === 'astral' ? 16 : 12) : 10;
+          const markerScale = edge.isWire ? (usingThemeSigils ? 16 : 12) : 10;
           edge.marker.scale.set(markerScale, markerScale, 1);
         }
       }
@@ -3339,7 +3509,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           ? node.displayColor.clone().lerp(new THREE.Color('#fffdf4'), 0.2)
           : connected || node.matched
             ? node.displayColor
-            : node.baseColor.clone().lerp(new THREE.Color('#f4d7a3'), activeTheme.id === 'astral' ? 0.18 : 0.12);
+            : node.baseColor.clone().lerp(new THREE.Color('#f4d7a3'), usingThemeSigils ? 0.18 : 0.12);
         const visibleOpacity = !visible ? 0 : (dimForSearch || dimForBrowser ? 0.28 : connected || node === selectedNode ? 1 : 0.94);
         const glow = node === selectedNode
           ? node.glowColor.clone().multiplyScalar(0.8)
@@ -3347,7 +3517,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             ? node.glowColor.clone().multiplyScalar(0.42)
             : node.glowColor.clone().multiplyScalar(dimForSearch || dimForBrowser ? 0.15 : 0.24);
         node.material.color.copy(visibleColor);
-        node.material.opacity = usingAstralSigils
+        node.material.opacity = usingThemeSigils
           ? (!visible ? 0 : 0.001)
           : visibleOpacity;
         node.material.emissive.copy(glow);
@@ -3395,8 +3565,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           : dimForBrowser
             ? 0.08
             : matches
-              ? (edge.isWire ? (activeTheme.id === 'astral' ? 0.84 : 0.76) : 0.28)
-              : (activeTheme.id === 'astral' ? (edge.isWire ? 0.18 : 0.12) : 0.12);
+              ? (edge.isWire ? (usingThemeSigils ? 0.84 : 0.76) : 0.28)
+              : (usingThemeSigils ? (edge.isWire ? 0.18 : 0.12) : 0.12);
         edge.material.opacity = edge.renderOpacity;
         if (edge.marker && edge.markerMaterial) {
           edge.marker.visible = visible;
@@ -3409,8 +3579,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             connected
               ? 0.96
               : matches
-                ? (activeTheme.id === 'astral' ? 0.52 : 0.34)
-                : (activeTheme.id === 'astral' ? 0.16 : 0.1)
+                ? (usingThemeSigils ? 0.52 : 0.34)
+                : (usingThemeSigils ? 0.16 : 0.1)
           );
         }
       }
@@ -3619,10 +3789,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const button = document.createElement('button');
         button.type = 'button';
         const active = !state.hiddenFolders.has(folder);
+        const folderGlyph = folderGlyphForName(folder);
         button.className = `folder-row${active ? ' active' : ' inactive'}`;
         button.innerHTML = `
           <span class="folder-meta">
-            <span class="glyph-swatch">${escapeHtml(activeTheme.folderMark)}</span>
+            <span class="glyph-swatch">${escapeHtml(folderGlyph)}</span>
             <span class="folder-name">${escapeHtml(folder)}</span>
           </span>
           <span class="folder-count">${visibleCount}</span>
@@ -3854,7 +4025,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function animate() {
       requestAnimationFrame(animate);
       const now = performance.now() * 0.001;
-      if (activeTheme.id === 'astral') {
+      if (usingThemeSigils) {
         stars.rotation.y += 0.0002;
         stars.rotation.x += 0.00004;
         surveyGrid.forEach((line, index) => {
@@ -3929,7 +4100,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
             : 0.62;
           const markerPos = edge.source.position.clone().lerp(edge.target.position, travel);
           edge.marker.position.copy(markerPos);
-          const markerScale = connected ? 20 : (activeTheme.id === 'astral' ? 16 : 12);
+          const markerScale = connected ? 20 : (usingThemeSigils ? 16 : 12);
           edge.marker.scale.set(markerScale, markerScale, 1);
         }
       }
@@ -4042,6 +4213,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       saveToggles();
       refreshSceneState();
       writeHashState();
+    });
+    themeSelect.addEventListener('change', () => {
+      const nextTheme = normalizeThemeName(themeSelect.value) || 'baseline';
+      const configTheme = normalizeThemeName(graphConfig.theme_preset || 'baseline');
+      if (nextTheme === configTheme) {
+        window.localStorage.removeItem(THEME_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      }
+      location.reload();
     });
 
     document.getElementById('reset-layout').addEventListener('click', () => {
@@ -4243,5 +4424,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         template
         .replace("__THREE_VENDOR__", vendor_three)
         .replace("__PAYLOAD__", payload_json)
+        .replace("__THEME_SCRIPT_TAGS__", theme_script_tags)
         .replace("__BODY_THEME__", str(payload.get("graph_config", {}).get("theme_preset") or "baseline"))
     )

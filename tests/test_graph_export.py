@@ -8,7 +8,7 @@ from click.testing import CliRunner
 
 from cartographer.atlas import Atlas
 from cartographer.cli import main
-from cartographer.graph_export import load_graph_payload
+from cartographer.graph_export import load_graph_payload, render_graph_html
 
 
 def _init_atlas(atlas_root: Path) -> None:
@@ -92,6 +92,7 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "privacy-mode" in html
     assert "show-all-folders" in html
     assert "folder-chip-list" in html
+    assert "theme-picker" in html
     assert "toggle-help" in html
     assert "show-wires" in html
     assert "smartFitCamera" in html
@@ -105,6 +106,8 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert "detail-emotional" in html
     assert "wiki-link" in html
     assert ".preview table" in html
+    assert "window.CART_THEMES" in html
+    assert "<!-- CART-THEME-SCRIPTS -->" in html
     assert '"id": "alpha"' in html
     assert '"source": "alpha"' in html
 
@@ -358,6 +361,7 @@ def test_graph_payload_embeds_graph_config_defaults(tmp_path) -> None:
 
     assert graph_config["theme_preset"] == "baseline"
     assert graph_config["available_theme_presets"] == ["astral", "baseline"]
+    assert graph_config["theme_script_paths"] == []
     assert graph_config["privacy"]["mode"] == "off"
     assert graph_config["privacy"]["person_order"] == ["maps", "maggie", "sarah"]
     assert graph_config["always_visible_people"] == ["maps", "cassette"]
@@ -387,6 +391,42 @@ def test_graph_payload_respects_atlas_theme_override(tmp_path) -> None:
     payload = load_graph_payload(atlas_root)
 
     assert payload["graph_config"]["theme_preset"] == "astral"
+
+
+def test_graph_payload_discovers_external_theme_scripts(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    theme_dir = atlas_root / "themes"
+    theme_dir.mkdir(parents=True, exist_ok=True)
+    (theme_dir / "synaptic-wizard.js").write_text(
+        "window.CART_THEMES.register({ id: 'synaptic-wizard', preset: { id: 'synaptic-wizard', title: 'Synaptic Wizard' } });\n",
+        encoding="utf-8",
+    )
+    config_dir = atlas_root / ".cartographer"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        (
+            "[graph]\n"
+            'theme_preset = "synaptic-wizard"\n'
+        ),
+        encoding="utf-8",
+    )
+    _write_note(
+        atlas_root / "entities" / "maps.md",
+        note_id="maps",
+        title="maps",
+        note_type="entity",
+        body="# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    html = render_graph_html(payload)
+
+    assert payload["graph_config"]["theme_preset"] == "synaptic-wizard"
+    assert "synaptic-wizard" in payload["graph_config"]["available_theme_presets"]
+    assert payload["graph_config"]["theme_script_paths"] == ["./themes/synaptic-wizard.js"]
+    assert '<script src="./themes/synaptic-wizard.js"></script>' in html
 
 
 def test_graph_payload_assigns_stable_person_aliases_from_config(tmp_path) -> None:
