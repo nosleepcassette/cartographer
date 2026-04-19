@@ -419,6 +419,7 @@ HTML output is a self-contained visual graph with:
 - `astral` renders type-specific in-scene sigil nodes and halos instead of reusing the baseline geometric node bodies
 - emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
 - brighter semantic wires with explicit emotional topology in the detail pane
+- astral semantic wires now carry on-graph labels, directional markers, and aspect-flavored route treatment
 - local search by note title, id, type, or tag
 - category toggles, a stable scrollable folder list, session hiding, wire toggles, and a type browser
 - privacy modes (`off`, `names`, `names_relationships`, `full`) driven by Cart config, with stable person ordering, never-redact ids, and person-only redaction

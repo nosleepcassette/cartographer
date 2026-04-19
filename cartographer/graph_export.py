@@ -598,6 +598,20 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       text-shadow: 0 0 12px var(--label-glow);
     }
     .node-label.active { color: var(--accent); font-weight: 700; }
+    .edge-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      color: #f7ebc8;
+      font-size: 0.64rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      padding: 0.16rem 0.34rem;
+      border-radius: 999px;
+      background: rgba(10, 12, 22, 0.58);
+      border: 1px solid rgba(255, 232, 184, 0.12);
+      box-shadow: 0 0 16px rgba(0, 0, 0, 0.26);
+    }
     .eyebrow {
       color: var(--muted);
       font-size: 0.65rem;
@@ -1384,6 +1398,26 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       mixed: '#b988ff',
       neutral: '#a7b3c3',
     };
+    const ASTRAL_WIRE_ASPECTS = {
+      supports: '△',
+      grounds: '⚹',
+      intensifies_with: '☌',
+      contradicts: '□',
+      depends_on: '☍',
+      part_of: '⚺',
+      co_occurs_with: '⚺',
+      precedes: '↗',
+      follows: '↘',
+      relates_to_goal: '✦',
+      relates_to_person: '☽',
+      intention_outcome: '◌',
+      triggered_by: '☄',
+      resistance_against: '⟂',
+      'active-project': '✶',
+      'core-infrastructure': '✦',
+      qualifies: '◇',
+      relates_to: '·',
+    };
     const THEME_PRESETS = {
       baseline: {
         id: 'baseline',
@@ -1418,24 +1452,26 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       baseline: {
         person: '●',
         project: '■',
+        agent: '▣',
         goal: '◆',
-        entity: '●',
-        'agent-log': '▣',
         session: '◌',
         daily: '◐',
         learning: '◇',
-        note: '·',
+        index: '◈',
+        task: '▲',
+        cart: '·',
       },
       astral: {
         person: '☉',
-        project: '✦',
-        goal: '⌖',
-        entity: '✧',
-        'agent-log': '☿',
-        session: '☄',
-        daily: '☽',
-        learning: '♃',
-        note: '·',
+        project: '🜨',
+        agent: '🝩',
+        goal: '🜍',
+        session: '🜄',
+        daily: '🝰',
+        learning: '🜁',
+        index: '🜔',
+        task: '🜂',
+        cart: '🜳',
       },
     };
     const biomeColors = {
@@ -1449,27 +1485,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       learning: '#f3df9a',
       notes: '#93a7c9',
     };
-    const glyphScaleByType = {
+    const glyphScaleByFamily = {
       person: 3.15,
       project: 3.05,
+      agent: 3.05,
       goal: 3.1,
-      entity: 2.95,
-      'agent-log': 2.85,
       session: 2.9,
       daily: 2.95,
       learning: 2.9,
-      note: 2.75,
+      index: 2.95,
+      task: 2.95,
+      cart: 2.85,
     };
-    const haloScaleByType = {
+    const haloScaleByFamily = {
       person: 6.2,
       project: 5.8,
+      agent: 5.7,
       goal: 5.9,
-      entity: 5.5,
-      'agent-log': 5.3,
       session: 5.4,
       daily: 5.4,
       learning: 5.4,
-      note: 5.1,
+      index: 5.4,
+      task: 5.4,
+      cart: 5.2,
     };
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
@@ -1525,6 +1563,53 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     function resolveThemePreset(themeName) {
       return THEME_PRESETS[themeName] || THEME_PRESETS.baseline;
+    }
+
+    function glyphFamilyForType(typeName) {
+      if (typeName === 'person') {
+        return 'person';
+      }
+      if (typeName === 'project') {
+        return 'project';
+      }
+      if (typeName === 'goal') {
+        return 'goal';
+      }
+      if (typeName === 'daily') {
+        return 'daily';
+      }
+      if (typeName === 'session') {
+        return 'session';
+      }
+      if (typeName.startsWith('agent-')) {
+        return 'agent';
+      }
+      if (typeName === 'learning-topic' || typeName === 'reference' || typeName === 'ref' || typeName === 'skill-spec') {
+        return 'learning';
+      }
+      if (typeName === 'task-list' || typeName === 'task-intake') {
+        return 'task';
+      }
+      if (typeName === 'index' || typeName === 'registry' || typeName === 'master-summary') {
+        return 'index';
+      }
+      return 'cart';
+    }
+
+    function glyphForType(typeName) {
+      const family = glyphFamilyForType(typeName);
+      return activeTypeGlyphs[family] || activeTypeGlyphs.cart || '·';
+    }
+
+    function astralAspectForEdge(edge) {
+      return ASTRAL_WIRE_ASPECTS[edge.predicate] || '✧';
+    }
+
+    function wireLabelText(edge) {
+      if (activeTheme.id === 'astral') {
+        return `${astralAspectForEdge(edge)} ${edge.predicate.replaceAll('_', ' ')}`;
+      }
+      return edge.predicate.replaceAll('_', ' ');
     }
 
     const activeTheme = resolveThemePreset(graphConfig.theme_preset || 'baseline');
@@ -1689,6 +1774,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         ),
         line: null,
         material: null,
+        marker: null,
+        markerMaterial: null,
+        labelEl: null,
+        markerT: 0.62,
       }))
       .filter((edge) => edge.source && edge.target);
 
@@ -1854,6 +1943,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return haloTexture;
     }
 
+    let wireMarkerTexture = null;
+
+    function createWireMarkerTexture() {
+      if (wireMarkerTexture) {
+        return wireMarkerTexture;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 192;
+      canvas.height = 192;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(96, 96);
+      ctx.fillStyle = 'rgba(255,255,255,0.96)';
+      ctx.beginPath();
+      ctx.moveTo(-54, -26);
+      ctx.lineTo(56, 0);
+      ctx.lineTo(-54, 26);
+      ctx.closePath();
+      ctx.fill();
+      wireMarkerTexture = new THREE.CanvasTexture(canvas);
+      wireMarkerTexture.needsUpdate = true;
+      return wireMarkerTexture;
+    }
+
     function drawOrbitalTicks(ctx, radius, count, length, lineWidth = 8) {
       ctx.save();
       ctx.lineWidth = lineWidth;
@@ -1909,38 +2021,43 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.lineWidth = 8;
-      const glyph = activeTypeGlyphs[typeName] || '·';
+      const family = glyphFamilyForType(typeName);
+      const glyph = glyphForType(typeName);
 
-      switch (typeName) {
+      switch (family) {
         case 'person':
           ctx.beginPath();
           ctx.arc(0, 0, 72, 0, Math.PI * 2);
           ctx.stroke();
-          drawOrbitalTicks(ctx, 94, 8, 12, 7);
+          drawOrbitalTicks(ctx, 98, 12, 16, 7);
           break;
         case 'project':
-          drawDiamond(ctx, 92);
-          drawOrbitalTicks(ctx, 110, 4, 16, 7);
+          ctx.beginPath();
+          ctx.arc(0, 0, 82, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(-82, 0);
+          ctx.lineTo(82, 0);
+          ctx.moveTo(0, -82);
+          ctx.lineTo(0, 82);
+          ctx.stroke();
+          break;
+        case 'agent':
+          ctx.beginPath();
+          ctx.moveTo(-86, 78);
+          ctx.lineTo(-52, -84);
+          ctx.lineTo(52, -84);
+          ctx.lineTo(86, 78);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(-38, 18);
+          ctx.lineTo(38, 18);
+          ctx.stroke();
           break;
         case 'goal':
-          drawGoalReticle(ctx, 76);
-          break;
-        case 'entity':
-          ctx.beginPath();
-          ctx.arc(0, 0, 68, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(78, -38, 16, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(-62, 54, 11, 0, Math.PI * 2);
-          ctx.stroke();
-          break;
-        case 'agent-log':
-          drawOrbitalTicks(ctx, 96, 6, 18, 7);
-          ctx.beginPath();
-          ctx.arc(0, 0, 64, 0, Math.PI * 2);
-          ctx.stroke();
+          drawDiamond(ctx, 92);
+          drawGoalReticle(ctx, 56);
           break;
         case 'session':
           ctx.beginPath();
@@ -1971,9 +2088,24 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           ctx.lineTo(-24, 70);
           ctx.stroke();
           break;
-        default:
+        case 'task':
+          ctx.beginPath();
+          ctx.moveTo(0, -98);
+          ctx.lineTo(88, 64);
+          ctx.lineTo(-88, 64);
+          ctx.closePath();
+          ctx.stroke();
+          break;
+        case 'index':
+          drawOrbitalTicks(ctx, 96, 4, 22, 8);
           ctx.beginPath();
           ctx.arc(0, 0, 58, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        default:
+          drawDiamond(ctx, 88);
+          ctx.beginPath();
+          ctx.rect(-64, -64, 128, 128);
           ctx.stroke();
           break;
       }
@@ -2091,6 +2223,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           transparent: true,
           opacity: 0.18,
           depthWrite: false,
+          depthTest: false,
         });
         const halo = new THREE.Sprite(haloMaterial);
         halo.userData.node = node;
@@ -2104,6 +2237,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           transparent: true,
           opacity: 0.96,
           depthWrite: false,
+          depthTest: false,
         });
         const sigil = new THREE.Sprite(sigilMaterial);
         sigil.userData.node = node;
@@ -2131,6 +2265,24 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       scene.add(line);
       edge.line = line;
       edge.material = material;
+      if (edge.isWire) {
+        const markerMaterial = new THREE.SpriteMaterial({
+          map: createWireMarkerTexture(),
+          color: edge.baseColor.clone(),
+          transparent: true,
+          opacity: activeTheme.id === 'astral' ? 0.58 : 0.36,
+          depthWrite: false,
+          depthTest: false,
+        });
+        const marker = new THREE.Sprite(markerMaterial);
+        marker.userData.edge = edge;
+        scene.add(marker);
+        edge.marker = marker;
+        edge.markerMaterial = markerMaterial;
+        edge.labelEl = document.createElement('div');
+        edge.labelEl.className = 'edge-label';
+        labelLayer.appendChild(edge.labelEl);
+      }
     }
 
     const raycaster = new THREE.Raycaster();
@@ -2350,7 +2502,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (!activeTheme.labelSigils) {
         return text;
       }
-      return `${activeTypeGlyphs[node.type] || '·'} ${text}`;
+      return `${glyphForType(node.type)} ${text}`;
     }
 
     function metadataChipValue(node, value) {
@@ -2555,6 +2707,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         positions[5] = edge.target.position.z;
         edge.line.geometry.attributes.position.needsUpdate = true;
         edge.line.geometry.computeBoundingSphere();
+        if (edge.marker) {
+          const targetPoint = edge.source.position.clone().lerp(edge.target.position, edge.markerT);
+          edge.marker.position.copy(targetPoint);
+          const markerScale = edge.isWire ? (activeTheme.id === 'astral' ? 16 : 12) : 10;
+          edge.marker.scale.set(markerScale, markerScale, 1);
+        }
       }
       updateBiomes();
       updateHomeCamera();
@@ -3147,6 +3305,21 @@ def render_graph_html(payload: dict[str, Any]) -> str:
               ? (edge.isWire ? (activeTheme.id === 'astral' ? 0.84 : 0.76) : 0.28)
               : (activeTheme.id === 'astral' ? (edge.isWire ? 0.18 : 0.12) : 0.12);
         edge.material.opacity = edge.renderOpacity;
+        if (edge.marker && edge.markerMaterial) {
+          edge.marker.visible = visible;
+          edge.markerMaterial.color.copy(
+            connected
+              ? edge.baseColor.clone().lerp(new THREE.Color('#fff6d8'), 0.42)
+              : edge.baseColor
+          );
+          edge.markerMaterial.opacity = !visible ? 0 : (
+            connected
+              ? 0.96
+              : matches
+                ? (activeTheme.id === 'astral' ? 0.52 : 0.34)
+                : (activeTheme.id === 'astral' ? 0.16 : 0.1)
+          );
+        }
       }
 
       for (const [folder, biome] of biomeObjects.entries()) {
@@ -3185,6 +3358,34 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         node.labelEl.className = `node-label${node === selectedNode ? ' active' : ''}`;
         node.labelEl.style.left = `${(projected.x * 0.5 + 0.5) * 100}%`;
         node.labelEl.style.top = `${(-projected.y * 0.5 + 0.5) * 100}%`;
+      }
+
+      let edgeLabelsShown = 0;
+      for (const edge of edges) {
+        if (!edge.labelEl) {
+          continue;
+        }
+        const connected = !!selectedNode && (edge.source === selectedNode || edge.target === selectedNode);
+        const shouldShow = edge.isWire
+          && state.showWires
+          && edge.line.visible
+          && (connected || (state.showLabels && edge.renderOpacity >= 0.22))
+          && edgeLabelsShown < 90;
+        if (!shouldShow) {
+          edge.labelEl.style.display = 'none';
+          continue;
+        }
+        const midpoint = edge.source.position.clone().lerp(edge.target.position, 0.5).project(camera);
+        if (midpoint.z < -1 || midpoint.z > 1 || Math.abs(midpoint.x) > 1.1 || Math.abs(midpoint.y) > 1.1) {
+          edge.labelEl.style.display = 'none';
+          continue;
+        }
+        edge.labelEl.style.display = 'block';
+        edge.labelEl.textContent = wireLabelText(edge);
+        edge.labelEl.style.left = `${(midpoint.x * 0.5 + 0.5) * 100}%`;
+        edge.labelEl.style.top = `${(-midpoint.y * 0.5 + 0.5) * 100}%`;
+        edge.labelEl.style.opacity = connected ? '1' : '0.82';
+        edgeLabelsShown += 1;
       }
     }
 
@@ -3256,7 +3457,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         main.type = 'button';
         main.className = 'legend-main';
         if (activeTheme.legendStyle === 'glyph') {
-          main.innerHTML = `<span class="glyph-swatch" style="color:${typeColors[typeName] || '#b6c2cf'}">${activeTypeGlyphs[typeName] || '✧'}</span><span>${typeName}</span>`;
+          main.innerHTML = `<span class="glyph-swatch" style="color:${typeColors[typeName] || '#b6c2cf'}">${glyphForType(typeName)}</span><span>${typeName}</span>`;
         } else {
           main.innerHTML = `<span class="swatch" style="background:${typeColors[typeName] || '#b6c2cf'}"></span><span>${typeName}</span>`;
         }
@@ -3626,6 +3827,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         }
         if (selectedNode && (edge.source === selectedNode || edge.target === selectedNode)) {
           edge.material.opacity = Math.min(1, (edge.renderOpacity || edge.material.opacity) + 0.08 + Math.sin(now * 5.5) * 0.04);
+        }
+        if (edge.marker) {
+          const connected = !!selectedNode && (edge.source === selectedNode || edge.target === selectedNode);
+          const travel = connected
+            ? 0.56 + ((Math.sin(now * 3.6 + edge.source.index * 0.31) + 1) * 0.5) * 0.22
+            : 0.62;
+          const markerPos = edge.source.position.clone().lerp(edge.target.position, travel);
+          edge.marker.position.copy(markerPos);
+          const markerScale = connected ? 20 : (activeTheme.id === 'astral' ? 16 : 12);
+          edge.marker.scale.set(markerScale, markerScale, 1);
         }
       }
       renderer.render(scene, camera);
