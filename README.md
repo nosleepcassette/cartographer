@@ -1,8 +1,6 @@
 # cartographer
 
-<p align="center">
-  <video src="media/cartographer-github-1.25x-render.webm" width="800" autoplay loop muted playsinline></video>
-</p>
+![Cartographer Demo](media/demo.gif)
 
 > Your agents should know how you're actually doing — and remember everything they learn.
 
