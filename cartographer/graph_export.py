@@ -2313,63 +2313,85 @@ __THEME_SCRIPT_TAGS__
         ctx.lineCap = 'round';
         ctx.lineWidth = 8;
         const family = glyphFamilyForType(typeName);
+        const themeId = activeTheme.id;
 
-        switch (family) {
-          case 'person':
-            ctx.beginPath();
-            ctx.arc(0, 0, 72, 0, Math.PI * 2);
-            ctx.stroke();
-            drawOrbitalTicks(ctx, 98, 12, 16, 7);
-            ctx.beginPath();
-            ctx.arc(0, 0, 18, 0, Math.PI * 2);
-            ctx.fill();
-            break;
-          case 'project':
-            ctx.beginPath();
-            ctx.arc(0, 0, 82, 0, Math.PI * 2);
-            ctx.stroke();
-            drawCross(ctx, 72);
-            break;
-          case 'agent':
-            drawCrucible(ctx);
-            break;
-          case 'goal':
-            drawDiamond(ctx, 92);
-            drawGoalReticle(ctx, 56);
-            break;
-          case 'session':
-            drawTriangle(ctx, 88, true);
-            ctx.beginPath();
-            ctx.moveTo(0, -84);
-            ctx.lineTo(0, -24);
-            ctx.stroke();
-            break;
-          case 'daily':
-            drawDailyMark(ctx);
-            break;
-          case 'learning':
-            drawTriangle(ctx, 88, false);
-            ctx.beginPath();
-            ctx.moveTo(-58, 18);
-            ctx.lineTo(58, 18);
-            ctx.stroke();
-            break;
-          case 'task':
-            drawTriangle(ctx, 94, false);
-            break;
-          case 'index':
-            drawOrbitalTicks(ctx, 96, 4, 22, 8);
-            ctx.beginPath();
-            ctx.arc(0, 0, 58, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(-42, 0);
-            ctx.lineTo(42, 0);
-            ctx.stroke();
-            break;
-          default:
+        if (themeId === 'astral') {
+          // ── ASTRAL: hand-drawn celestial sigils ──────────────────────────
+          switch (family) {
+            case 'person':
+              ctx.beginPath();
+              ctx.arc(0, 0, 72, 0, Math.PI * 2);
+              ctx.stroke();
+              drawOrbitalTicks(ctx, 98, 12, 16, 7);
+              ctx.beginPath();
+              ctx.arc(0, 0, 18, 0, Math.PI * 2);
+              ctx.fill();
+              break;
+            case 'project':
+              ctx.beginPath();
+              ctx.arc(0, 0, 82, 0, Math.PI * 2);
+              ctx.stroke();
+              drawCross(ctx, 72);
+              break;
+            case 'agent':
+              drawCrucible(ctx);
+              break;
+            case 'goal':
+              drawDiamond(ctx, 92);
+              drawGoalReticle(ctx, 56);
+              break;
+            case 'session':
+              drawTriangle(ctx, 88, true);
+              ctx.beginPath();
+              ctx.moveTo(0, -84);
+              ctx.lineTo(0, -24);
+              ctx.stroke();
+              break;
+            case 'daily':
+              drawDailyMark(ctx);
+              break;
+            case 'learning':
+              drawTriangle(ctx, 88, false);
+              ctx.beginPath();
+              ctx.moveTo(-58, 18);
+              ctx.lineTo(58, 18);
+              ctx.stroke();
+              break;
+            case 'task':
+              drawTriangle(ctx, 94, false);
+              break;
+            case 'index':
+              drawOrbitalTicks(ctx, 96, 4, 22, 8);
+              ctx.beginPath();
+              ctx.arc(0, 0, 58, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.beginPath();
+              ctx.moveTo(-42, 0);
+              ctx.lineTo(42, 0);
+              ctx.stroke();
+              break;
+            default:
+              drawMetalMark(ctx);
+              break;
+          }
+        } else if (themeId === 'synaptic-vesper') {
+          // ── VESPER: signal-crest sigils from theme module ─────────────────
+          const drawFn = window.__VESPER_SIGILS__?.drawByFamily?.[family];
+          if (drawFn) {
+            ctx.lineWidth = 9;
+            drawFn(ctx);
+          } else {
             drawMetalMark(ctx);
-            break;
+          }
+        } else {
+          // ── UNICODE GLYPH THEMES (cassette, wizard, etc.) ─────────────────
+          // Render the Unicode character defined in the theme's glyphs map.
+          const glyph = activeTypeGlyphs[family] || activeTheme.folderMark || '•';
+          ctx.font = 'bold 128px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.fillText(glyph, 0, 6);
         }
       }
 
