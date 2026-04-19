@@ -1,7 +1,7 @@
 # cartographer
 
 <p align="center">
-  <video src="media/cartographer-github-1.25x.webm" width="800" autoplay loop muted playsinline></video>
+  <video src="https://github.com/nosleepcassette/cartographer/raw/refs/heads/main/media/cartographer-github-1.25x.webm" width="800" autoplay loop muted playsinline></video>
 </p>
 
 > Your agents should know how you're actually doing — and remember everything they learn.
