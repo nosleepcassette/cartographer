@@ -50,7 +50,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "export_dir": "~/.mapsOS/exports",
     },
     "graph": {
-        "theme_preset": "antiquarian",
+        "theme_preset": "astral",
         "show_people": True,
         "always_visible_people": ["maps", "cassette"],
         "visible_people": [],

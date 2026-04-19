@@ -81,7 +81,7 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     html = output_path.read_text(encoding="utf-8")
     assert "atlasGraphPayload" in html
-    assert "Atlas Constellation 3D" in html
+    assert "Astral Survey" in html
     assert "show-sessions" in html
     assert "show-all-types" in html
     assert "export-png" in html
@@ -351,7 +351,76 @@ def test_graph_payload_embeds_graph_config_defaults(tmp_path) -> None:
     payload = load_graph_payload(atlas_root)
     graph_config = payload["graph_config"]
 
-    assert graph_config["theme_preset"] == "antiquarian"
+    assert graph_config["theme_preset"] == "astral"
+    assert graph_config["privacy"]["mode"] == "off"
+    assert graph_config["privacy"]["person_order"] == ["maps", "maggie", "sarah"]
+    assert graph_config["always_visible_people"] == ["maps", "cassette"]
+
+
+def test_graph_payload_assigns_stable_person_aliases_from_config(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "maps.md",
+        (
+            "id: maps\n"
+            "title: maps\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# maps\n",
+    )
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "maggie.md",
+        (
+            "id: maggie\n"
+            "title: Maggie\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# Maggie\n",
+    )
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "sarah.md",
+        (
+            "id: sarah\n"
+            "title: Sarah\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# Sarah\n",
+    )
+    _write_note_with_frontmatter(
+        atlas_root / "entities" / "killian.md",
+        (
+            "id: killian\n"
+            "title: Killian\n"
+            "type: entity\n"
+            "entity_type: person\n"
+            "created: '2026-04-18'\n"
+            "modified: '2026-04-18'\n"
+        ),
+        "# Killian\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+    aliases = {
+        node["id"]: (node["person_order_index"], node["privacy_alias"])
+        for node in payload["nodes"]
+        if node["type"] == "person"
+    }
+    graph_config = payload["graph_config"]
+
+    assert aliases["maps"] == (1, "Person 1")
+    assert aliases["maggie"] == (2, "Person 2")
+    assert aliases["sarah"] == (3, "Person 3")
     assert graph_config["always_visible_people"] == ["maps", "cassette"]
     assert graph_config["privacy"]["mode"] == "off"
     assert graph_config["privacy"]["person_order"] == ["maps", "maggie", "sarah"]

@@ -57,10 +57,10 @@ def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     if not isinstance(privacy, dict):
         privacy = {}
     mode = str(privacy.get("mode") or "off").strip().lower()
-    if mode not in {"off", "labels", "relationships", "full"}:
+    if mode not in {"off", "names", "names_relationships", "full"}:
         mode = "off"
     return {
-        "theme_preset": str(graph.get("theme_preset") or "antiquarian").strip().lower(),
+        "theme_preset": str(graph.get("theme_preset") or "astral").strip().lower(),
         "show_people": bool(graph.get("show_people", True)),
         "always_visible_people": _string_list(graph.get("always_visible_people")),
         "visible_people": _string_list(graph.get("visible_people")),
@@ -425,10 +425,32 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
                     * AVOIDANCE_RISK_SCALE.get(str(avoidance_risk), 1.0),
                     3,
                 ),
+                "person_order_index": None,
+                "privacy_alias": None,
                 "preview": _note_preview(Path(raw_path)) if raw_path else "",
                 "is_session": note_type in SESSION_NOTE_TYPES,
             }
         )
+
+    configured_person_order = [
+        str(value).strip().lower()
+        for value in graph_config.get("privacy", {}).get("person_order", [])
+        if str(value).strip()
+    ]
+    configured_person_rank = {
+        note_id: index for index, note_id in enumerate(configured_person_order)
+    }
+    ordered_people = sorted(
+        (node for node in nodes if node["type"] == "person"),
+        key=lambda node: (
+            configured_person_rank.get(str(node["id"]).lower(), 10_000),
+            str(node["title"]).lower(),
+            str(node["id"]).lower(),
+        ),
+    )
+    for index, node in enumerate(ordered_people, start=1):
+        node["person_order_index"] = index
+        node["privacy_alias"] = f"Person {index}"
 
     return {
         "generated": date.today().isoformat(),
@@ -460,29 +482,32 @@ def render_graph_html(payload: dict[str, Any]) -> str:
   <title>atlas graph</title>
   <style>
     :root {
-      --bg: #06070b;
-      --panel: rgba(14, 17, 27, 0.94);
-      --panel-border: rgba(237, 203, 128, 0.2);
-      --text: #f6efe1;
-      --muted: #b7ab99;
-      --accent: #edcb80;
-      --surface: rgba(255, 255, 255, 0.05);
-      --shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+      --bg: #060913;
+      --panel: rgba(10, 13, 23, 0.9);
+      --panel-border: rgba(132, 166, 255, 0.14);
+      --text: #eef3ff;
+      --muted: #9aa7c6;
+      --accent: #9fd2ff;
+      --accent-warm: #efd08f;
+      --surface: rgba(255, 255, 255, 0.045);
+      --surface-strong: rgba(255, 255, 255, 0.075);
+      --shadow: 0 26px 80px rgba(0, 0, 0, 0.45);
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; }
     body {
       background:
-        radial-gradient(circle at top left, rgba(237, 203, 128, 0.13), transparent 28rem),
-        radial-gradient(circle at bottom right, rgba(110, 180, 255, 0.12), transparent 30rem),
-        linear-gradient(180deg, #05060a 0%, #0b0f17 52%, #101522 100%);
+        radial-gradient(circle at 18% 18%, rgba(115, 141, 255, 0.18), transparent 24rem),
+        radial-gradient(circle at 78% 20%, rgba(80, 220, 255, 0.11), transparent 30rem),
+        radial-gradient(circle at 55% 82%, rgba(237, 208, 143, 0.09), transparent 24rem),
+        linear-gradient(180deg, #03050d 0%, #070b16 42%, #0a1020 100%);
       color: var(--text);
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
       overflow: hidden;
     }
     .app {
       display: grid;
-      grid-template-columns: 17rem 1fr 18rem;
+      grid-template-columns: 14.5rem 1fr 18.5rem;
       gap: 0.5rem;
       height: 100vh;
       padding: 0.5rem;
@@ -502,13 +527,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       padding: 0.5rem;
       overflow: hidden;
     }
+    .sidebar-scroll {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      gap: 0.38rem;
+      padding-right: 0.12rem;
+      padding-bottom: 0.2rem;
+      overscroll-behavior: contain;
+    }
+    .sidebar-footer {
+      display: grid;
+      gap: 0.4rem;
+      padding-top: 0.2rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
     .canvas-panel {
       position: relative;
       overflow: hidden;
       background:
-        radial-gradient(circle at top, rgba(255, 244, 214, 0.08), transparent 44%),
-        radial-gradient(circle at 18% 24%, rgba(92, 156, 255, 0.1), transparent 30%),
-        linear-gradient(180deg, rgba(8, 10, 16, 0.98), rgba(9, 12, 18, 0.9));
+        radial-gradient(circle at 22% 18%, rgba(114, 137, 255, 0.12), transparent 28%),
+        radial-gradient(circle at 74% 22%, rgba(88, 227, 255, 0.09), transparent 32%),
+        radial-gradient(circle at 58% 74%, rgba(239, 208, 143, 0.07), transparent 28%),
+        linear-gradient(180deg, rgba(5, 7, 13, 0.98), rgba(8, 12, 22, 0.95));
     }
     #graph-canvas { position: absolute; inset: 0; }
     #graph-canvas canvas { display: block; width: 100%; height: 100%; }
@@ -537,32 +578,35 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     h1, h2, p { margin: 0; }
     h1 {
       font-family: "Baskerville", "Iowan Old Style", serif;
-      font-size: 1.3rem;
+      font-size: 1.34rem;
       line-height: 1;
-      color: var(--accent);
+      color: var(--accent-warm);
     }
     h2 { font-size: 0.95rem; line-height: 1.05; }
     .subtle { color: var(--muted); font-size: 0.75rem; line-height: 1.25; }
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.5rem;
+      gap: 0.35rem;
     }
     .stat, .card {
-      padding: 0.4rem;
-      border-radius: 0.7rem;
+      padding: 0.42rem;
+      border-radius: 0.8rem;
       background: var(--surface);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
+    .card.compact-card {
+      padding: 0.36rem 0.4rem;
+    }
     .stat strong {
       display: block;
-      color: var(--accent);
-      font-size: 0.95rem;
+      color: var(--accent-warm);
+      font-size: 0.9rem;
     }
-    .stat { font-size: 0.75rem; }
+    .stat { font-size: 0.72rem; }
     details {
-      padding: 0.4rem;
-      border-radius: 0.7rem;
+      padding: 0.42rem;
+      border-radius: 0.8rem;
       background: var(--surface);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
@@ -617,43 +661,66 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       flex-wrap: wrap;
       gap: 0.35rem;
     }
+    .button-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.35rem;
+    }
+    .mini-toggle-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.3rem;
+    }
     .toggle-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 0.35rem;
     }
     button, .button-link {
-      border: 0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 999px;
-      padding: 0.4rem 0.65rem;
-      background: linear-gradient(135deg, rgba(237, 203, 128, 0.32), rgba(255, 159, 90, 0.28));
+      padding: 0.38rem 0.62rem;
+      background: rgba(255, 255, 255, 0.045);
       color: var(--text);
       cursor: pointer;
       text-decoration: none;
       font: inherit;
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
-    button:hover, .button-link:hover { filter: brightness(1.08); }
+    button:hover, .button-link:hover {
+      border-color: rgba(159, 210, 255, 0.34);
+      background: rgba(159, 210, 255, 0.08);
+    }
+    button.compact, .button-link.compact {
+      padding: 0.28rem 0.5rem;
+      font-size: 0.68rem;
+    }
     label.toggle {
       display: inline-flex;
       align-items: center;
-      gap: 0.3rem;
-      padding: 0.35rem 0.5rem;
-      border-radius: 0.7rem;
+      justify-content: center;
+      gap: 0.28rem;
+      padding: 0.3rem 0.45rem;
+      border-radius: 999px;
       background: rgba(255, 255, 255, 0.03);
       color: var(--muted);
-      font-size: 0.75rem;
+      font-size: 0.68rem;
       border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    label.toggle.active {
+      color: var(--text);
+      border-color: rgba(159, 210, 255, 0.22);
+      background: rgba(159, 210, 255, 0.08);
     }
     label.toggle input { accent-color: var(--accent); }
     .legend {
       display: grid;
       gap: 0.3rem;
-      max-height: 12rem;
+      max-height: 11rem;
       overflow: auto;
       padding-right: 0.15rem;
     }
@@ -698,6 +765,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       display: inline-block;
       box-shadow: 0 0 10px currentColor;
     }
+    .glyph-swatch {
+      width: 1rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", serif;
+      font-size: 0.9rem;
+      color: var(--accent-warm);
+      text-shadow: 0 0 10px rgba(159, 210, 255, 0.28);
+    }
     .mono {
       font-family: "SFMono-Regular", "Menlo", monospace;
       font-size: 0.72rem;
@@ -736,6 +813,43 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       opacity: 0.48;
       filter: saturate(0.72);
     }
+    .folder-list {
+      display: grid;
+      gap: 0.28rem;
+      max-height: min(16rem, 34vh);
+      overflow: auto;
+      padding-right: 0.1rem;
+      overscroll-behavior: contain;
+    }
+    .folder-row {
+      width: 100%;
+      border-radius: 0.72rem;
+      padding: 0.34rem 0.48rem;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.025);
+    }
+    .folder-row.active {
+      border-color: rgba(159, 210, 255, 0.2);
+      background: rgba(159, 210, 255, 0.07);
+    }
+    .folder-row.inactive {
+      opacity: 0.5;
+    }
+    .folder-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      min-width: 0;
+    }
+    .folder-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .folder-count {
+      color: var(--muted);
+      font-size: 0.68rem;
+    }
     .list {
       list-style: none;
       margin: 0;
@@ -759,10 +873,28 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
     .list strong { display: block; line-height: 1.3; }
     .detail-scroll {
+      min-height: 0;
       overflow: auto;
       padding-right: 0.12rem;
       display: grid;
       gap: 0.4rem;
+      overscroll-behavior: contain;
+    }
+    .detail-header {
+      display: grid;
+      gap: 0.2rem;
+      min-width: 0;
+      padding-bottom: 0.15rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    #detail-title {
+      overflow-wrap: anywhere;
+      line-height: 1.1;
+    }
+    #detail-subtitle {
+      overflow-wrap: anywhere;
+      line-height: 1.35;
+      font-size: 0.7rem;
     }
     .preview {
       color: #f3ead9;
@@ -897,6 +1029,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       flex-wrap: wrap;
       font-size: 0.72rem;
     }
+    .panel-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
     .stage-toolbar {
       position: absolute;
       top: 0.6rem;
@@ -907,25 +1046,30 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       align-items: center;
       justify-content: space-between;
       gap: 0.7rem;
-      padding: 0.45rem 0.6rem;
+      padding: 0.42rem 0.56rem;
       border-radius: 999px;
-      background: rgba(8, 10, 16, 0.8);
+      background: rgba(7, 10, 18, 0.72);
       border: 1px solid rgba(255, 255, 255, 0.09);
       backdrop-filter: blur(12px);
     }
-    .stage-toolbar .keys {
+    .stage-toolbar .survey {
       display: inline-flex;
-      flex-wrap: wrap;
-      gap: 0.55rem;
-      color: var(--muted);
-      font-size: 0.7rem;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--accent-warm);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
     .stage-toolbar .actions {
       display: inline-flex;
       align-items: center;
       gap: 0.45rem;
+      min-width: 0;
     }
-    .stage-toolbar .status { color: var(--accent); font-size: 0.72rem; }
+    .stage-toolbar .status {
+      display: none;
+    }
     #help-overlay {
       position: absolute;
       right: 1rem;
@@ -974,119 +1118,122 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         align-items: flex-start;
         flex-direction: column;
       }
+      .button-row,
+      .mini-toggle-row {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
   <div class="app">
     <aside class="panel sidebar">
-      <div>
-        <div class="eyebrow">atlas visual graph</div>
-        <h1>Atlas Constellation 3D</h1>
-        <p class="subtle">Deterministic clusters, semantic wires, and camera-state links you can share.</p>
-      </div>
-
-      <div class="stat-grid">
-        <div class="stat"><strong id="node-count"></strong><span class="label">nodes</span></div>
-        <div class="stat"><strong id="edge-count"></strong><span class="label">edges</span></div>
-        <div class="stat"><strong id="type-count"></strong><span class="label">types</span></div>
-        <div class="stat"><strong id="match-count"></strong><span class="label">matches</span></div>
-      </div>
-
-      <div class="search-wrap">
-        <label class="eyebrow" for="search">Search</label>
-        <input id="search" type="search" placeholder="project, person, tag, note title">
-      </div>
-
-      <div class="search-wrap">
-        <button id="reset-layout" type="button">re-layout</button>
-        <button id="fit-view" type="button">fit view</button>
-        <button id="show-all-types" type="button">reset visibility</button>
-      </div>
-
-      <div class="card">
-        <div class="detail-meta">
-          <div class="eyebrow">Folders</div>
-          <button id="show-all-folders" type="button">show all folders</button>
+      <div class="sidebar-scroll">
+        <div>
+          <div class="eyebrow">atlas visual graph</div>
+          <h1>Astral Survey</h1>
+          <p class="subtle">Memory rendered as a navigable star chart: sectors, routes, beacons, and hidden currents.</p>
         </div>
-        <div class="chips" id="folder-chip-list"></div>
-      </div>
 
-      <div class="controls">
-        <button id="export-png" type="button">export PNG</button>
-        <button id="export-json" type="button">export JSON</button>
-        <button id="copy-link" type="button">copy link</button>
-      </div>
-
-      <div class="toggle-grid">
-        <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
-        <label class="toggle"><input id="show-sessions" type="checkbox"> show sessions</label>
-        <label class="toggle"><input id="show-wires" type="checkbox" checked> show semantic wires</label>
-      </div>
-
-      <details class="card">
-        <summary class="eyebrow">privacy</summary>
-        <div class="search-wrap" style="margin-top: 0.4rem;">
-          <label class="eyebrow" for="privacy-mode">Mode</label>
-          <select id="privacy-mode">
-            <option value="off">off</option>
-            <option value="labels">labels only</option>
-            <option value="relationships">labels + names + relationship info</option>
-            <option value="full">full redact</option>
-          </select>
+        <div class="search-wrap">
+          <label class="eyebrow" for="search">Search</label>
+          <input id="search" type="search" placeholder="project, person, tag, note title">
         </div>
-        <p class="subtle">`maps` and `cassette` always stay visible.</p>
-      </details>
 
-      <div class="card">
-        <div class="eyebrow">Type Legend</div>
-        <div class="legend" id="legend"></div>
+        <div class="button-row">
+          <button id="reset-layout" type="button" class="compact">re-layout</button>
+          <button id="fit-view" type="button" class="compact">fit view</button>
+          <button id="show-all-types" type="button" class="compact">reset</button>
+        </div>
+
+        <div class="card">
+          <div class="panel-summary">
+            <div class="eyebrow">Folders</div>
+            <button id="show-all-folders" type="button" class="compact">show all</button>
+          </div>
+          <div class="folder-list" id="folder-chip-list"></div>
+        </div>
+
+        <details class="card compact-card" open>
+          <summary class="eyebrow">privacy</summary>
+          <div class="search-wrap" style="margin-top: 0.35rem;">
+            <label class="eyebrow" for="privacy-mode">Mode</label>
+            <select id="privacy-mode">
+              <option value="off">off</option>
+              <option value="names">redact names</option>
+              <option value="names_relationships">redact names + relationship info</option>
+              <option value="full">full redact</option>
+            </select>
+          </div>
+          <p class="subtle">Only personal identifiers are obscured. `maps` and `cassette` always stay visible.</p>
+        </details>
+
+        <details class="card compact-card">
+          <summary class="eyebrow">more controls</summary>
+          <div style="display: grid; gap: 0.4rem; margin-top: 0.35rem;">
+            <div>
+              <div class="eyebrow" style="margin-bottom: 0.28rem;">Type Legend</div>
+              <div class="legend" id="legend"></div>
+            </div>
+            <div>
+              <div class="eyebrow" style="margin-bottom: 0.28rem;">Type Browser</div>
+              <div class="mono" id="type-browser-title">Click a type to browse its nodes.</div>
+              <ul class="list" id="type-node-list"></ul>
+            </div>
+            <div>
+              <div class="eyebrow" style="margin-bottom: 0.28rem;">Graph Stats</div>
+              <div class="stat-grid">
+                <div class="stat"><strong id="node-count"></strong><span class="label">nodes</span></div>
+                <div class="stat"><strong id="edge-count"></strong><span class="label">edges</span></div>
+                <div class="stat"><strong id="type-count"></strong><span class="label">types</span></div>
+                <div class="stat"><strong id="match-count"></strong><span class="label">matches</span></div>
+              </div>
+              <div class="mono subtle" id="atlas-root" style="margin-top: 0.45rem;"></div>
+            </div>
+          </div>
+        </details>
       </div>
 
-      <div class="card">
-        <div class="eyebrow">Type Browser</div>
-        <div class="mono" id="type-browser-title">Click a type to browse its nodes.</div>
-        <ul class="list" id="type-node-list"></ul>
-      </div>
+      <div class="sidebar-footer">
+        <div class="mini-toggle-row">
+          <label class="toggle active"><input id="show-wires" type="checkbox" checked> wires</label>
+          <label class="toggle"><input id="show-sessions" type="checkbox"> sessions</label>
+          <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
+        </div>
 
-      <div class="card">
-        <div class="eyebrow">Atlas Root</div>
-        <div class="mono" id="atlas-root"></div>
+        <div class="button-row">
+          <button id="export-png" type="button" class="compact">png</button>
+          <button id="export-json" type="button" class="compact">json</button>
+          <button id="copy-link" type="button" class="compact">link</button>
+        </div>
       </div>
     </aside>
 
     <main class="panel canvas-panel">
       <div class="stage-toolbar">
-        <div class="keys">
-          <span>drag orbit</span>
-          <span>wheel zoom</span>
-          <span>↑/↓ group</span>
-          <span>←/→ lateral</span>
-          <span>j/k cycle</span>
-          <span>/ search</span>
-          <span>s sessions</span>
-          <span>w wires</span>
-          <span>h help</span>
+        <div class="survey">
+          <span>✦</span>
+          <span>Astral Survey</span>
         </div>
         <div class="actions">
           <div class="status" id="selection-status">awaiting selection</div>
-          <button id="toggle-help" type="button">help</button>
+          <button id="toggle-help" type="button" class="compact" aria-expanded="false">help</button>
         </div>
       </div>
 
       <div id="help-overlay" hidden>
         <div id="help-overlay-header">
           <div class="eyebrow">Keybindings</div>
-          <button id="close-help" type="button">close</button>
+          <button id="close-help" type="button" class="compact">close</button>
         </div>
         <ul>
           <li><code>/</code> focus search.</li>
-          <li><code>↑</code> / <code>↓</code> move inside the current structural group.</li>
-          <li><code>←</code> / <code>→</code> move across adjacent structural groups.</li>
+          <li><code>←</code> / <code>→</code> move inside the current structural group.</li>
+          <li><code>↑</code> / <code>↓</code> move across adjacent structural groups.</li>
           <li><code>j</code> / <code>k</code> cycle visible nodes.</li>
           <li><code>s</code> hide or reveal session notes. Preference is remembered locally.</li>
           <li><code>w</code> toggle semantic wires while keeping wikilinks visible.</li>
-          <li><code>h</code> / <code>?</code> toggle help, <code>Esc</code> closes overlays.</li>
+          <li>Use the <code>help</code> button or <code>F1</code>. <code>Esc</code> closes overlays.</li>
           <li><code>r</code> reset camera, <code>0</code> clear hidden types and folders.</li>
           <li><code>Enter</code> or <code>Space</code> re-center on the selected node.</li>
         </ul>
@@ -1097,7 +1244,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     </main>
 
     <aside class="panel detail">
-      <div>
+      <div class="detail-header">
         <div class="eyebrow">Selected Note</div>
         <h2 id="detail-title">Nothing selected</h2>
         <p class="subtle" id="detail-subtitle">Click a node to inspect it.</p>
@@ -1203,6 +1350,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       mixed: '#b988ff',
       neutral: '#a7b3c3',
     };
+    const typeGlyphs = {
+      person: '☉',
+      project: '✦',
+      goal: '⌖',
+      entity: '✧',
+      'agent-log': '☿',
+      session: '☄',
+      daily: '☽',
+      learning: '♃',
+      note: '·',
+    };
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
     const LABEL_STORAGE_KEY = 'atlas.graph.showLabels';
@@ -1214,8 +1372,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const ALWAYS_VISIBLE_PEOPLE = new Set((graphConfig.always_visible_people || []).map((value) => String(value).toLowerCase()));
     const VISIBLE_PEOPLE = new Set((graphConfig.visible_people || []).map((value) => String(value).toLowerCase()));
     const HIDDEN_PEOPLE = new Set((graphConfig.hidden_people || []).map((value) => String(value).toLowerCase()));
-    const CONFIGURED_PERSON_ORDER = (privacyConfig.person_order || []).map((value) => String(value).toLowerCase());
-    const PRIVACY_MODES = new Set(['off', 'labels', 'relationships', 'full']);
+    const PRIVACY_MODES = new Set(['off', 'names', 'names_relationships', 'full']);
     const DEFAULT_PRIVACY_MODE = PRIVACY_MODES.has(privacyConfig.mode) ? privacyConfig.mode : 'off';
 
     const searchInput = document.getElementById('search');
@@ -1312,6 +1469,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     showSessionsToggle.checked = state.showSessions;
     showWiresToggle.checked = state.showWires;
 
+    function syncCompactToggles() {
+      for (const input of [showWiresToggle, showSessionsToggle, showLabelsToggle]) {
+        input.closest('.toggle')?.classList.toggle('active', input.checked);
+      }
+    }
+
+    syncCompactToggles();
+
     function sortNodes(items) {
       return [...items].sort((a, b) => {
         if (a.type !== b.type) {
@@ -1355,18 +1520,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const folderNames = Array.from(new Set(nodes.map((node) => node.folder).filter(Boolean))).sort((a, b) => a.localeCompare(b));
     const folderOrder = new Map(folderNames.map((folder, index) => [folder, index]));
-    const configuredPersonRank = new Map(CONFIGURED_PERSON_ORDER.map((id, index) => [id, index]));
     const orderedPeople = nodes
       .filter((node) => node.type === 'person')
       .sort((a, b) => {
-        const aRank = configuredPersonRank.has(a.id.toLowerCase()) ? configuredPersonRank.get(a.id.toLowerCase()) : Number.MAX_SAFE_INTEGER;
-        const bRank = configuredPersonRank.has(b.id.toLowerCase()) ? configuredPersonRank.get(b.id.toLowerCase()) : Number.MAX_SAFE_INTEGER;
+        const aRank = Number.isFinite(a.person_order_index) ? a.person_order_index : Number.MAX_SAFE_INTEGER;
+        const bRank = Number.isFinite(b.person_order_index) ? b.person_order_index : Number.MAX_SAFE_INTEGER;
         if (aRank !== bRank) {
           return aRank - bRank;
         }
         return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
       });
-    const personAliasById = new Map(orderedPeople.map((node, index) => [node.id, `Person ${index + 1}`]));
+    const personAliasById = new Map(orderedPeople.map((node, index) => [node.id, node.privacy_alias || `Person ${index + 1}`]));
     const redactionTerms = [];
     for (const node of orderedPeople) {
       if (NEVER_REDACT_IDS.has(node.id.toLowerCase())) {
@@ -1562,6 +1726,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return personAliasById.get(node.id) || 'Person';
     }
 
+    function namePrivacyEnabled() {
+      return state.privacyMode === 'names' || state.privacyMode === 'names_relationships';
+    }
+
+    function relationshipPrivacyEnabled() {
+      return state.privacyMode === 'names_relationships';
+    }
+
     function shouldHidePerson(node) {
       if (!node || node.type !== 'person') {
         return false;
@@ -1583,7 +1755,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     function shouldRedactLabel(node) {
-      if (!node || state.privacyMode === 'off' || isNeverRedactedNode(node)) {
+      if (!node || !namePrivacyEnabled() || isNeverRedactedNode(node)) {
         return false;
       }
       return true;
@@ -1593,7 +1765,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (!node || isNeverRedactedNode(node)) {
         return false;
       }
-      return state.privacyMode === 'relationships' || state.privacyMode === 'full';
+      return relationshipPrivacyEnabled() || state.privacyMode === 'full';
     }
 
     function shouldFullyRedact(node) {
@@ -1607,10 +1779,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (!node) {
         return '—';
       }
+      if (shouldFullyRedact(node)) {
+        return node.type === 'person' ? personAlias(node) : `${node.type}-${node.typeOrdinal}`;
+      }
       if (!shouldRedactLabel(node)) {
         return node.id;
       }
-      return node.type === 'person' ? personAlias(node) : `${node.type}-${node.typeOrdinal}`;
+      return node.type === 'person' ? personAlias(node) : redactNames(node.id);
     }
 
     function escapeRegExp(value) {
@@ -1621,10 +1796,18 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       let output = String(text || '');
       for (const entry of redactionTerms) {
         const alias = personAlias(entry.node);
-        const pattern = new RegExp(`(^|[^A-Za-z0-9_])(${escapeRegExp(entry.term)})(?=[^A-Za-z0-9_]|$)`, 'gi');
+        const pattern = new RegExp(`(^|[^A-Za-z0-9])(${escapeRegExp(entry.term)})(?=[^A-Za-z0-9]|$)`, 'gi');
         output = output.replace(pattern, (_, prefix) => `${prefix}${alias}`);
       }
       return output;
+    }
+
+    function containsSensitivePersonReference(text) {
+      const value = String(text || '').toLowerCase();
+      if (!value.trim()) {
+        return false;
+      }
+      return redactionTerms.some((entry) => value.includes(String(entry.term).toLowerCase()));
     }
 
     function redactRenderedText(text, node, { fullFallback = 'Content redacted by privacy mode.' } = {}) {
@@ -1634,40 +1817,46 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       if (shouldFullyRedact(node)) {
         return fullFallback;
       }
-      if (!shouldRedactRelationships(node)) {
+      if (!namePrivacyEnabled()) {
         return String(text || '');
       }
       return redactNames(text);
+    }
+
+    function shouldSuppressPreview(node) {
+      if (!node) {
+        return false;
+      }
+      if (shouldFullyRedact(node)) {
+        return true;
+      }
+      if (!relationshipPrivacyEnabled() || isNeverRedactedNode(node)) {
+        return false;
+      }
+      return node.type === 'person'
+        || containsSensitivePersonReference(node.title)
+        || containsSensitivePersonReference(node.path)
+        || containsSensitivePersonReference(node.preview)
+        || containsSensitivePersonReference(node.valence_note);
     }
 
     function displayNodeName(node) {
       if (!node) {
         return 'Nothing selected';
       }
+      if (shouldFullyRedact(node)) {
+        return node.type === 'person' ? personAlias(node) : `${node.type} ${node.typeOrdinal}`;
+      }
       if (node.type === 'person' && shouldRedactLabel(node)) {
         return personAlias(node);
       }
-      return shouldRedactLabel(node) ? `${node.type} ${node.typeOrdinal}` : node.title;
+      return shouldRedactLabel(node) ? redactNames(node.title) : node.title;
     }
 
     function detailTypeLabel(node) {
-      const bits = [node.type, `degree ${node.degree}`];
+      const bits = [node.type];
       if (node.status) {
         bits.push(node.status);
-      }
-      if (!shouldRedactRelationships(node)) {
-        if (node.emotional_valence) {
-          bits.push(`valence ${node.emotional_valence}`);
-        }
-        if (node.avoidance_risk) {
-          bits.push(`avoidance ${node.avoidance_risk}`);
-        }
-        if (node.current_state) {
-          bits.push(`state ${node.current_state}`);
-        }
-      }
-      if (node.raw_type && node.raw_type !== node.type) {
-        bits.push(`raw ${node.raw_type}`);
       }
       if (node.folder) {
         bits.push(`folder ${node.folder}`);
@@ -1676,11 +1865,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     function edgeMetaLine(edge) {
-      if (selectedNode && shouldRedactRelationships(selectedNode)) {
-        return 'relationship data redacted';
-      }
       const bits = [];
-      if (edge.relationship && edge.relationship !== edge.predicate) {
+      if (!relationshipPrivacyEnabled() && edge.relationship && edge.relationship !== edge.predicate) {
         bits.push(edge.relationship);
       }
       if (edge.emotional_valence) {
@@ -1702,9 +1888,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
 
     function nodeEmotionalSummary(node) {
-      if (shouldRedactRelationships(node)) {
-        return ['emotional topology redacted'];
-      }
       const bits = [];
       if (node.emotional_valence) {
         bits.push(`valence ${node.emotional_valence}`);
@@ -2296,24 +2479,32 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
       detailTitleEl.textContent = displayNodeName(node);
       detailSubtitleEl.textContent = detailTypeLabel(node);
-      detailPreviewEl.innerHTML = renderPreviewMarkdown(
-        redactRenderedText(node.preview || 'No preview available.', node)
-      );
-      detailPathEl.textContent = shouldRedactLabel(node) ? '—' : (node.path || '—');
+      detailPreviewEl.innerHTML = shouldSuppressPreview(node)
+        ? renderPreviewMarkdown(
+            shouldFullyRedact(node)
+              ? 'Preview redacted by full privacy mode.'
+              : 'Preview hidden by name + relationship privacy mode.'
+          )
+        : renderPreviewMarkdown(redactRenderedText(node.preview || 'No preview available.', node));
+      detailPathEl.textContent = shouldFullyRedact(node)
+        ? '—'
+        : redactRenderedText(node.path || '—', node, { fullFallback: '—' });
       openNoteEl.href = fileHref(node.path);
       selectionStatusEl.textContent = `${displayNodeName(node)} · ${node.type}`;
 
-      const detailValues = shouldRedactRelationships(node)
-        ? [node.type, ...(node.tags || []).slice(0, 8)]
-        : [
-            node.type,
-            node.emotional_valence,
-            node.energy_impact,
-            node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
-            node.growth_edge ? 'growth-edge' : null,
-            node.current_state ? `state:${node.current_state}` : null,
-            ...(node.tags || []).slice(0, 8),
-          ];
+      const detailValues = [
+        node.type,
+        `degree ${node.degree}`,
+        node.status,
+        node.emotional_valence,
+        node.energy_impact,
+        node.avoidance_risk ? `avoidance:${node.avoidance_risk}` : null,
+        node.growth_edge ? 'growth-edge' : null,
+        node.current_state ? `state:${node.current_state}` : null,
+        node.raw_type && node.raw_type !== node.type ? `raw:${node.raw_type}` : null,
+        node.folder ? `folder:${node.folder}` : null,
+        ...(node.tags || []).slice(0, 8),
+      ];
       detailTagsEl.innerHTML = '';
       for (const value of detailValues) {
         if (!value) {
@@ -2328,7 +2519,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       detailEmotionalEl.textContent = emotionalBits.length
         ? emotionalBits.join(' · ')
         : 'No emotional topology on this node yet.';
-      detailEmotionalNoteEl.textContent = shouldRedactRelationships(node)
+      detailEmotionalNoteEl.textContent = relationshipPrivacyEnabled()
         ? ''
         : redactRenderedText(node.valence_note || '', node, { fullFallback: '' });
 
@@ -2542,7 +2733,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const main = document.createElement('button');
         main.type = 'button';
         main.className = 'legend-main';
-        main.innerHTML = `<span class="swatch" style="background:${typeColors[typeName] || '#b6c2cf'}"></span><span>${typeName}</span>`;
+        main.innerHTML = `<span class="glyph-swatch" style="color:${typeColors[typeName] || '#b6c2cf'}">${typeGlyphs[typeName] || '✧'}</span><span>${typeName}</span>`;
         main.addEventListener('click', () => {
           if (state.hiddenTypes.has(typeName)) {
             state.hiddenTypes.delete(typeName);
@@ -2608,8 +2799,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const button = document.createElement('button');
         button.type = 'button';
         const active = !state.hiddenFolders.has(folder);
-        button.className = `chip-button${active ? ' active' : ' inactive'}`;
-        button.textContent = `${folder} (${visibleCount})`;
+        button.className = `folder-row${active ? ' active' : ' inactive'}`;
+        button.innerHTML = `
+          <span class="folder-meta">
+            <span class="glyph-swatch">✶</span>
+            <span class="folder-name">${escapeHtml(folder)}</span>
+          </span>
+          <span class="folder-count">${visibleCount}</span>
+        `;
         button.addEventListener('click', () => {
           if (state.hiddenFolders.has(folder)) {
             state.hiddenFolders.delete(folder);
@@ -2620,7 +2817,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           renderFolderChips();
           renderTypeBrowser();
           refreshSceneState();
-          smartFitCamera();
           writeHashState();
         });
         folderChipList.appendChild(button);
@@ -2945,6 +3141,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     showLabelsToggle.addEventListener('change', () => {
       state.showLabels = showLabelsToggle.checked;
+      syncCompactToggles();
       saveToggles();
       refreshSceneState();
       writeHashState();
@@ -2959,6 +3156,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     });
     showSessionsToggle.addEventListener('change', () => {
       state.showSessions = showSessionsToggle.checked;
+      syncCompactToggles();
       saveToggles();
       layoutNodes();
       applySearch();
@@ -2969,6 +3167,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     });
     showWiresToggle.addEventListener('change', () => {
       state.showWires = showWiresToggle.checked;
+      syncCompactToggles();
       saveToggles();
       refreshSceneState();
       writeHashState();
@@ -2997,7 +3196,6 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       renderFolderChips();
       renderTypeBrowser();
       refreshSceneState();
-      smartFitCamera();
       writeHashState();
     });
     document.getElementById('export-png').addEventListener('click', exportPng);
@@ -3018,10 +3216,16 @@ def render_graph_html(payload: dict[str, Any]) -> str:
 
     function toggleHelp(forceHidden = null) {
       helpOverlay.hidden = forceHidden === null ? !helpOverlay.hidden : forceHidden;
+      toggleHelpButton.setAttribute('aria-expanded', String(!helpOverlay.hidden));
     }
 
     toggleHelpButton.addEventListener('click', () => toggleHelp());
     closeHelpButton.addEventListener('click', () => toggleHelp(true));
+    helpOverlay.addEventListener('click', (event) => {
+      if (event.target === helpOverlay) {
+        toggleHelp(true);
+      }
+    });
 
     function isTextEntryTarget(target) {
       if (!target) {
@@ -3039,7 +3243,12 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
       const key = String(event.key || '');
       const lowerKey = key.toLowerCase();
-      if (lowerKey === 'h' || key === '?') {
+      if (event.key === 'F1') {
+        event.preventDefault();
+        toggleHelp();
+        return;
+      }
+      if (lowerKey === 'h' || event.code === 'KeyH') {
         event.preventDefault();
         toggleHelp();
         return;
@@ -3108,22 +3317,22 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        moveAcrossGroups(-1);
+        moveWithinGroup(-1);
         return;
       }
       if (event.key === 'ArrowRight') {
         event.preventDefault();
-        moveAcrossGroups(1);
+        moveWithinGroup(1);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        moveWithinGroup(-1);
+        moveAcrossGroups(-1);
         return;
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        moveWithinGroup(1);
+        moveAcrossGroups(1);
         return;
       }
       if ((event.key === 'Enter' || event.key === ' ') && selectedNode) {

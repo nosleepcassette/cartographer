@@ -418,10 +418,10 @@ HTML output is a self-contained visual graph with:
 - emotional-valence node coloring and avoidance-aware node sizing layered on top of stable type colors
 - brighter semantic wires with explicit emotional topology in the detail pane
 - local search by note title, id, type, or tag
-- category toggles, stable folder chips, session hiding, wire toggles, and a type browser
-- privacy modes (`off`, `labels`, `relationships`, `full`) driven by Cart config, with stable person ordering and never-redact ids
+- category toggles, a stable scrollable folder list, session hiding, wire toggles, and a type browser
+- privacy modes (`off`, `names`, `names_relationships`, `full`) driven by Cart config, with stable person ordering, never-redact ids, and person-only redaction
 - smarter `fit view` that prefers the current search, type lens, or selected neighborhood
-- keyboard navigation (`j`/`k`, structural arrows, `/`, `s`, `w`, `h`, `?`, `r`, `0`, `enter`)
+- keyboard navigation (`j`/`k`, structural arrows, `/`, `s`, `w`, `F1`, `r`, `0`, `enter`)
 - PNG/JSON export and shareable URL state
 - markdown-rendered note previews with headings, lists, code blocks, blockquotes, and basic tables
 
