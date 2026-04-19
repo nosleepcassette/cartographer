@@ -81,7 +81,8 @@ def test_graph_export_html_writes_visual_graph(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     html = output_path.read_text(encoding="utf-8")
     assert "atlasGraphPayload" in html
-    assert "Astral Survey" in html
+    assert "Atlas Graph" in html
+    assert 'data-theme="baseline"' in html
     assert "show-sessions" in html
     assert "show-all-types" in html
     assert "export-png" in html
@@ -351,10 +352,37 @@ def test_graph_payload_embeds_graph_config_defaults(tmp_path) -> None:
     payload = load_graph_payload(atlas_root)
     graph_config = payload["graph_config"]
 
-    assert graph_config["theme_preset"] == "astral"
+    assert graph_config["theme_preset"] == "baseline"
+    assert graph_config["available_theme_presets"] == ["astral", "baseline"]
     assert graph_config["privacy"]["mode"] == "off"
     assert graph_config["privacy"]["person_order"] == ["maps", "maggie", "sarah"]
     assert graph_config["always_visible_people"] == ["maps", "cassette"]
+
+
+def test_graph_payload_respects_atlas_theme_override(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    config_dir = atlas_root / ".cartographer"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.toml").write_text(
+        (
+            "[graph]\n"
+            'theme_preset = "astral"\n'
+        ),
+        encoding="utf-8",
+    )
+    _write_note(
+        atlas_root / "entities" / "maps.md",
+        note_id="maps",
+        title="maps",
+        note_type="entity",
+        body="# maps\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    payload = load_graph_payload(atlas_root)
+
+    assert payload["graph_config"]["theme_preset"] == "astral"
 
 
 def test_graph_payload_assigns_stable_person_aliases_from_config(tmp_path) -> None:

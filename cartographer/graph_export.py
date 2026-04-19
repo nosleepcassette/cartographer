@@ -40,6 +40,7 @@ AVOIDANCE_RISK_SCALE = {
 }
 
 SESSION_NOTE_TYPES = {"agent-log", "session", "daily"}
+SHIPPED_GRAPH_THEMES = {"baseline", "astral"}
 
 
 def _string_list(value: Any) -> list[str]:
@@ -59,8 +60,12 @@ def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     mode = str(privacy.get("mode") or "off").strip().lower()
     if mode not in {"off", "names", "names_relationships", "full"}:
         mode = "off"
+    theme_preset = str(graph.get("theme_preset") or "baseline").strip().lower()
+    if theme_preset not in SHIPPED_GRAPH_THEMES:
+        theme_preset = "baseline"
     return {
-        "theme_preset": str(graph.get("theme_preset") or "astral").strip().lower(),
+        "theme_preset": theme_preset,
+        "available_theme_presets": sorted(SHIPPED_GRAPH_THEMES),
         "show_people": bool(graph.get("show_people", True)),
         "always_visible_people": _string_list(graph.get("always_visible_people")),
         "visible_people": _string_list(graph.get("visible_people")),
@@ -482,25 +487,53 @@ def render_graph_html(payload: dict[str, Any]) -> str:
   <title>atlas graph</title>
   <style>
     :root {
-      --bg: #060913;
-      --panel: rgba(10, 13, 23, 0.9);
-      --panel-border: rgba(132, 166, 255, 0.14);
+      --panel: rgba(12, 16, 28, 0.92);
+      --panel-border: rgba(255, 255, 255, 0.08);
       --text: #eef3ff;
-      --muted: #9aa7c6;
-      --accent: #9fd2ff;
-      --accent-warm: #efd08f;
+      --muted: #a8b3cb;
+      --accent: #8fc9ff;
+      --accent-warm: #d9e7ff;
       --surface: rgba(255, 255, 255, 0.045);
       --surface-strong: rgba(255, 255, 255, 0.075);
       --shadow: 0 26px 80px rgba(0, 0, 0, 0.45);
+      --body-bg:
+        radial-gradient(circle at 18% 18%, rgba(115, 141, 255, 0.09), transparent 24rem),
+        radial-gradient(circle at 78% 20%, rgba(80, 220, 255, 0.05), transparent 30rem),
+        linear-gradient(180deg, #04070f 0%, #09111d 42%, #0d1626 100%);
+      --canvas-bg:
+        radial-gradient(circle at 22% 18%, rgba(114, 137, 255, 0.06), transparent 28%),
+        radial-gradient(circle at 74% 22%, rgba(88, 227, 255, 0.04), transparent 32%),
+        linear-gradient(180deg, rgba(5, 8, 14, 0.98), rgba(8, 13, 22, 0.95));
+      --title-color: #d9e7ff;
+      --survey-color: #cfe3ff;
+      --glyph-color: #bfd5ff;
+      --label-glow: rgba(0, 0, 0, 0.88);
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
-    body {
-      background:
+    body[data-theme="astral"] {
+      --panel: rgba(10, 13, 23, 0.9);
+      --panel-border: rgba(132, 166, 255, 0.14);
+      --muted: #9aa7c6;
+      --accent: #9fd2ff;
+      --accent-warm: #efd08f;
+      --body-bg:
         radial-gradient(circle at 18% 18%, rgba(115, 141, 255, 0.18), transparent 24rem),
         radial-gradient(circle at 78% 20%, rgba(80, 220, 255, 0.11), transparent 30rem),
         radial-gradient(circle at 55% 82%, rgba(237, 208, 143, 0.09), transparent 24rem),
         linear-gradient(180deg, #03050d 0%, #070b16 42%, #0a1020 100%);
+      --canvas-bg:
+        radial-gradient(circle at 22% 18%, rgba(114, 137, 255, 0.12), transparent 28%),
+        radial-gradient(circle at 74% 22%, rgba(88, 227, 255, 0.09), transparent 32%),
+        radial-gradient(circle at 58% 74%, rgba(239, 208, 143, 0.07), transparent 28%),
+        linear-gradient(180deg, rgba(5, 7, 13, 0.98), rgba(8, 12, 22, 0.95));
+      --title-color: #efd08f;
+      --survey-color: #efd08f;
+      --glyph-color: #efd08f;
+      --label-glow: rgba(0, 0, 0, 0.9);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--body-bg);
       color: var(--text);
       font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
       overflow: hidden;
@@ -545,11 +578,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     .canvas-panel {
       position: relative;
       overflow: hidden;
-      background:
-        radial-gradient(circle at 22% 18%, rgba(114, 137, 255, 0.12), transparent 28%),
-        radial-gradient(circle at 74% 22%, rgba(88, 227, 255, 0.09), transparent 32%),
-        radial-gradient(circle at 58% 74%, rgba(239, 208, 143, 0.07), transparent 28%),
-        linear-gradient(180deg, rgba(5, 7, 13, 0.98), rgba(8, 12, 22, 0.95));
+      background: var(--canvas-bg);
     }
     #graph-canvas { position: absolute; inset: 0; }
     #graph-canvas canvas { display: block; width: 100%; height: 100%; }
@@ -566,7 +595,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       font-size: 0.74rem;
       letter-spacing: 0.03em;
       white-space: nowrap;
-      text-shadow: 0 0 12px rgba(0, 0, 0, 0.9);
+      text-shadow: 0 0 12px var(--label-glow);
     }
     .node-label.active { color: var(--accent); font-weight: 700; }
     .eyebrow {
@@ -580,7 +609,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       font-family: "Baskerville", "Iowan Old Style", serif;
       font-size: 1.34rem;
       line-height: 1;
-      color: var(--accent-warm);
+      color: var(--title-color);
     }
     h2 { font-size: 0.95rem; line-height: 1.05; }
     .subtle { color: var(--muted); font-size: 0.75rem; line-height: 1.25; }
@@ -772,7 +801,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       justify-content: center;
       font-family: "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", serif;
       font-size: 0.9rem;
-      color: var(--accent-warm);
+      color: var(--glyph-color);
       text-shadow: 0 0 10px rgba(159, 210, 255, 0.28);
     }
     .mono {
@@ -1056,7 +1085,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       display: inline-flex;
       align-items: center;
       gap: 0.4rem;
-      color: var(--accent-warm);
+      color: var(--survey-color);
       font-size: 0.78rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -1125,14 +1154,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
   </style>
 </head>
-<body>
+<body data-theme="__BODY_THEME__">
   <div class="app">
     <aside class="panel sidebar">
       <div class="sidebar-scroll">
         <div>
           <div class="eyebrow">atlas visual graph</div>
-          <h1>Astral Survey</h1>
-          <p class="subtle">Memory rendered as a navigable star chart: sectors, routes, beacons, and hidden currents.</p>
+          <h1 id="graph-title">Atlas Graph</h1>
+          <p class="subtle" id="graph-subtitle">Deterministic clusters, semantic wires, and camera-state links you can share.</p>
         </div>
 
         <div class="search-wrap">
@@ -1212,8 +1241,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     <main class="panel canvas-panel">
       <div class="stage-toolbar">
         <div class="survey">
-          <span>✦</span>
-          <span>Astral Survey</span>
+          <span id="survey-mark">◎</span>
+          <span id="survey-title">Atlas Graph</span>
         </div>
         <div class="actions">
           <div class="status" id="selection-status">awaiting selection</div>
@@ -1305,9 +1334,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       Color,
       DirectionalLight,
       FogExp2,
+      Group,
       IcosahedronGeometry,
       Line,
       LineBasicMaterial,
+      LineLoop,
       Mesh,
       MeshStandardMaterial,
       PerspectiveCamera,
@@ -1350,16 +1381,70 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       mixed: '#b988ff',
       neutral: '#a7b3c3',
     };
-    const typeGlyphs = {
-      person: '☉',
-      project: '✦',
-      goal: '⌖',
-      entity: '✧',
-      'agent-log': '☿',
-      session: '☄',
-      daily: '☽',
-      learning: '♃',
-      note: '·',
+    const THEME_PRESETS = {
+      baseline: {
+        id: 'baseline',
+        title: 'Atlas Graph',
+        subtitle: 'Deterministic clusters, semantic wires, and camera-state links you can share.',
+        surveyMark: '◎',
+        surveyTitle: 'Atlas Graph',
+        folderMark: '•',
+        legendStyle: 'swatch',
+        labelSigils: false,
+        starfieldOpacity: 0.08,
+        starfieldSize: 2.8,
+        showBiomes: false,
+        showSurveyGrid: false,
+      },
+      astral: {
+        id: 'astral',
+        title: 'Astral Survey',
+        subtitle: 'Memory rendered as a navigable star chart: sectors, routes, beacons, and hidden currents.',
+        surveyMark: '✦',
+        surveyTitle: 'Astral Survey',
+        folderMark: '✶',
+        legendStyle: 'glyph',
+        labelSigils: true,
+        starfieldOpacity: 0.34,
+        starfieldSize: 3.7,
+        showBiomes: true,
+        showSurveyGrid: true,
+      },
+    };
+    const THEME_TYPE_GLYPHS = {
+      baseline: {
+        person: '●',
+        project: '■',
+        goal: '◆',
+        entity: '●',
+        'agent-log': '▣',
+        session: '◌',
+        daily: '◐',
+        learning: '◇',
+        note: '·',
+      },
+      astral: {
+        person: '☉',
+        project: '✦',
+        goal: '⌖',
+        entity: '✧',
+        'agent-log': '☿',
+        session: '☄',
+        daily: '☽',
+        learning: '♃',
+        note: '·',
+      },
+    };
+    const biomeColors = {
+      projects: '#f0c46c',
+      entities: '#8ec1ff',
+      daily: '#cf9fff',
+      agents: '#78e2ff',
+      tasks: '#ffb86e',
+      goals: '#9ae89a',
+      readings: '#f3df9a',
+      learning: '#f3df9a',
+      notes: '#93a7c9',
     };
     const typeColors = Object.fromEntries(atlasGraphPayload.nodes.map((node) => [node.type, node.type_color || node.color]));
     const SESSION_STORAGE_KEY = 'atlas.graph.showSessions';
@@ -1389,6 +1474,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const typeBrowserTitleEl = document.getElementById('type-browser-title');
     const typeNodeListEl = document.getElementById('type-node-list');
     const atlasRootEl = document.getElementById('atlas-root');
+    const graphTitleEl = document.getElementById('graph-title');
+    const graphSubtitleEl = document.getElementById('graph-subtitle');
+    const surveyMarkEl = document.getElementById('survey-mark');
+    const surveyTitleEl = document.getElementById('survey-title');
     const selectionStatusEl = document.getElementById('selection-status');
     const detailTitleEl = document.getElementById('detail-title');
     const detailSubtitleEl = document.getElementById('detail-subtitle');
@@ -1408,6 +1497,18 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     const toggleHelpButton = document.getElementById('toggle-help');
     const closeHelpButton = document.getElementById('close-help');
     const showAllFoldersButton = document.getElementById('show-all-folders');
+
+    function resolveThemePreset(themeName) {
+      return THEME_PRESETS[themeName] || THEME_PRESETS.baseline;
+    }
+
+    const activeTheme = resolveThemePreset(graphConfig.theme_preset || 'baseline');
+    const activeTypeGlyphs = THEME_TYPE_GLYPHS[activeTheme.id] || THEME_TYPE_GLYPHS.baseline;
+    document.body.dataset.theme = activeTheme.id;
+    graphTitleEl.textContent = activeTheme.title;
+    graphSubtitleEl.textContent = activeTheme.subtitle;
+    surveyMarkEl.textContent = activeTheme.surveyMark;
+    surveyTitleEl.textContent = activeTheme.surveyTitle;
 
     nodeCountEl.textContent = String(atlasGraphPayload.node_count);
     edgeCountEl.textContent = String(atlasGraphPayload.edge_count);
@@ -1498,8 +1599,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       visibleByToggle: true,
       typeOrdinal: 0,
       baseColor: new THREE.Color(node.color),
-      displayColor: new THREE.Color(node.color).lerp(new THREE.Color('#fff4d4'), 0.18),
-      glowColor: new THREE.Color(node.color).lerp(new THREE.Color('#ffc987'), 0.12),
+      displayColor: new THREE.Color(node.color).lerp(
+        new THREE.Color(activeTheme.id === 'astral' ? '#fff4d4' : '#f4f8ff'),
+        activeTheme.id === 'astral' ? 0.24 : 0.12,
+      ),
+      glowColor: new THREE.Color(node.color).lerp(
+        new THREE.Color(activeTheme.id === 'astral' ? '#ffc987' : '#9fc8ff'),
+        activeTheme.id === 'astral' ? 0.18 : 0.08,
+      ),
       baseRadius: node.base_radius || (4.8 + Math.min(node.degree, 14) * 0.55),
       radius: 0,
       renderScale: 1,
@@ -1659,20 +1766,122 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       new THREE.PointsMaterial({
         color: 0xb7c9ff,
         transparent: true,
-        opacity: 0.34,
-        size: 3.7,
+        opacity: activeTheme.starfieldOpacity,
+        size: activeTheme.starfieldSize,
         sizeAttenuation: true,
       })
     );
     scene.add(stars);
+    stars.visible = activeTheme.starfieldOpacity > 0;
+
+    function unitLoopGeometry(points = 72, wobble = 0) {
+      const vertices = [];
+      for (let index = 0; index < points; index += 1) {
+        const theta = (index / points) * Math.PI * 2;
+        const wobbleFactor = wobble ? (1 + Math.sin(theta * 3) * wobble) : 1;
+        vertices.push(new THREE.Vector3(Math.cos(theta) * wobbleFactor, 0, Math.sin(theta) * wobbleFactor));
+      }
+      return new THREE.BufferGeometry().setFromPoints(vertices);
+    }
+
+    function makeDustGeometry(count = 36) {
+      const vertices = [];
+      for (let index = 0; index < count; index += 1) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.sqrt(Math.random()) * 0.95;
+        const vertical = (Math.random() - 0.5) * 0.34;
+        vertices.push(
+          new THREE.Vector3(
+            Math.cos(angle) * radius,
+            vertical,
+            Math.sin(angle) * radius * (0.72 + Math.random() * 0.24),
+          )
+        );
+      }
+      return new THREE.BufferGeometry().setFromPoints(vertices);
+    }
+
+    const biomeObjects = new Map();
+    const biomeBaseGeometry = unitLoopGeometry(72, 0.04);
+    const biomeOuterGeometry = unitLoopGeometry(88, 0.08);
+    const biomeDustGeometry = makeDustGeometry(52);
+
+    for (const folder of folderNames) {
+      const color = new THREE.Color(biomeColors[folder] || '#93a7c9');
+      const group = new THREE.Group();
+      const innerRing = new THREE.LineLoop(
+        biomeBaseGeometry.clone(),
+        new THREE.LineBasicMaterial({
+          color: color.clone().lerp(new THREE.Color('#ffffff'), 0.18),
+          transparent: true,
+          opacity: 0.22,
+        }),
+      );
+      innerRing.rotation.x = Math.PI / 2;
+      innerRing.rotation.z = 0.18;
+      group.add(innerRing);
+
+      const outerRing = new THREE.LineLoop(
+        biomeOuterGeometry.clone(),
+        new THREE.LineBasicMaterial({
+          color: color.clone().lerp(new THREE.Color('#fff1c5'), 0.28),
+          transparent: true,
+          opacity: 0.12,
+        }),
+      );
+      outerRing.rotation.x = Math.PI / 2;
+      outerRing.rotation.z = -0.24;
+      outerRing.scale.set(1.18, 1, 0.88);
+      group.add(outerRing);
+
+      const dust = new THREE.Points(
+        biomeDustGeometry.clone(),
+        new THREE.PointsMaterial({
+          color,
+          transparent: true,
+          opacity: 0.14,
+          size: 3.6,
+          sizeAttenuation: true,
+        }),
+      );
+      group.add(dust);
+      group.visible = false;
+      scene.add(group);
+      biomeObjects.set(folder, {
+        group,
+        innerRing,
+        outerRing,
+        dust,
+        color,
+        phase: (folderOrder.get(folder) || 0) * 0.7,
+      });
+    }
+
+    const surveyGrid = [];
+    for (const radius of [180, 270, 390]) {
+      const line = new THREE.LineLoop(
+        unitLoopGeometry(96, 0.015),
+        new THREE.LineBasicMaterial({
+          color: new THREE.Color('#8fb5ff'),
+          transparent: true,
+          opacity: radius === 180 ? 0.09 : 0.05,
+        }),
+      );
+      line.rotation.x = Math.PI / 2;
+      line.rotation.z = radius === 270 ? 0.22 : -0.14;
+      line.scale.set(radius, 1, radius * 0.76);
+      line.visible = activeTheme.showSurveyGrid;
+      scene.add(line);
+      surveyGrid.push(line);
+    }
 
     const sphereGeometry = new THREE.IcosahedronGeometry(1, 3);
     for (const node of nodes) {
       const material = new THREE.MeshStandardMaterial({
         color: node.displayColor.clone(),
-        emissive: node.glowColor.clone().multiplyScalar(0.18),
-        roughness: 0.26,
-        metalness: 0.12,
+        emissive: node.glowColor.clone().multiplyScalar(activeTheme.id === 'astral' ? 0.22 : 0.16),
+        roughness: activeTheme.id === 'astral' ? 0.2 : 0.3,
+        metalness: activeTheme.id === 'astral' ? 0.18 : 0.08,
         transparent: true,
         opacity: 0.95,
       });
@@ -1692,7 +1901,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       const material = new THREE.LineBasicMaterial({
         color: edge.baseColor,
         transparent: true,
-        opacity: edge.isWire ? 0.62 : 0.2,
+        opacity: edge.isWire ? (activeTheme.id === 'astral' ? 0.72 : 0.62) : 0.2,
       });
       const line = new THREE.Line(geometry, material);
       line.userData.edge = edge;
@@ -1913,6 +2122,24 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       return bits;
     }
 
+    function labelTextForNode(node) {
+      const text = displayNodeName(node);
+      if (!activeTheme.labelSigils) {
+        return text;
+      }
+      return `${activeTypeGlyphs[node.type] || '·'} ${text}`;
+    }
+
+    function metadataChipValue(node, value) {
+      if (value === null || value === undefined || value === '') {
+        return null;
+      }
+      if (shouldFullyRedact(node)) {
+        return null;
+      }
+      return redactRenderedText(String(value), node, { fullFallback: '' }) || null;
+    }
+
     function activeNodes() {
       return nodes.filter((node) => {
         if (state.hiddenTypes.has(node.type)) {
@@ -2013,6 +2240,37 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       homePosition = frame.position;
     }
 
+    function visibleNodesForBiome(folder) {
+      return nodes.filter((node) =>
+        node.folder === folder
+        && !state.hiddenTypes.has(node.type)
+        && (state.showSessions || !node.is_session)
+        && !shouldHidePerson(node)
+        && !state.hiddenFolders.has(folder)
+      );
+    }
+
+    function updateBiomes() {
+      for (const [folder, biome] of biomeObjects.entries()) {
+        const folderNodes = visibleNodesForBiome(folder);
+        if (!activeTheme.showBiomes || !folderNodes.length) {
+          biome.group.visible = false;
+          continue;
+        }
+        const center = new THREE.Vector3();
+        folderNodes.forEach((node) => center.add(node.position));
+        center.divideScalar(folderNodes.length);
+        let maxDistance = 24;
+        for (const node of folderNodes) {
+          maxDistance = Math.max(maxDistance, center.distanceTo(node.position) + node.radius * 1.25);
+        }
+        biome.group.visible = true;
+        biome.group.position.copy(center);
+        biome.group.scale.set(maxDistance * 1.15, Math.max(12, maxDistance * 0.18), maxDistance * 0.9);
+        biome.group.rotation.y = biome.phase;
+      }
+    }
+
     function layoutNodes() {
       const activeTypes = typeNames.filter((typeName) =>
         nodes.some((node) =>
@@ -2065,6 +2323,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         edge.line.geometry.attributes.position.needsUpdate = true;
         edge.line.geometry.computeBoundingSphere();
       }
+      updateBiomes();
       updateHomeCamera();
     }
 
@@ -2478,7 +2737,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       }
 
       detailTitleEl.textContent = displayNodeName(node);
-      detailSubtitleEl.textContent = detailTypeLabel(node);
+      detailSubtitleEl.textContent = redactRenderedText(detailTypeLabel(node), node, { fullFallback: 'metadata redacted' });
       detailPreviewEl.innerHTML = shouldSuppressPreview(node)
         ? renderPreviewMarkdown(
             shouldFullyRedact(node)
@@ -2507,12 +2766,13 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       ];
       detailTagsEl.innerHTML = '';
       for (const value of detailValues) {
-        if (!value) {
+        const safeValue = metadataChipValue(node, value);
+        if (!safeValue) {
           continue;
         }
         const chip = document.createElement('span');
         chip.className = 'chip';
-        chip.textContent = value;
+        chip.textContent = safeValue;
         detailTagsEl.appendChild(chip);
       }
       const emotionalBits = nodeEmotionalSummary(node);
@@ -2632,9 +2892,19 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           : dimForBrowser
             ? 0.08
             : matches
-              ? (edge.isWire ? 0.76 : 0.28)
-              : 0.12;
+              ? (edge.isWire ? (activeTheme.id === 'astral' ? 0.84 : 0.76) : 0.28)
+              : (activeTheme.id === 'astral' ? (edge.isWire ? 0.18 : 0.12) : 0.12);
         edge.material.opacity = edge.renderOpacity;
+      }
+
+      for (const [folder, biome] of biomeObjects.entries()) {
+        if (!biome.group.visible) {
+          continue;
+        }
+        const emphasized = !!selectedNode && selectedNode.folder === folder;
+        biome.innerRing.material.opacity = emphasized ? 0.34 : 0.22;
+        biome.outerRing.material.opacity = emphasized ? 0.22 : 0.12;
+        biome.dust.material.opacity = emphasized ? 0.2 : 0.14;
       }
     }
 
@@ -2659,7 +2929,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           continue;
         }
         node.labelEl.style.display = 'block';
-        node.labelEl.textContent = displayNodeName(node);
+        node.labelEl.textContent = labelTextForNode(node);
         node.labelEl.className = `node-label${node === selectedNode ? ' active' : ''}`;
         node.labelEl.style.left = `${(projected.x * 0.5 + 0.5) * 100}%`;
         node.labelEl.style.top = `${(-projected.y * 0.5 + 0.5) * 100}%`;
@@ -2733,7 +3003,11 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const main = document.createElement('button');
         main.type = 'button';
         main.className = 'legend-main';
-        main.innerHTML = `<span class="glyph-swatch" style="color:${typeColors[typeName] || '#b6c2cf'}">${typeGlyphs[typeName] || '✧'}</span><span>${typeName}</span>`;
+        if (activeTheme.legendStyle === 'glyph') {
+          main.innerHTML = `<span class="glyph-swatch" style="color:${typeColors[typeName] || '#b6c2cf'}">${activeTypeGlyphs[typeName] || '✧'}</span><span>${typeName}</span>`;
+        } else {
+          main.innerHTML = `<span class="swatch" style="background:${typeColors[typeName] || '#b6c2cf'}"></span><span>${typeName}</span>`;
+        }
         main.addEventListener('click', () => {
           if (state.hiddenTypes.has(typeName)) {
             state.hiddenTypes.delete(typeName);
@@ -2802,7 +3076,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         button.className = `folder-row${active ? ' active' : ' inactive'}`;
         button.innerHTML = `
           <span class="folder-meta">
-            <span class="glyph-swatch">✶</span>
+            <span class="glyph-swatch">${escapeHtml(activeTheme.folderMark)}</span>
             <span class="folder-name">${escapeHtml(folder)}</span>
           </span>
           <span class="folder-count">${visibleCount}</span>
@@ -3026,8 +3300,21 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     function animate() {
       requestAnimationFrame(animate);
       const now = performance.now() * 0.001;
-      stars.rotation.y += 0.0002;
-      stars.rotation.x += 0.00004;
+      if (activeTheme.id === 'astral') {
+        stars.rotation.y += 0.0002;
+        stars.rotation.x += 0.00004;
+        surveyGrid.forEach((line, index) => {
+          line.rotation.z += 0.00006 * (index % 2 === 0 ? 1 : -1);
+        });
+        for (const biome of biomeObjects.values()) {
+          if (!biome.group.visible) {
+            continue;
+          }
+          biome.innerRing.rotation.y = now * 0.14 + biome.phase;
+          biome.outerRing.rotation.y = -now * 0.09 + biome.phase * 0.6;
+          biome.dust.rotation.y = now * 0.045 + biome.phase * 0.4;
+        }
+      }
       if (cameraGoal) {
         camera.position.lerp(cameraGoal.position, 0.12);
         cameraTarget.lerp(cameraGoal.target, 0.12);
@@ -3367,4 +3654,5 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         template
         .replace("__THREE_VENDOR__", vendor_three)
         .replace("__PAYLOAD__", payload_json)
+        .replace("__BODY_THEME__", str(payload.get("graph_config", {}).get("theme_preset") or "baseline"))
     )
