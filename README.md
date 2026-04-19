@@ -1,13 +1,13 @@
 # cartographer
 
-https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
-
 
 Your agents should know how you're actually doing — and remember everything they learn.
 
 Local-first knowledge filesystem and agent memory layer.
 
 Plain Markdown. Git history. Queryable graph. Block-addressable text. Agents and humans write to the same substrate. Nothing is trapped in an app.
+
+https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
 
 ---
 
