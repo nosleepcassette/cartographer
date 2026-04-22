@@ -1,53 +1,47 @@
 # cartographer
 
+Embedding-backed semantic search over Markdown. Emotional topology on relationships. Spreading activation across a knowledge graph. Spool up a live graph server. Track what your agent was working on. Wire notes together with valence, energy, avoidance risk. Run a therapy plugin off the atlas. All local, all git-native, all files.
+
+```
+cart think sarah          →  spreading activation: maggie (0.87), grief-work (0.72), maps (0.68)
+cart discover --accept    →  auto-wire 23 similar-but-unwired note pairs
+cart graph --serve        →  live graph at localhost:6969, auto-regenerates on file change
+cart stats                →  557 notes · 234 wires · 23 orphans · 78% embedding coverage
+cart query 'romantic tension with sarah'  →  semantic match, not keyword grep
+cart operating-truth      →  active work, open decisions, commitments, next steps
+```
+
 Your agents should know how you're actually doing — and remember everything they learn.
 
-
-Local-first knowledge filesystem and agent memory layer.
-
-Plain Markdown. Git history. Queryable graph. Block-addressable text. Agents and humans write to the same substrate. Nothing is trapped in an app.
+Local-first knowledge filesystem and agent memory layer. Plain Markdown. Git history. Queryable graph. Block-addressable text. Embedding search. Emotional topology. Agents and humans write to the same substrate. Nothing is trapped in an app.
 
 https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
 
 ---
 
-## There are a hundred agent memory layers. Why use this one?
+## What makes this different from every other agent memory layer
 
-Vector databases. Hosted memory APIs. Pinecone, Mem0, raw context stuffing, custom RAG pipelines. They all solve the same narrow problem: *getting context into a prompt.* They're mostly invisible, mostly opaque, mostly locked to whoever built them.
+Vector databases. Hosted memory APIs. Pinecone, Mem0, raw context stuffing, custom RAG pipelines. They all solve the same narrow problem: *getting context into a prompt.* They're mostly invisible, mostly opaque, mostly locked to whoever built them. Your memories live in a binary blob you can't read, can't edit, can't version, and can't get out when the service shuts down.
 
-cartographer is not a memory layer. It's a **knowledge substrate** that happens to be excellent at agent memory.
+cartographer is not a memory layer. It's a **knowledge substrate** that happens to be excellent at agent memory — and does things no hosted memory API can:
 
-**What that means in practice:**
+**Semantic wires with emotional predicates.** Not just `[[links]]` — wires say *how* things relate: `supports`, `depends_on`, `contradicts`. And each wire carries emotional metadata: valence (positive/negative/mixed), energy impact (energizing/draining), avoidance risk (high/medium/low), growth-edge, current state. `cart wire query --avoidance-risk high` returns every relationship where avoidance is active. This is the emotional topology layer — and it's unique to cartographer.
 
-Every conversation your agent has can be imported into a growing atlas of Markdown notes — deduped, linked to projects and day notes, indexed for full-text and semantic search. When the next session starts, `cart daily-brief` seeds it from everything accumulated so far. Context windows close; the graph stays. That's the memory layer part.
+**Embedding-backed search that stays local.** Every note gets auto-embedded at write time (FastEmbed, ONNX, CPU, no GPU needed). `cart query 'romantic tension with sarah'` finds that note about the drag show even if it never uses those words. No hosted vector service. No external dependency. Embeddings live in your SQLite index alongside the full-text search.
 
-But the atlas is also *your* knowledge base. It's where you write. Where your notes live. Where tasks accumulate. Where relationships are modeled. The same files your agent writes to are the same files you read. No parallel universe of embeddings divorced from your actual documents. One substrate, multiple writers.
+**Spreading activation over the graph.** `cart think sarah` doesn't just find notes mentioning Sarah — it follows the wires outward with decay, surfacing maggie (connected via shared emotional valence), grief-work (connected via maggie), therapy-plugin (connected via grief-work). It finds what's *connected* to Sarah, not just what *mentions* her. High-valence wires spread further. This is graph reasoning, not keyword search.
 
-The graph isn't decorative. Export it as JSON and query it programmatically. Export it as HTML and navigate it interactively — 3D clustered layout, typed semantic wires, emotional topology, theme-switched rendering, privacy modes. The atlas is a living map of a mind (or a project, or a team, or a body of research) and the graph makes that structure visible.
+**Bridge discovery.** `cart discover` finds notes that are semantically similar but not yet wired — the gaps in your graph. `--accept` writes the wires back into the note files. Your atlas grows its own connections.
 
-**Why not just use a hosted memory API?**
+**A live graph server.** `cart graph --serve` starts a localhost HTTP server that serves the interactive HTML graph and auto-regenerates whenever atlas files change. `--daemon` backgrounds it. Edit a note, refresh the browser, graph updates. No manual re-export.
 
-Because when the service changes its pricing, changes its format, or goes away, your memory goes with it. cartographer is local files and SQLite. Delete cartographer and your notes are still readable Markdown with YAML frontmatter. Git is the database. The SQLite index is a cache that can be rebuilt from scratch at any time. Nothing is trapped.
+**Operational truth.** `cart operating-truth` tracks active work, open decisions, commitments, and next steps — the things an agent needs at session start, not just a narrative summary. `cart daily-brief` leads with operating truth.
 
-**Why not just RAG over my existing notes?**
+**Files are the API.** Delete cartographer and your notes are still readable Markdown with YAML frontmatter. Git is the database. SQLite is an index that rebuilds from scratch. Nothing is trapped.
 
-You can do that too — `cart qmd bootstrap` wires in hybrid retrieval over your atlas if you want it. But RAG alone doesn't give you semantic wires between notes, emotional metadata on relationships, block-level transclusion, idempotent session import, or the agent skills and plugin economy built on top. RAG is a search feature. This is a knowledge operating system.
+**Plugin economy.** stdin/stdout JSON contract. Therapy plugin ships with cartographer — pattern detection and counter-evidence queries backed by the emotional topology layer. Write your own in Python, shell, Rust, Lua — anything.
 
----
-
-## I don't use AI at all. I just use Obsidian, or vimwiki. Why would I care about this?
-
-Fair question. The short answer: cartographer adds structure that Obsidian and vimwiki gestures at but never fully delivers.
-
-**Block transclusion that actually works.** Every paragraph can be addressed by ID: `[[project-alpha#b001]]`. Backlinks tracked automatically. Transclusion rendered in the TUI. Obsidian has a version of this. It requires plugins, breaks on mobile, and the link format isn't portable. Cart's block markers are HTML comments — invisible in any Markdown renderer, machine-readable, file-native.
-
-**Semantic wires, not just links.** A standard `[[link]]` says "these things are related." A wire says *how*: `supports`, `depends_on`, `part_of`, `intensifies_with`, `contradicts`. You can query "what does this project depend on?" or "what contradicts this belief?" and get structured answers. Teachers tracking what approaches worked for a student. Researchers mapping where their sources agree and disagree. Ops teams modeling which runbook sections relate to which incident types. The typed relationship layer is what transforms a note collection into a knowledge graph.
-
-**A TUI built for navigation, not just editing.** `cart tui` gives you section jumps (`[`/`]`), a task overlay (`t`), semantic wire neighborhood view, block transclusion rendering, backlinks, and mapsOS handoff — all in a responsive terminal interface that doesn't require Electron.
-
-**Compatible with what you already use.** Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail. Cart uses standard Markdown plus HTML comment block markers. `cart init` can patch vimwiki config to make the atlas your primary wiki.
-
-**CLI-native and composable.** Every operation has a `--json` surface. `cart query 'type:project tag:active'` pipes into anything. If your workflow is already built around the terminal, cartographer extends it rather than replacing it with another GUI.
+**Built for configuration, not customization.** Backend config drives graph themes, privacy modes, person ordering, state vocabulary, arc definitions, embedding models, guardrail rules. The system is designed to be shaped by whoever runs it.
 
 ---
 
@@ -86,6 +80,11 @@ The atlas and cartographer are designed to be shaped by whoever runs them. What'
 - Privacy modes: `off`, `names`, `names_relationships`, `full` — driven from config, not code
 - Person ordering and never-redact IDs for the graph
 - qmd collection path for hybrid retrieval
+- Embedding backend/model settings and auto-embed-on-write
+- Operating-truth extraction and retention settings
+- Temporal review thresholds for stale/current truth
+- Guardrail rules for secrets, stack traces, duplicate notes, and raw code blobs
+- Query-routing budgets for operating-truth/profile/graph/corpus shelves
 - mapsOS integration settings
 
 **mapsOS (`~/.maps_os_config.yaml`):**
@@ -228,6 +227,18 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 - `cart stats` for atlas growth, connectivity, topology, and health signals
 - `cart embed` for local note embeddings; `cart query` prefers qmd, then embeddings, then built-in FTS
 
+**Operational state + temporal truth:**
+- `cart operating-truth` for active work, open decisions, commitments, next steps, and external owners
+- `cart daily-brief` now leads with operating truth instead of burying it in narrative summary
+- `cart supersede`, `cart history`, `cart conflicts`, and `cart stale` for temporal truth review
+- Temporal note fields: `valid_from`, `valid_to`, `supersedes`, `superseded_by`, `is_current`
+
+**Guardrails + lifecycle:**
+- `cart delete` previews blast radius before delete/archive, then cleans index state and note links
+- `cart query --route` routes across operating-truth/profile/graph/corpus shelves and merges with RRF
+- `cart guardrails scan|status|enable|disable`
+- Write-time guardrails reject obvious secrets, flag stack traces, and warn on large raw code or duplicate notes
+
 **Session import:**
 - Claude Code, Hermes, Codex — deduped, idempotent
 - External: ChatGPT and Claude.ai conversation exports
@@ -237,10 +248,10 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 
 ## Current status
 
-**Phase 5 is live.** Emotional topology, therapy integration, the visual graph, and the atlas TUI are all shipped and working.
+**Phase 5 plus the v0.3 structural pass are live.** Emotional topology, therapy integration, the visual graph, graph-native reasoning, operational truth, temporal truth, routed queries, and guardrails are all shipped and working.
 
 ```text
-session → export → cart ingest → atlas update → emotional wires → daily brief → therapy detection → next session
+session → export → cart ingest → atlas update → operating truth → emotional wires → daily brief → therapy detection → next session
 ```
 
 ### Implemented
@@ -275,6 +286,17 @@ session → export → cart ingest → atlas update → emotional wires → dail
 - `cart think`, `cart walk`, `cart discover`, `cart embed`, `cart stats`
 - Bridge proposals can be accepted back into note files as inline wires
 - Auto-embed-on-write is configurable; embeddings stay local in the SQLite cache
+
+**Operational truth + temporal truth:**
+- `cart operating-truth` shelf for active work, open decisions, commitments, next steps, external owners
+- `cart daily-brief` now leads with operating truth
+- `cart supersede`, `cart history`, `cart conflicts`, `cart stale`
+- mapsOS export ingest can extract goals, intentions, and decision-shaped vents into operating truth
+
+**Lifecycle + query control:**
+- `cart delete` with impact preview, archive mode, and reference cleanup
+- `cart query --route` across operating-truth/profile/graph/corpus shelves
+- `cart guardrails` for secret rejection, stack-trace flagging, duplicate warnings, and atlas hygiene
 
 **Therapy:**
 - Pattern detection and counter-evidence queries
@@ -358,6 +380,8 @@ cart completion fish > ~/.config/fish/completions/cart.fish
 cart init
 cart status
 cart doctor
+cart operating-truth set active_work "shipping cartographer v0.3"
+cart query "what am I working on" --route
 cart query "what did we learn about this project"
 cart stats
 cart daily-brief
@@ -402,6 +426,7 @@ cart tui
 ```zsh
 cart new project "Project Alpha"
 cart new daily 2026-04-17
+printf 'Context from stdin.\n' | cart new note "Inbox capture" --from-stdin
 cart ls --type project
 cart show project-alpha
 cart edit project-alpha
@@ -411,6 +436,9 @@ cart edit project-alpha
 
 ```zsh
 cart query 'session drift in hermetica'   # plain language; prefers qmd, then local embeddings
+cart query 'what am I working on' --route
+cart query 'what did we discuss yesterday' --route
+cart query 'sarah relationship status' --route --json
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
@@ -418,7 +446,7 @@ cart query --json 'type:agent-log'
 cart backlinks project-alpha
 ```
 
-### enhanced search: qmd + local embeddings
+### enhanced search: qmd + local embeddings + routed shelves
 
 ```zsh
 npm install -g @tobilu/qmd
@@ -427,7 +455,7 @@ cart embed
 cart query 'what do we know about this architecture decision'
 ```
 
-`cart query` now follows a simple local-first stack: qmd hybrid retrieval when configured, embedding-backed semantic ranking when embeddings exist, then built-in SQLite/FTS. You can precompute embeddings with `cart embed`; auto-embed-on-write is also configurable in `~/atlas/.cartographer/config.toml`.
+`cart query` now follows a simple local-first stack: qmd hybrid retrieval when configured, embedding-backed semantic ranking when embeddings exist, then built-in SQLite/FTS. `cart query --route` is the shelf-aware path: it analyzes intent, routes across operating-truth/profile/graph/corpus shelves, merges with reciprocal-rank fusion, and packs the smallest useful evidence set. You can precompute embeddings with `cart embed`; auto-embed-on-write is also configurable in `~/atlas/.cartographer/config.toml`.
 
 ### tasks
 
@@ -454,6 +482,23 @@ cart working-set add "candidate" --role intake --scope therapy
 cart working-set list --json
 cart working-set gc
 ```
+
+### operating truth + temporal truth
+
+```zsh
+cart operating-truth
+cart operating-truth set active_work "shipping v0.3"
+cart operating-truth add open_decision "fastembed or sentence-transformers"
+cart operating-truth add commitment "ship cartographer v0.3 by May 15"
+cart operating-truth add next_step "write temporal truth docs"
+cart operating-truth history
+cart supersede old-sarah-status new-sarah-status
+cart history new-sarah-status
+cart conflicts
+cart stale
+```
+
+`operating-truth` is the short shelf for what matters right now. `active_work` is singleton; setting a new one archives the old one. Temporal truth tracks when facts stop being current and what replaces them, so you can review staleness and contradictions instead of pretending the latest note is always the truth.
 
 ### therapy
 
@@ -531,6 +576,19 @@ Atlas-local theme skins live in `~/atlas/themes/*.js` and are auto-loaded. The g
 
 `cart graph --serve` runs a local HTTP server for the graph and regenerates on atlas changes. `--daemon` sends it to the background, writes a per-port PID file and log under `~/atlas/.cartographer/`, and frees the terminal immediately. Use the same `--port` with `--status-daemon` or `--stop-daemon` when you're managing a nondefault daemon.
 
+### deletion + guardrails
+
+```zsh
+cart delete project-alpha
+cart delete project-alpha --archive --force
+cart delete project-alpha --no-cascade --force
+cart guardrails status
+cart guardrails scan
+cart guardrails disable
+```
+
+`cart delete` is not just `rm`: it previews wires, block refs, frontmatter links, embeddings, and operating-truth references before deleting or archiving. Guardrails run on write and are there to keep the atlas from turning into a credential dump or crash-log graveyard.
+
 ### external import
 
 ```zsh
@@ -548,7 +606,7 @@ cart mapsos patterns --field state
 cart daily-brief
 ```
 
-Inside the TUIs: `cart tui` → `m` launches mapsOS. `maps` → `C` launches cartographer. Quitting mapsOS ingests the latest export when `cart` is available.
+Inside the TUIs: `cart tui` → `m` launches mapsOS. `maps` → `C` launches cartographer. Quitting mapsOS ingests the latest export when `cart` is available. That ingest can also populate operating truth from goals, intentions, and decision-shaped vents.
 
 ---
 

@@ -845,7 +845,8 @@ def backup() -> None:
 @click.argument("parts", nargs=-1, required=True)
 @click.option("-p", "--priority", default="P2", show_default=True, help="Task priority (P0-P4). Default is P2.")
 @click.option("--agent", default="hermes", show_default=True, help="Agent origin for this note.")
-def new(parts: tuple[str, ...], priority: str, agent: str) -> None:
+@click.option("--from-stdin", is_flag=True, help="Append stdin content to the new note body.")
+def new(parts: tuple[str, ...], priority: str, agent: str, from_stdin: bool) -> None:
     """Create a new note or task.
 
     PARTS: either a title (creates 'note' type), or TYPE and TITLE separately.
@@ -860,10 +861,21 @@ def new(parts: tuple[str, ...], priority: str, agent: str) -> None:
         note_type = parts[0]
         title = " ".join(parts[1:])
     atlas = get_atlas()
-    path = atlas.create_note(note_type, title, priority=priority, agent=agent)
-    atlas.open_in_editor(path)
-    atlas.finalize_note(path)
-    atlas.refresh_index()
+    body_override = sys.stdin.read() if from_stdin else None
+    try:
+        path = atlas.create_note(
+            note_type,
+            title,
+            priority=priority,
+            agent=agent,
+            body_override=body_override,
+        )
+        if not from_stdin:
+            atlas.open_in_editor(path)
+            atlas.finalize_note(path)
+            atlas.refresh_index()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(path)
 
 
@@ -873,7 +885,10 @@ def _open_note(note_id: str) -> None:
     if path is None:
         raise click.ClickException(f"note not found: {note_id}")
     atlas.open_in_editor(path)
-    atlas.finalize_note(path)
+    try:
+        atlas.finalize_note(path)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     atlas.refresh_index()
     click.echo(path)
 
@@ -914,10 +929,21 @@ def edit(note_id: str) -> None:
     _open_note(note_id)
 
 
+def _render_routed_results(payload: dict[str, Any]) -> None:
+    click.echo(f"routes: {', '.join(payload['routes'])}")
+    click.echo("")
+    for item in payload["results"]:
+        path_text = f" ({item['path']})" if item.get("path") else ""
+        click.echo(f"[{item['shelf']}] {item['label']}{path_text}")
+        click.echo(item["text"])
+        click.echo("")
+
+
 @main.command()
 @click.argument("expression", nargs=-1, required=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def query(expression: tuple[str, ...], as_json: bool) -> None:
+@click.option("--route", "route_mode", is_flag=True, help="Route the query across operating-truth/profile/graph/corpus shelves.")
+def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
     """Query atlas notes by structured tokens or plain text.
 
     Use structured queries like: type:project tag:urgent
@@ -925,12 +951,137 @@ def query(expression: tuple[str, ...], as_json: bool) -> None:
     """
     atlas = get_atlas()
     expr = " ".join(expression)
+    if route_mode:
+        from .query_router import route_query
+
+        payload = route_query(atlas.root, expr)
+        if as_json:
+            _emit_json(
+                _with_schema(
+                    {
+                        "expression": expr,
+                        "route": True,
+                        **payload,
+                    },
+                    surface="query",
+                )
+            )
+            return
+        _render_routed_results(payload)
+        return
     results = resolve_query_paths(atlas, expr)
     if as_json:
-        _emit_json(_with_schema({"expression": expr, "results": results}, surface="query"))
+        _emit_json(
+            _with_schema(
+                {"expression": expr, "results": results, "route": False},
+                surface="query",
+            )
+        )
         return
     for result in results:
         click.echo(result)
+
+
+@main.group("operating-truth", invoke_without_command=True)
+@click.option("--type", "entry_type", default=None, help="Filter to one operating-truth type.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+@click.pass_context
+def operating_truth_group(
+    ctx: click.Context,
+    entry_type: str | None,
+    as_json: bool,
+) -> None:
+    """Show or manage the operational state shelf."""
+    if ctx.invoked_subcommand is not None:
+        return
+    atlas = get_atlas()
+    from .operating_truth import list_operating_truth
+
+    items = list_operating_truth(atlas.root, entry_type=entry_type)
+    if as_json:
+        _emit_json(
+            _with_schema(
+                {
+                    "type": entry_type,
+                    "entries": items,
+                },
+                surface="operating-truth",
+            )
+        )
+        return
+    if not items:
+        click.echo("no operating truth entries")
+        return
+    for item in items:
+        click.echo(f"{item['id']}  {item['type']:<20} {item['content']}")
+
+
+@operating_truth_group.command("set")
+@click.argument(
+    "entry_type",
+    type=click.Choice(["active_work"]),
+)
+@click.argument("content")
+def operating_truth_set(entry_type: str, content: str) -> None:
+    atlas = get_atlas()
+    from .operating_truth import set_operating_truth
+
+    payload = set_operating_truth(atlas.root, entry_type, content)
+    click.echo(f"{payload['id']}  {payload['type']}  {payload['content']}")
+
+
+@operating_truth_group.command("add")
+@click.argument(
+    "entry_type",
+    type=click.Choice(
+        ["active_work", "open_decision", "current_commitment", "commitment", "next_step", "external_owner"]
+    ),
+)
+@click.argument("content")
+@click.option("--priority", default=1, type=int, show_default=True)
+def operating_truth_add(entry_type: str, content: str, priority: int) -> None:
+    atlas = get_atlas()
+    from .operating_truth import add_operating_truth
+
+    payload = add_operating_truth(atlas.root, entry_type, content, priority=priority)
+    click.echo(f"{payload['id']}  {payload['type']}  {payload['content']}")
+
+
+@operating_truth_group.command("done")
+@click.argument("entry_id")
+def operating_truth_done(entry_id: str) -> None:
+    atlas = get_atlas()
+    from .operating_truth import mark_operating_truth_status
+
+    payload = mark_operating_truth_status(atlas.root, entry_id, status="completed")
+    click.echo(f"completed: {payload['id']}")
+
+
+@operating_truth_group.command("expire")
+@click.argument("entry_id")
+def operating_truth_expire(entry_id: str) -> None:
+    atlas = get_atlas()
+    from .operating_truth import mark_operating_truth_status
+
+    payload = mark_operating_truth_status(atlas.root, entry_id, status="expired")
+    click.echo(f"expired: {payload['id']}")
+
+
+@operating_truth_group.command("history")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def operating_truth_history_command(as_json: bool) -> None:
+    atlas = get_atlas()
+    from .operating_truth import operating_truth_history
+
+    items = operating_truth_history(atlas.root)
+    if as_json:
+        _emit_json(_with_schema({"entries": items}, surface="operating-truth.history"))
+        return
+    if not items:
+        click.echo("no operating truth history")
+        return
+    for item in items:
+        click.echo(f"{item['id']}  {item['status']:<10} {item['type']:<20} {item['content']}")
 
 
 @main.command("think")
@@ -1177,6 +1328,195 @@ def stats_command(as_json: bool) -> None:
         _emit_json(_with_schema(payload, surface="stats"))
         return
     click.echo(render_stats_text(payload), nl=False)
+
+
+@main.command("supersede")
+@click.argument("old_note_id")
+@click.argument("new_note_id")
+def supersede_command(old_note_id: str, new_note_id: str) -> None:
+    """Mark one note as superseded by another."""
+    atlas = get_atlas()
+    from .temporal_truth import supersede_notes
+
+    payload = supersede_notes(atlas.root, old_note_id, new_note_id)
+    click.echo(f"superseded: {payload['old_note']} -> {payload['new_note']}")
+
+
+@main.command("history")
+@click.argument("note_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def history_command(note_id: str, as_json: bool) -> None:
+    """Show a note's supersession chain."""
+    atlas = get_atlas()
+    from .temporal_truth import temporal_history
+
+    items = temporal_history(atlas.root, note_id)
+    if as_json:
+        _emit_json(_with_schema({"note_id": note_id, "history": items}, surface="history"))
+        return
+    for item in items:
+        status = "current" if item["is_current"] else "historical"
+        click.echo(f"{item['id']:<24} {status:<10} {item['valid_from'] or '-'} -> {item['valid_to'] or 'now'}")
+
+
+@main.command("conflicts")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def conflicts_command(as_json: bool) -> None:
+    """Surface current-truth conflicts for human review."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .temporal_truth import find_conflicts
+
+    items = find_conflicts(atlas.root)
+    if as_json:
+        _emit_json(_with_schema({"conflicts": items}, surface="conflicts"))
+        return
+    if not items:
+        click.echo("no temporal conflicts found")
+        return
+    for item in items:
+        click.echo(f"{item['type']}: {item['group']} -> {', '.join(item['notes'])}")
+
+
+@main.command("stale")
+@click.option("--days", default=None, type=int, help="Override stale threshold in days.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def stale_command(days: int | None, as_json: bool) -> None:
+    """Show current notes that may need temporal review."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .temporal_truth import find_stale_notes
+
+    items = find_stale_notes(atlas.root, threshold_days=days)
+    if as_json:
+        _emit_json(_with_schema({"days": days, "notes": items}, surface="stale"))
+        return
+    if not items:
+        click.echo("no stale notes found")
+        return
+    for item in items:
+        click.echo(f"{item['id']:<24} {item['type']:<12} {item['path']}")
+
+
+@main.command("delete")
+@click.argument("note_id")
+@click.option("--force", is_flag=True, help="Skip confirmation.")
+@click.option("--no-cascade", is_flag=True, help="Delete the note without cleaning links in other notes.")
+@click.option("--archive", is_flag=True, help="Archive the note instead of deleting it.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def delete_command(
+    note_id: str,
+    force: bool,
+    no_cascade: bool,
+    archive: bool,
+    as_json: bool,
+) -> None:
+    """Delete or archive a note with impact analysis."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .delete import delete_impact, delete_note
+
+    impact = delete_impact(atlas.root, note_id)
+    if as_json and not force:
+        _emit_json(_with_schema({"impact": impact}, surface="delete.preview"))
+        return
+
+    if not force:
+        click.echo(f"Deleting: {impact['note_id']}")
+        click.echo(
+            "Impact: "
+            f"{impact['incoming_wires'] + impact['outgoing_wires']} wires, "
+            f"{impact['block_refs']} block_refs, "
+            f"{impact['frontmatter_links']} notes link to it, "
+            f"{impact['embeddings']} embeddings, "
+            f"{impact['operating_truth_refs']} operating-truth refs"
+        )
+        response = click.prompt(
+            "Also delete all wires and refs? [Y/n/a(rchive)]",
+            default="y",
+            show_default=False,
+        ).strip().lower()
+        if response in {"", "y", "yes"}:
+            pass
+        elif response in {"a", "archive"}:
+            archive = True
+        else:
+            raise click.ClickException("delete aborted")
+
+    payload = delete_note(
+        atlas.root,
+        note_id,
+        cascade=not no_cascade,
+        archive=archive,
+    )
+    if as_json:
+        _emit_json(_with_schema(payload, surface="delete"))
+        return
+    if payload["archived"]:
+        click.echo(f"archived: {payload['deleted']} -> {payload['archive_path']}")
+    else:
+        click.echo(f"deleted: {payload['deleted']}")
+
+
+@main.group("guardrails", invoke_without_command=True)
+@click.pass_context
+def guardrails_group(ctx: click.Context) -> None:
+    """Guardrail controls for atlas admission filtering."""
+    if ctx.invoked_subcommand is not None:
+        return
+    atlas = get_atlas()
+    from .guardrails import guardrails_status
+
+    status = guardrails_status(atlas.root)
+    click.echo("enabled" if status["enabled"] else "disabled")
+
+
+@guardrails_group.command("scan")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def guardrails_scan(as_json: bool) -> None:
+    atlas = get_atlas()
+    from .guardrails import scan_atlas
+
+    payload = scan_atlas(atlas.root)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="guardrails.scan"))
+        return
+    click.echo(f"{payload['count']} guardrail violation(s)")
+    for item in payload["violations"]:
+        click.echo(f"{item['severity']:<6} {item['type']:<18} {item['note_id']}")
+
+
+@guardrails_group.command("enable")
+def guardrails_enable() -> None:
+    atlas = get_atlas()
+    from .guardrails import set_guardrails_enabled
+
+    set_guardrails_enabled(atlas.root, True)
+    click.echo("guardrails enabled")
+
+
+@guardrails_group.command("disable")
+def guardrails_disable() -> None:
+    atlas = get_atlas()
+    from .guardrails import set_guardrails_enabled
+
+    set_guardrails_enabled(atlas.root, False)
+    click.echo("guardrails disabled")
+
+
+@guardrails_group.command("status")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def guardrails_status_command(as_json: bool) -> None:
+    atlas = get_atlas()
+    from .guardrails import guardrails_status
+
+    payload = guardrails_status(atlas.root)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="guardrails.status"))
+        return
+    click.echo("enabled" if payload["enabled"] else "disabled")
+    for key, value in payload["config"].items():
+        click.echo(f"{key}: {value}")
 
 
 @main.command()

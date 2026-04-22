@@ -11,6 +11,7 @@ from typing import Any
 from .agent_memory import LearningItem, append_learning
 from .intake_parser import ParsedMapsOSIntake, parse_mapsos_intake
 from .notes import Note
+from .operating_truth import add_operating_truth
 from .patterns import StateLogEntry, load_state_log, render_state_log_note
 from .tasks import parse_tasks_in_file
 from .templates import render_template
@@ -335,6 +336,43 @@ def _extract_labels(payload: dict[str, Any], *keys: str) -> list[str]:
     return list(dict.fromkeys(labels))
 
 
+def _decision_candidates(payload: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("vent", "vents", "journal", "summary", "notes", "briefing"):
+        value = payload.get(key)
+        for item in _coerce_list(value):
+            if isinstance(item, str) and item.strip():
+                candidates.append(item.strip())
+    session = payload.get("session")
+    if isinstance(session, dict):
+        for key in ("vent", "vents", "journal", "summary", "notes", "briefing"):
+            value = session.get(key)
+            for item in _coerce_list(value):
+                if isinstance(item, str) and item.strip():
+                    candidates.append(item.strip())
+    return list(dict.fromkeys(candidates))
+
+
+def _extract_operating_truth_payloads(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    extracted: list[tuple[str, str]] = []
+    for goal in _extract_labels(payload, "goals", "goal"):
+        extracted.append(("current_commitment", goal))
+    for intention in _extract_labels(payload, "intentions", "intention"):
+        extracted.append(("next_step", intention))
+    for candidate in _decision_candidates(payload):
+        lowered = candidate.lower()
+        if "should i" in lowered or "should we" in lowered or " or " in lowered:
+            extracted.append(("open_decision", candidate))
+    deduped: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in extracted:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
+
+
 def _ensure_daily_note(root: Path, day: str) -> Note:
     path = root / "daily" / f"{day}.md"
     if not path.exists():
@@ -621,14 +659,36 @@ def sync_mapsos_payload(
 
     open_tasks = [task for task in tasks if not task.done]
     unique_paths = list(dict.fromkeys(written))
+    operating_truth_added = 0
+    from .config import load_config
+
+    config = load_config(root=root)
+    operating_truth_config = (
+        config.get("operating_truth", {}) if isinstance(config, dict) else {}
+    )
+    if isinstance(operating_truth_config, dict) and bool(
+        operating_truth_config.get("auto_extract_from_mapsos", True)
+    ):
+        source_session = _extract_source_session(payload)
+        for entry_type, content in _extract_operating_truth_payloads(payload):
+            add_operating_truth(
+                root,
+                entry_type,
+                content,
+                source=f"mapsos:{source_session}",
+                metadata={"status": "active", "source_kind": "mapsos"},
+            )
+            operating_truth_added += 1
     return {
         "date": day,
         "paths": [str(path) for path in unique_paths],
         "task_count": len(tasks),
         "open_task_count": len(open_tasks),
+        "operating_truth_added": operating_truth_added,
         "output": (
             f"mapsOS ingest {day}: wrote {len(unique_paths)} files, "
-            f"{len(tasks)} tasks ({len(open_tasks)} open)"
+            f"{len(tasks)} tasks ({len(open_tasks)} open), "
+            f"{operating_truth_added} operating-truth entries"
         ),
     }
 

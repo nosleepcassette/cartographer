@@ -56,7 +56,12 @@ CREATE TABLE IF NOT EXISTS notes (
     links TEXT,
     modified REAL,
     word_count INTEGER,
-    body TEXT
+    body TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    supersedes TEXT,
+    superseded_by TEXT,
+    is_current INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS blocks (
@@ -128,6 +133,27 @@ CREATE TABLE IF NOT EXISTS dream_log (
     completed_at REAL,
     stats_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS operating_truth (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('active_work', 'open_decision', 'current_commitment', 'next_step', 'external_owner')),
+    content TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 1,
+    source TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    expires_at REAL,
+    metadata_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS guardrail_violations (
+    id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL,
+    violation_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'warn',
+    detected_at REAL NOT NULL,
+    resolved INTEGER DEFAULT 0
+);
 """
 
 FTS_SCHEMA = """
@@ -144,6 +170,14 @@ WIRE_OPTIONAL_COLUMNS = {
     "since": "TEXT",
     "until": "TEXT",
     "valence_note": "TEXT",
+}
+
+NOTE_OPTIONAL_COLUMNS = {
+    "valid_from": "TEXT",
+    "valid_to": "TEXT",
+    "supersedes": "TEXT",
+    "superseded_by": "TEXT",
+    "is_current": "INTEGER DEFAULT 1",
 }
 
 
@@ -267,6 +301,16 @@ class Index:
                 self.fts_enabled = False
 
     def _migrate(self, connection: sqlite3.Connection) -> None:
+        note_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(notes)").fetchall()
+        }
+        for column_name, column_type in NOTE_OPTIONAL_COLUMNS.items():
+            if column_name in note_columns:
+                continue
+            connection.execute(
+                f"ALTER TABLE notes ADD COLUMN {column_name} {column_type}"
+            )
         wire_columns = {
             str(row["name"])
             for row in connection.execute("PRAGMA table_info(wires)").fetchall()
@@ -343,6 +387,12 @@ class Index:
                 ]
                 modified = path.stat().st_mtime
                 word_count = len(note.body.split())
+                valid_from = note.frontmatter.get("valid_from")
+                valid_to = note.frontmatter.get("valid_to")
+                supersedes = note.frontmatter.get("supersedes")
+                superseded_by = note.frontmatter.get("superseded_by")
+                raw_is_current = note.frontmatter.get("is_current", True)
+                is_current = 0 if raw_is_current in {False, "false", "False", 0, "0"} else 1
                 parsed_notes.append(
                     {
                         "path": path,
@@ -355,6 +405,13 @@ class Index:
                         "links": links,
                         "modified": modified,
                         "word_count": word_count,
+                        "valid_from": None if valid_from in {None, ""} else str(valid_from),
+                        "valid_to": None if valid_to in {None, ""} else str(valid_to),
+                        "supersedes": None if supersedes in {None, ""} else str(supersedes),
+                        "superseded_by": None
+                        if superseded_by in {None, ""}
+                        else str(superseded_by),
+                        "is_current": is_current,
                     }
                 )
 
@@ -380,12 +437,33 @@ class Index:
                 ]
                 modified = float(item["modified"])
                 word_count = int(item["word_count"])
+                valid_from = item["valid_from"]
+                valid_to = item["valid_to"]
+                supersedes = item["supersedes"]
+                superseded_by = item["superseded_by"]
+                is_current = int(item["is_current"])
 
                 connection.execute(
                     """
                     INSERT OR REPLACE INTO notes
-                    (id, path, title, type, status, tags, links, modified, word_count, body)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (
+                        id,
+                        path,
+                        title,
+                        type,
+                        status,
+                        tags,
+                        links,
+                        modified,
+                        word_count,
+                        body,
+                        valid_from,
+                        valid_to,
+                        supersedes,
+                        superseded_by,
+                        is_current
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         note_id,
@@ -398,6 +476,11 @@ class Index:
                         modified,
                         word_count,
                         note.body,
+                        valid_from,
+                        valid_to,
+                        supersedes,
+                        superseded_by,
+                        is_current,
                     ),
                 )
                 if self.fts_enabled:

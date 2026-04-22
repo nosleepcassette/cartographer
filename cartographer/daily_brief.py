@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .agent_memory import iter_learning_blocks
 from .notes import Note
+from .operating_truth import operating_truth_brief_section
 from .patterns import entries_since, latest_entry, load_state_log, recent_entries, summarize_patterns
 from .tasks import iter_tasks, sort_tasks
 
@@ -103,6 +104,8 @@ def build_daily_brief(root: Path, *, format: str = "markdown") -> str:
 
     sections = [
         f"# atlas brief — {date.today().isoformat()}",
+        "",
+        *operating_truth_brief_section(root),
         "",
         "## open tasks (P0-P1)",
         *task_lines,

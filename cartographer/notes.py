@@ -101,6 +101,12 @@ class Note:
             self.body = insert_missing_block_ids(self.body)
         self.blocks = parse_blocks(self.body)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            from .guardrails import guardrails_pre_write
+
+            guardrails_pre_write(self)
+        except ImportError:
+            pass
         lock_path = _acquire_lock(self.path)
         try:
             self.path.write_text(

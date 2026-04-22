@@ -15,7 +15,7 @@ from .agent_memory import ensure_master_summary_note
 from .hooks import ensure_hook_dir
 from .index import Index
 from .integrations import qmd
-from .notes import Note
+from .notes import Note, parse_frontmatter
 from .obsidian import bootstrap as bootstrap_obsidian
 from .obsidian import detect_external_vault
 from .plugins import sync_builtin_plugins
@@ -397,6 +397,11 @@ class Atlas:
         if not path.exists() or path.suffix != ".md":
             return
         note = Note.from_file(path)
+        note.frontmatter.setdefault("valid_from", "")
+        note.frontmatter.setdefault("valid_to", "")
+        note.frontmatter.setdefault("supersedes", "")
+        note.frontmatter.setdefault("superseded_by", "")
+        note.frontmatter.setdefault("is_current", True)
         note.frontmatter.setdefault("modified", date.today().isoformat())
         note.frontmatter["modified"] = date.today().isoformat()
         note.write(ensure_blocks=True)
@@ -408,6 +413,7 @@ class Atlas:
         *,
         priority: str = "P2",
         agent: str = "hermes",
+        body_override: str | None = None,
     ) -> Path:
         self.ensure_initialized()
         today = date.today().isoformat()
@@ -460,9 +466,22 @@ class Atlas:
             },
             atlas_root=self.root,
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        self.finalize_note(path)
+        frontmatter, body = parse_frontmatter(content)
+        frontmatter.setdefault("modified", today)
+        frontmatter.setdefault("valid_from", "")
+        frontmatter.setdefault("valid_to", "")
+        frontmatter.setdefault("supersedes", "")
+        frontmatter.setdefault("superseded_by", "")
+        frontmatter.setdefault("is_current", True)
+        if body_override:
+            extra = body_override.rstrip()
+            if extra:
+                body = body.rstrip()
+                if body:
+                    body += "\n\n"
+                body += extra + "\n"
+        note = Note(path=path, frontmatter=frontmatter, body=body)
+        note.write(ensure_blocks=True)
         record_operation(
             self.worklog_db_path,
             f"create {note_type} note",

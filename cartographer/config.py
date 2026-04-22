@@ -65,6 +65,33 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "weight_decay_amount": 0.05,
         "weight_prune_threshold": 0.1,
     },
+    "operating_truth": {
+        "auto_extract_from_mapsos": True,
+        "archive_completed": True,
+        "max_history_days": 90,
+    },
+    "temporal": {
+        "stale_threshold_days": 60,
+        "conflict_detection": True,
+        "auto_supersede": False,
+    },
+    "guardrails": {
+        "enabled": True,
+        "reject_secrets": True,
+        "flag_stack_traces": True,
+        "warn_large_code": True,
+        "warn_duplicates": True,
+        "max_code_lines": 50,
+    },
+    "query_routing": {
+        "enabled": True,
+        "default_total_budget": 4000,
+        "operating_truth_budget": 500,
+        "profile_budget": 500,
+        "graph_budget": 2000,
+        "corpus_budget": 1000,
+        "rrf_k": 60,
+    },
     "mapsos": {
         "tasks_file": "tasks/mapsos.md",
         "snapshot_dir": "agents/mapsOS",
