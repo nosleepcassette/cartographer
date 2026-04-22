@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from click.core import ParameterSource
 from click.shell_completion import get_completion_class
 
 from .agent_memory import (
@@ -77,7 +78,7 @@ from .wires import (
     render_wire_comment,
 )
 
-JSON_SCHEMA_VERSION = "2026-04-18"
+JSON_SCHEMA_VERSION = "2026-04-17"
 
 
 def get_atlas(root: str | None = None) -> Atlas:
@@ -369,6 +370,16 @@ def _bootstrap_qmd(atlas: Atlas) -> dict[str, object]:
     }
 
 
+def _embedding_query_paths(atlas: Atlas, expr: str) -> list[str]:
+    if not _supports_qmd_query(expr):
+        return []
+    try:
+        from .embed import semantic_query_paths
+    except Exception:
+        return []
+    return semantic_query_paths(atlas.root, expr, top_k=20)
+
+
 def resolve_query_paths(atlas: Atlas, expr: str) -> list[str]:
     if "type:task" in expr or any(
         token in expr for token in ("priority:", "project:", "due:")
@@ -377,6 +388,9 @@ def resolve_query_paths(atlas: Atlas, expr: str) -> list[str]:
     qmd_paths = _qmd_query_paths(atlas, expr)
     if qmd_paths:
         return qmd_paths
+    embedding_paths = _embedding_query_paths(atlas, expr)
+    if embedding_paths:
+        return embedding_paths
     return ensure_index_current(atlas).query(expr)
 
 
@@ -917,6 +931,252 @@ def query(expression: tuple[str, ...], as_json: bool) -> None:
         return
     for result in results:
         click.echo(result)
+
+
+@main.command("think")
+@click.argument("note_id")
+@click.option("--depth", type=int, default=None, help="Traversal depth.")
+@click.option("--decay", type=float, default=None, help="Activation decay per hop.")
+@click.option(
+    "--no-emotional-weight",
+    is_flag=True,
+    help="Ignore emotional valence in wire weights.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def think_command(
+    note_id: str,
+    depth: int | None,
+    decay: float | None,
+    no_emotional_weight: bool,
+    as_json: bool,
+) -> None:
+    """Spreading activation from a note - explore what's connected through the graph."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .think import configured_think_settings, spreading_activation
+
+    settings = configured_think_settings(atlas.root)
+    try:
+        resolved_depth = depth if depth is not None else int(settings.get("default_depth", 3))
+    except (TypeError, ValueError):
+        resolved_depth = 3
+    try:
+        resolved_decay = decay if decay is not None else float(settings.get("default_decay", 0.85))
+    except (TypeError, ValueError):
+        resolved_decay = 0.85
+    emotional_weight = not no_emotional_weight and bool(settings.get("emotional_weighting", True))
+    try:
+        results = spreading_activation(
+            atlas.root,
+            note_id,
+            depth=resolved_depth,
+            decay=resolved_decay,
+            emotional_weight=emotional_weight,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _emit_json(
+            _with_schema(
+                {
+                    "note_id": note_id,
+                    "depth": resolved_depth,
+                    "decay": resolved_decay,
+                    "emotional_weight": emotional_weight,
+                    "results": results,
+                },
+                surface="think",
+            )
+        )
+        return
+    click.echo(
+        f"{note_id} - spreading activation (depth={resolved_depth}, decay={resolved_decay:.2f})"
+    )
+    click.echo("")
+    for item in results:
+        path_text = " -> ".join(item["path_ids"])
+        hops = int(item["depth"])
+        click.echo(
+            f"{item['activation']:>5.2f}  {item['note_id']:<20} [{hops} hops: {path_text}]"
+        )
+
+
+@main.command("discover")
+@click.option("--threshold", type=float, default=None, help="Minimum similarity to propose.")
+@click.option("--accept", is_flag=True, help="Auto-create wires for all proposals.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def discover_command(threshold: float | None, accept: bool, as_json: bool) -> None:
+    """Find similar but unwired note pairs - propose new connections."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .discover import accept_bridge_proposals, configured_discover_settings, discover_bridges
+
+    settings = configured_discover_settings(atlas.root)
+    try:
+        resolved_threshold = threshold if threshold is not None else float(settings.get("threshold", 0.6))
+    except (TypeError, ValueError):
+        resolved_threshold = 0.6
+    try:
+        max_proposals = int(settings.get("max_proposals", 20))
+    except (TypeError, ValueError):
+        max_proposals = 20
+    proposals = discover_bridges(
+        atlas.root,
+        threshold=resolved_threshold,
+        max_proposals=max_proposals,
+    )
+    accepted_count = 0
+    if accept:
+        accepted_count = accept_bridge_proposals(atlas.root, proposals)
+    if as_json:
+        _emit_json(
+            _with_schema(
+                {
+                    "threshold": resolved_threshold,
+                    "accept": accept,
+                    "accepted_count": accepted_count,
+                    "proposals": proposals,
+                },
+                surface="discover",
+            )
+        )
+        return
+    click.echo(f"bridge proposals (threshold={resolved_threshold:.2f})")
+    click.echo("")
+    for proposal in proposals:
+        reasons = proposal["reasons"]
+        reason_parts: list[str] = []
+        if reasons["tags"]:
+            reason_parts.append("tags: " + ", ".join(reasons["tags"][:3]))
+        if reasons["links"]:
+            reason_parts.append("links: " + ", ".join(reasons["links"][:3]))
+        if reasons["keywords"]:
+            reason_parts.append("keywords: " + ", ".join(reasons["keywords"][:4]))
+        if reasons["type_match"]:
+            reason_parts.append(f"type: {proposal['left_type']}")
+        click.echo(
+            f"{proposal['score']:>5.2f}  {proposal['left_id']} <-> {proposal['right_id']}  "
+            + " | ".join(reason_parts)
+        )
+    click.echo("")
+    if accept:
+        click.echo(f"accepted {accepted_count} proposal(s).")
+    else:
+        click.echo(f"{len(proposals)} proposals. Run with --accept to create wires.")
+
+
+def _walk_metadata_summary(item: dict[str, Any]) -> str:
+    fields: list[str] = []
+    if item.get("emotional_valence"):
+        fields.append(f"valence={item['emotional_valence']}")
+    if item.get("energy_impact"):
+        fields.append(f"energy={item['energy_impact']}")
+    if item.get("avoidance_risk"):
+        fields.append(f"avoidance={item['avoidance_risk']}")
+    if item.get("current_state"):
+        fields.append(f"state={item['current_state']}")
+    if item.get("growth_edge"):
+        fields.append("growth-edge")
+    return ", ".join(fields)
+
+
+@main.command("walk")
+@click.argument("note_id")
+@click.option("--depth", default=2, type=int, show_default=True, help="Walk depth.")
+@click.option(
+    "--avoidance-only",
+    type=click.Choice(["high", "medium", "low"]),
+    help="Only follow wires with this avoidance risk or higher.",
+)
+@click.option("--growth-edges", is_flag=True, help="Only follow growth-edge wires.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def walk_command(
+    note_id: str,
+    depth: int,
+    avoidance_only: str | None,
+    growth_edges: bool,
+    as_json: bool,
+) -> None:
+    """Walk the atlas graph from a note - explore its wire neighborhood."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .walk import walk_atlas
+
+    try:
+        traversals = walk_atlas(
+            atlas.root,
+            note_id,
+            depth=depth,
+            filter_avoidance=avoidance_only,
+            filter_growth_edge=growth_edges,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        _emit_json(
+            _with_schema(
+                {
+                    "note_id": note_id,
+                    "depth": depth,
+                    "avoidance_only": avoidance_only,
+                    "growth_edges": growth_edges,
+                    "traversals": traversals,
+                },
+                surface="walk",
+            )
+        )
+        return
+    click.echo(f"{note_id} - graph walk (depth={depth})")
+    click.echo("")
+    current_depth = None
+    for item in traversals:
+        if item["depth"] != current_depth:
+            current_depth = item["depth"]
+            if current_depth != 1:
+                click.echo("")
+            click.echo(f"depth {current_depth}:")
+        if item["direction"] == "outgoing":
+            line = f"  {item['from_note']} ->{item['predicate']}-> {item['to_note']}"
+        else:
+            line = f"  {item['from_note']} <-{item['predicate']}<- {item['to_note']}"
+        metadata = _walk_metadata_summary(item)
+        if metadata:
+            line += f"  {{{metadata}}}"
+        click.echo(line)
+
+
+@main.command("embed")
+@click.option("--force", is_flag=True, help="Re-embed all notes, not just missing or stale ones.")
+@click.option("--model", default=None, help="Embedding model name override.")
+def embed_command(force: bool, model: str | None) -> None:
+    """Compute and store embeddings for atlas notes."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .embed import configured_backend, embed_all_notes, is_fastembed_available
+
+    if not is_fastembed_available():
+        click.echo("fastembed not installed. Run: pip install 'fastembed>=0.5.1'")
+        return
+    backend = configured_backend(atlas.root, model_name=model)
+    embedded_count = embed_all_notes(atlas.root, backend=backend, force=force)
+    click.echo(
+        f"embeddings updated: {embedded_count} note(s) using {backend.model_name}"
+    )
+
+
+@main.command("stats")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def stats_command(as_json: bool) -> None:
+    """Atlas health dashboard - growth, connectivity, topology, warnings."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .stats import atlas_stats, render_stats_text
+
+    payload = atlas_stats(atlas.root)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="stats"))
+        return
+    click.echo(render_stats_text(payload), nl=False)
 
 
 @main.command()
@@ -2561,13 +2821,138 @@ def plugin_run(name: str, args: tuple[str, ...]) -> None:
     show_default=True,
 )
 @click.option("--open", "open_in_browser", is_flag=True, help="Open HTML graph after export.")
-def graph_export(export_path: str | None, fmt: str, open_in_browser: bool) -> None:
+@click.option(
+    "--serve",
+    "serve_mode",
+    is_flag=True,
+    help="Serve the live HTML graph at localhost and auto-regenerate on atlas changes.",
+)
+@click.option(
+    "--port",
+    default=6969,
+    type=int,
+    show_default=True,
+    help="Port for --serve mode.",
+)
+@click.option(
+    "--daemon",
+    "daemon_mode",
+    is_flag=True,
+    help="Run the live graph server in the background.",
+)
+@click.option(
+    "--status-daemon",
+    "status_daemon",
+    is_flag=True,
+    help="Show status for the background graph daemon on --port.",
+)
+@click.option(
+    "--stop-daemon",
+    "stop_daemon",
+    is_flag=True,
+    help="Stop the background graph daemon on --port.",
+)
+@click.pass_context
+def graph_export(
+    ctx: click.Context,
+    export_path: str | None,
+    fmt: str,
+    open_in_browser: bool,
+    serve_mode: bool,
+    port: int,
+    daemon_mode: bool,
+    status_daemon: bool,
+    stop_daemon: bool,
+) -> None:
     """Export the atlas note graph as JSON or an interactive HTML view."""
+
+    atlas = get_atlas()
+    fmt_source = ctx.get_parameter_source("fmt")
+
+    if status_daemon and stop_daemon:
+        raise click.ClickException("use either --status-daemon or --stop-daemon, not both")
+    if daemon_mode and not serve_mode:
+        raise click.ClickException("--daemon only works with --serve")
+    if (status_daemon or stop_daemon) and serve_mode:
+        raise click.ClickException("--status-daemon/--stop-daemon cannot be combined with --serve")
+    if (status_daemon or stop_daemon) and export_path:
+        raise click.ClickException("--export cannot be used with daemon management flags")
+    if (status_daemon or stop_daemon) and open_in_browser:
+        raise click.ClickException("--open cannot be used with daemon management flags")
+
+    if status_daemon:
+        from .graph_serve import daemon_status
+
+        status = daemon_status(atlas.root, port=port)
+        if status["running"]:
+            click.echo(f"graph daemon running: pid {status['pid']} at {status['url']}")
+            click.echo(f"log: {status['log_path']}")
+            click.echo(f"pid file: {status['pid_path']}")
+            server_status = status.get("server_status")
+            if isinstance(server_status, dict):
+                click.echo(
+                    "graph status: "
+                    f"{server_status.get('node_count')} nodes, "
+                    f"{server_status.get('edge_count')} edges, "
+                    f"last regen {server_status.get('last_regen')}"
+                )
+        else:
+            click.echo(f"graph daemon not running on port {port}")
+            if status.get("stale_pid") is not None:
+                click.echo(f"removed stale pid file for pid {status['stale_pid']}")
+            click.echo(f"log: {status['log_path']}")
+            click.echo(f"pid file: {status['pid_path']}")
+        return
+
+    if stop_daemon:
+        from .graph_serve import stop_graph_daemon
+
+        stopped = stop_graph_daemon(atlas.root, port=port)
+        if stopped["stopped"]:
+            if stopped["forced"]:
+                click.echo(
+                    f"graph daemon stopped: pid {stopped['pid']} on port {port} (forced)"
+                )
+            else:
+                click.echo(f"graph daemon stopped: pid {stopped['pid']} on port {port}")
+        else:
+            click.echo(f"graph daemon not running on port {port}")
+            if stopped.get("stale_pid") is not None:
+                click.echo(f"removed stale pid file for pid {stopped['stale_pid']}")
+        click.echo(f"log: {stopped['log_path']}")
+        click.echo(f"pid file: {stopped['pid_path']}")
+        return
+
+    if serve_mode:
+        if export_path:
+            raise click.ClickException("--export cannot be used with --serve")
+        if fmt_source == ParameterSource.DEFAULT:
+            fmt = "html"
+        if fmt != "html":
+            raise click.ClickException("--serve only works with --format html")
+        if daemon_mode:
+            from .graph_serve import spawn_graph_daemon
+
+            daemon = spawn_graph_daemon(
+                atlas.root,
+                port=port,
+                open_in_browser=open_in_browser,
+            )
+            click.echo(
+                f"graph daemon started: pid {daemon['pid']} serving {daemon['url']}"
+            )
+            click.echo(f"log: {daemon['log_path']}")
+            click.echo(f"pid file: {daemon['pid_path']}")
+            return
+        from .graph_serve import serve_graph
+
+        serve_graph(atlas.root, port=port, open_in_browser=open_in_browser)
+        return
+
     import webbrowser
 
     from .graph_export import load_graph_payload, render_graph_html
 
-    atlas = get_atlas()
     ensure_index_current(atlas)
     payload = load_graph_payload(atlas.root)
 

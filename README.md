@@ -71,7 +71,7 @@ Most knowledge tools ignore AI entirely. Most AI tools ignore your history. cart
 - **Block-addressable by default.** `[[note-id#block-id]]` transclusion. Backlinks tracked automatically.
 - **Imports are idempotent.** Run `cart session-import` a hundred times. Zero duplicates. Just an always-current graph.
 - **Semantic wires with emotional predicates.** Wires capture what relationships *are*, not just that they exist — valence, energy impact, growth edges, avoidance territory, current state. The emotional topology layer is queryable.
-- **Optional semantic search without lock-in.** If `qmd` is installed, plain-language `cart query` uses hybrid retrieval over the atlas. If not, cart stays on its built-in SQLite/FTS path. The query interface is the same either way.
+- **Optional semantic search without lock-in.** If `qmd` is installed, plain-language `cart query` uses hybrid retrieval over the atlas. If not, cart can fall back to local embeddings when available, then to built-in SQLite/FTS. Same query surface, no hosted vector service required.
 - **Plugin economy.** stdin/stdout JSON contract. If it speaks that, it joins. Python, shell, Rust, Lua — anything.
 - **Built for configuration, not customization.** Backend config drives graph themes, privacy modes, person ordering, state vocabulary, arc definitions, mapsOS tracks. The system is designed to be shaped by whoever runs it.
 
@@ -196,11 +196,13 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 - Capacity-aware routing: surface support relationships when energy is low, growth-edges when high
 
 **Visual graph:**
-- Self-contained HTML graph — offline-safe, single exported file
+- Self-contained HTML graph - offline-safe, single exported file
+- Live local graph server: `cart graph --serve`
+- Background daemon mode: `cart graph --serve --daemon`, plus `--status-daemon` and `--stop-daemon`
 - Deterministic 3D clustered layout
 - Emotional-valence node coloring, avoidance-aware node sizing
 - Theme system: `baseline`, `astral` (hand-drawn in-scene celestial sigils, alchemical wire labels), plus auto-loaded atlas-local themes
-- Theme picker in graph sidebar — switch without re-export
+- Theme picker in graph sidebar - switch without re-export
 - Privacy modes driven from config
 - Local search, category toggles, wire toggles, type browser
 - Keyboard navigation, PNG/JSON export, shareable URL state
@@ -218,6 +220,13 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 - Semantic wire neighborhood
 - Block transclusion rendering
 - Task overlay (`t`), mapsOS handoff (`m`)
+
+**Graph-native reasoning + search:**
+- `cart think <note>` for spreading activation over the wire graph
+- `cart walk <note>` for neighborhood traversal with growth-edge / avoidance filters
+- `cart discover` to propose likely missing wires, `--accept` to write them back into notes
+- `cart stats` for atlas growth, connectivity, topology, and health signals
+- `cart embed` for local note embeddings; `cart query` prefers qmd, then embeddings, then built-in FTS
 
 **Session import:**
 - Claude Code, Hermes, Codex — deduped, idempotent
@@ -248,7 +257,7 @@ session → export → cart ingest → atlas update → emotional wires → dail
 **Session + Import:**
 - Session import: Claude Code, Hermes, Codex (deduped)
 - External import: ChatGPT, Claude.ai exports
-- Optional qmd-backed plain-language atlas search
+- Plain-language atlas search with qmd hybrid retrieval or local embedding fallback
 - Daily brief generation
 
 **Semantic wiring + Emotional topology:**
@@ -258,8 +267,14 @@ session → export → cart ingest → atlas update → emotional wires → dail
 
 **Visual graph:**
 - JSON and HTML export with full emotional metadata
+- Live local serving with background daemon support
 - Offline Firefox-safe rendering
 - Theme system with auto-loaded atlas-local skins
+
+**Graph-native tooling:**
+- `cart think`, `cart walk`, `cart discover`, `cart embed`, `cart stats`
+- Bridge proposals can be accepted back into note files as inline wires
+- Auto-embed-on-write is configurable; embeddings stay local in the SQLite cache
 
 **Therapy:**
 - Pattern detection and counter-evidence queries
@@ -343,10 +358,12 @@ cart completion fish > ~/.config/fish/completions/cart.fish
 cart init
 cart status
 cart doctor
+cart query "what did we learn about this project"
+cart stats
 cart daily-brief
 cart tui
 cart session-import claude --latest 1
-cart graph --format html --open
+cart graph --serve --daemon
 ```
 
 ---
@@ -393,7 +410,7 @@ cart edit project-alpha
 ### query + backlinks
 
 ```zsh
-cart query 'session drift in hermetica'   # plain language; uses qmd when configured
+cart query 'session drift in hermetica'   # plain language; prefers qmd, then local embeddings
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
@@ -401,13 +418,16 @@ cart query --json 'type:agent-log'
 cart backlinks project-alpha
 ```
 
-### optional enhanced search with qmd
+### enhanced search: qmd + local embeddings
 
 ```zsh
 npm install -g @tobilu/qmd
 cart qmd bootstrap
+cart embed
 cart query 'what do we know about this architecture decision'
 ```
+
+`cart query` now follows a simple local-first stack: qmd hybrid retrieval when configured, embedding-backed semantic ranking when embeddings exist, then built-in SQLite/FTS. You can precompute embeddings with `cart embed`; auto-embed-on-write is also configurable in `~/atlas/.cartographer/config.toml`.
 
 ### tasks
 
@@ -463,14 +483,35 @@ cart wire doctor
 cart wire gc
 ```
 
-Wires are stored inline as HTML comments — invisible in any Markdown renderer, machine-readable, file-native. `cart wire add` is idempotent: rerunning the same source/target/predicate updates the comment instead of duplicating it.
+Wires are stored inline as HTML comments - invisible in any Markdown renderer, machine-readable, file-native. `cart wire add` is idempotent: rerunning the same source/target/predicate updates the comment instead of duplicating it.
 
-### graph export
+### graph-native tools
 
 ```zsh
-cart graph --export
+cart think project-alpha
+cart think project-alpha --depth 4 --json
+cart walk project-alpha --depth 2
+cart walk project-alpha --avoidance-only high
+cart discover
+cart discover --accept
+cart embed
+cart stats
+```
+
+`think` surfaces likely-relevant notes through spreading activation. `walk` traverses the wire neighborhood directly. `discover` proposes unwired-but-similar note pairs and can write accepted bridges back into notes. `stats` gives you a health dashboard for the atlas: growth, connectivity, emotional topology, bridge nodes, and activity.
+
+### graph export + live server
+
+```zsh
+cart graph
+cart graph --export ~/tmp/graph-export.json
 cart graph --format html
 cart graph --format html --open
+cart graph --serve
+cart graph --serve --daemon
+cart graph --serve --daemon --port 8080
+cart graph --status-daemon
+cart graph --stop-daemon
 ```
 
 HTML output is a self-contained, offline-safe visual graph. Theme and privacy settings come from `~/atlas/.cartographer/config.toml`:
@@ -487,6 +528,8 @@ person_order = ["maps", "person-b", "person-c"]
 ```
 
 Atlas-local theme skins live in `~/atlas/themes/*.js` and are auto-loaded. The graph sidebar theme picker switches between them at runtime.
+
+`cart graph --serve` runs a local HTTP server for the graph and regenerates on atlas changes. `--daemon` sends it to the background, writes a per-port PID file and log under `~/atlas/.cartographer/`, and frees the terminal immediately. Use the same `--port` with `--status-daemon` or `--stop-daemon` when you're managing a nondefault daemon.
 
 ### external import
 

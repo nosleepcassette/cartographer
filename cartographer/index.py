@@ -105,6 +105,29 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS embeddings (
+    note_id TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    model TEXT NOT NULL DEFAULT 'intfloat/multilingual-e5-large',
+    dim INTEGER NOT NULL DEFAULT 1024,
+    computed_at REAL NOT NULL,
+    PRIMARY KEY (note_id, model)
+);
+
+CREATE TABLE IF NOT EXISTS access_log (
+    note_id TEXT NOT NULL,
+    accessed_at REAL NOT NULL,
+    access_type TEXT NOT NULL DEFAULT 'query'
+);
+
+CREATE TABLE IF NOT EXISTS dream_log (
+    id TEXT PRIMARY KEY,
+    phase TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    completed_at REAL,
+    stats_json TEXT
+);
 """
 
 FTS_SCHEMA = """

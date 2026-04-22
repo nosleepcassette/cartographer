@@ -355,6 +355,21 @@ class Atlas:
             incremental_on_save = bool(qmd_config.get("incremental_on_save", True))
             if enabled != "off" and incremental_on_save:
                 qmd.embed_incremental()
+        embed_config = self.config.get("embed", {})
+        if isinstance(embed_config, dict):
+            backend = str(embed_config.get("backend", "fastembed")).strip().lower() or "fastembed"
+            auto_embed_on_write = bool(embed_config.get("auto_embed_on_write", True))
+            if (
+                backend == "fastembed"
+                and auto_embed_on_write
+                and os.environ.get("CARTOGRAPHER_SKIP_AUTO_EMBED") != "1"
+            ):
+                try:
+                    from .embed import embed_all_notes
+
+                    embed_all_notes(self.root)
+                except Exception:
+                    pass
         return result
 
     def _editor_command(self) -> list[str]:

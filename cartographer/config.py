@@ -41,6 +41,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_score": 0.35,
         "incremental_on_save": True,
     },
+    "embed": {
+        "backend": "fastembed",
+        "model": "intfloat/multilingual-e5-large",
+        "dimensions": 1024,
+        "auto_embed_on_write": True,
+        "similarity_threshold": 0.7,
+    },
+    "discover": {
+        "threshold": 0.6,
+        "max_proposals": 20,
+    },
+    "think": {
+        "default_depth": 3,
+        "default_decay": 0.85,
+        "emotional_weighting": True,
+    },
+    "dream": {
+        "enabled": False,
+        "bridge_discovery": True,
+        "bridge_threshold": 0.75,
+        "weight_decay_days": 90,
+        "weight_decay_amount": 0.05,
+        "weight_prune_threshold": 0.1,
+    },
     "mapsos": {
         "tasks_file": "tasks/mapsos.md",
         "snapshot_dir": "agents/mapsOS",
