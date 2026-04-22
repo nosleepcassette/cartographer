@@ -1,13 +1,14 @@
 # cartographer
 
-Embedding-backed semantic search over Markdown. Emotional topology on relationships. Spreading activation across a knowledge graph. Spool up a live graph server. Track what your agent was working on. Wire notes together with valence, energy, avoidance risk. Run a therapy plugin off the atlas. All local, all git-native, all files.
+Run `cart discover` on the notes you already have and get immediate graph value in the first five minutes. Semantic search over Markdown. Typed, weighted wires. Human-readable provenance. Trace paths across the graph. Live graph server. All local, all git-native, all files.
 
 ```
-cart think sarah          →  spreading activation: maggie (0.87), grief-work (0.72), maps (0.68)
-cart discover --accept    →  auto-wire 23 similar-but-unwired note pairs
+cart discover             →  find 23 similar-but-unwired note pairs in your existing notes
+cart discover --interactive   →  review candidates one by one with predicate + weight
+cart trace grungler       →  trace weighted graph paths out from one note
 cart graph --serve        →  live graph at localhost:6969, auto-regenerates on file change
 cart stats                →  557 notes · 234 wires · 23 orphans · 78% embedding coverage
-cart query 'romantic tension with sarah'  →  semantic match, not keyword grep
+cart query 'relationship drift with grungler'  →  semantic match, not keyword grep
 cart operating-truth      →  active work, open decisions, commitments, next steps
 ```
 
@@ -27,13 +28,17 @@ cartographer is not a memory layer. It's a **knowledge substrate** that happens 
 
 **Semantic wires with emotional predicates.** Not just `[[links]]` — wires say *how* things relate: `supports`, `depends_on`, `contradicts`. And each wire carries emotional metadata: valence (positive/negative/mixed), energy impact (energizing/draining), avoidance risk (high/medium/low), growth-edge, current state. `cart wire query --avoidance-risk high` returns every relationship where avoidance is active. This is the emotional topology layer — and it's unique to cartographer.
 
-**Embedding-backed search that stays local.** Every note gets auto-embedded at write time (FastEmbed, ONNX, CPU, no GPU needed). `cart query 'romantic tension with sarah'` finds that note about the drag show even if it never uses those words. No hosted vector service. No external dependency. Embeddings live in your SQLite index alongside the full-text search.
+**Embedding-backed search that stays local.** Every note gets auto-embedded at write time (FastEmbed, ONNX, CPU, no GPU needed). `cart query 'relationship drift with grungler'` finds the note you meant even when it never uses those exact words. No hosted vector service. No external dependency. Embeddings live in your SQLite index alongside the full-text search.
 
-**Spreading activation over the graph.** `cart think sarah` doesn't just find notes mentioning Sarah — it follows the wires outward with decay, surfacing maggie (connected via shared emotional valence), grief-work (connected via maggie), therapy-plugin (connected via grief-work). It finds what's *connected* to Sarah, not just what *mentions* her. High-valence wires spread further. This is graph reasoning, not keyword search.
+**Trace paths over the graph.** `cart trace grungler` doesn't just find notes mentioning that note ID — it follows the wires outward with depth and decay, surfacing what is structurally connected rather than just what shares a keyword. This is graph reasoning, not keyword search.
 
-**Bridge discovery.** `cart discover` finds notes that are semantically similar but not yet wired — the gaps in your graph. `--accept` writes the wires back into the note files. Your atlas grows its own connections.
+**Bridge discovery.** `cart discover` finds notes that are semantically similar but not yet wired — the gaps in your graph. `--interactive` lets you review them one by one with predicate, weight, confidence, and timing metadata. `--accept` still exists for batch workflows.
 
-**A live graph server.** `cart graph --serve` starts a localhost HTTP server that serves the interactive HTML graph and auto-regenerates whenever atlas files change. `--daemon` backgrounds it. Edit a note, refresh the browser, graph updates. No manual re-export.
+**Wire provenance.**
+
+> Most knowledge tools have no answer to "did anyone actually think about this connection, or did the AI dump it here?" Cartographer does. Every wire carries provenance — who created it, how long the human spent reviewing it, whether it was confirmed or just accepted. The graph shows reviewed wires as solid lines and unreviewed wires as dashed. You can see, at a glance, which parts of your knowledge graph are load-bearing and which are provisional.
+
+**A live graph server.** `cart graph --serve` starts a localhost HTTP server that serves the interactive HTML graph and auto-regenerates whenever atlas files change. The server now exposes predicate colors, trace data, and discover candidates over `/api/*` for theme-driven graph workspaces.
 
 **Operational truth.** `cart operating-truth` tracks active work, open decisions, commitments, and next steps — the things an agent needs at session start, not just a narrative summary. `cart daily-brief` leads with operating truth.
 
@@ -226,9 +231,11 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 - Task overlay (`t`), mapsOS handoff (`m`)
 
 **Graph-native reasoning + search:**
-- `cart think <note>` for spreading activation over the wire graph
+- `cart trace <note>` for weighted graph traversal output
 - `cart walk <note>` for neighborhood traversal with growth-edge / avoidance filters
-- `cart discover` to propose likely missing wires, `--accept` to write them back into notes
+- `cart discover`, `cart discover --interactive`, and `cart discover --export`
+- `cart profile list` / `cart profile apply <name>` for switching wire vocabularies
+- `cart wire review` for pending human review on provisional wires
 - `cart stats` for atlas growth, connectivity, topology, and health signals
 - `cart embed` for local note embeddings; `cart query` prefers qmd, then embeddings, then built-in FTS
 
@@ -260,7 +267,7 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 
 ## Current status
 
-**Phase 5 plus the v0.3 structural pass are live.** Emotional topology, therapy integration, the visual graph, graph-native reasoning, operational truth, temporal truth, routed queries, and guardrails are all shipped and working.
+**Phase 5 is live.** Profiles, discover-first onboarding, trace mode, wire provenance, graph server APIs, temporal pattern detection, plugin adapters, operational truth, temporal truth, routed queries, and guardrails are all shipped and working.
 
 ```text
 session → export → cart ingest → atlas update → operating truth → emotional wires → daily brief → therapy detection → next session
@@ -293,12 +300,19 @@ session → export → cart ingest → atlas update → operating truth → emot
 - Live local serving with background daemon support
 - Offline Firefox-safe rendering
 - Theme system with auto-loaded atlas-local skins
-- Built-in `Atlas Graph` and `Astral Survey` presets now carry explicit v0.4 theme metadata markers for template compatibility
+- Built-in `Atlas Graph` and `Astral Survey` presets now carry explicit v0.5 theme metadata markers for template compatibility
+- Graph workspace actions can add wires, edit predicate/weight, mark reviewed, delete wires, run trace, and accept discover candidates back into Markdown files
 
 **Graph-native tooling:**
-- `cart think`, `cart walk`, `cart discover`, `cart embed`, `cart stats`
-- Bridge proposals can be accepted back into note files as inline wires
+- `cart trace`, `cart walk`, `cart discover`, `cart embed`, `cart stats`
+- Discover proposals can be reviewed interactively or accepted back into note files as inline wires
 - Auto-embed-on-write is configurable; embeddings stay local in the SQLite cache
+
+**Profiles + provenance:**
+- Built-in `default` and `emotional-topology` profiles
+- `cart profile apply` auto-runs a fresh discover pass after switching vocabularies
+- Wires now carry weight, author, method, review state, review duration, confidence, and note metadata
+- `cart wire review` surfaces pending human review work
 
 **Operational truth + temporal truth:**
 - `cart operating-truth` shelf for active work, open decisions, commitments, next steps, external owners
@@ -464,7 +478,7 @@ cart edit project-alpha
 cart query 'session drift in hermetica'   # plain language; prefers qmd, then local embeddings
 cart query 'what am I working on' --route
 cart query 'what did we discuss yesterday' --route
-cart query 'sarah relationship status' --route --json
+cart query 'grungler relationship status' --route --json
 cart query 'tag:project status:active'
 cart query 'modified:>2026-04-01'
 cart query 'text:"release checklist"'
@@ -518,8 +532,8 @@ cart operating-truth add open_decision "fastembed or sentence-transformers"
 cart operating-truth add commitment "ship cartographer v0.3 by May 15"
 cart operating-truth add next_step "write temporal truth docs"
 cart operating-truth history
-cart supersede old-sarah-status new-sarah-status
-cart history new-sarah-status
+cart supersede old-grungler-status new-grungler-status
+cart history new-grungler-status
 cart conflicts
 cart stale
 ```
@@ -559,17 +573,21 @@ Wires are stored inline as HTML comments - invisible in any Markdown renderer, m
 ### graph-native tools
 
 ```zsh
-cart think project-alpha
-cart think project-alpha --depth 4 --json
+cart trace project-alpha
+cart trace project-alpha --depth 4 --json
 cart walk project-alpha --depth 2
 cart walk project-alpha --avoidance-only high
 cart discover
+cart discover --interactive
+cart discover --export
 cart discover --accept
+cart profile list
+cart profile apply emotional-topology
 cart embed
 cart stats
 ```
 
-`think` surfaces likely-relevant notes through spreading activation. `walk` traverses the wire neighborhood directly. `discover` proposes unwired-but-similar note pairs and can write accepted bridges back into notes. `stats` gives you a health dashboard for the atlas: growth, connectivity, emotional topology, bridge nodes, and activity.
+`trace` surfaces likely-relevant notes through the wire graph. `walk` traverses the neighborhood directly. `discover` proposes unwired-but-similar note pairs and can export, review, or accept them back into notes. `stats` now includes provenance: human-created wires, reviewed agent suggestions, pending review count, and average review duration.
 
 ### graph export + live server
 
@@ -595,12 +613,12 @@ always_visible_people = ["maps"]
 [graph.privacy]
 mode = "off"
 never_redact_ids = ["maps"]
-person_order = ["maps", "person-b", "person-c"]
+person_order = ["maps", "grungler", "chungus"]
 ```
 
 Atlas-local theme skins live in `~/atlas/themes/*.js` and are auto-loaded. The graph sidebar theme picker switches between them at runtime.
 
-`cart graph --serve` runs a local HTTP server for the graph and regenerates on atlas changes. `--daemon` sends it to the background, writes a per-port PID file and log under `~/atlas/.cartographer/`, and frees the terminal immediately. Use the same `--port` with `--status-daemon` or `--stop-daemon` when you're managing a nondefault daemon.
+`cart graph --serve` turns the graph into a live local workspace: it polls for atlas changes, reloads when the underlying graph regenerates, fetches the active predicate palette from the profile, supports trace animation and discover overlays, and lets you review/edit/delete wires directly back into the Markdown comments. `--daemon` sends it to the background, writes a per-port PID file and log under `~/atlas/.cartographer/`, and frees the terminal immediately. Use the same `--port` with `--status-daemon` or `--stop-daemon` when you're managing a nondefault daemon.
 
 ### deletion + guardrails
 
@@ -646,7 +664,7 @@ cart mapsos patterns --field state
 cart daily-brief
 ```
 
-Inside the TUIs: `cart tui` → `m` launches mapsOS. `maps` → `C` launches cartographer. Quitting mapsOS ingests the latest export when `cart` is available. That ingest can also populate operating truth from goals, intentions, and decision-shaped vents.
+Inside the TUIs: `cart tui` → `m` launches mapsOS. mapsOS → `C` launches cartographer. Quitting mapsOS ingests the latest export when `cart` is available. That ingest can also populate operating truth from goals, intentions, and decision-shaped vents.
 
 ---
 
@@ -718,7 +736,7 @@ The atlas is a local-first knowledge graph where agents and humans write to the 
 | mapsOS tracks | `tracks:` in `~/.maps_os_config.yaml` |
 | mapsOS state vocab | `state.tags:` in config |
 | Agent adapters | `cart session-import` reads any agent writing the ECC session format |
-| Graph skins | `~/atlas/themes/*.js` — auto-loaded, theme picker in graph sidebar, `template.js` now marks v0.4 compliance explicitly |
+| Graph skins | `~/atlas/themes/*.js` — auto-loaded, theme picker in graph sidebar, `template.js` now marks v0.5 compliance explicitly |
 
 This was built for one brain and configured for that brain's specific needs. The whole point is that you configure it for yours. Come build.
 

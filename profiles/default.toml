@@ -1,0 +1,31 @@
+name = "default"
+description = "Neutral semantic predicates for general-purpose note graphs."
+
+[wires]
+default_predicates = [
+  "supports",
+  "contradicts",
+  "depends_on",
+  "enables",
+  "precedes",
+  "questions",
+  "extends",
+  "instances",
+]
+metadata_fields = ["weight"]
+
+[wires.predicate_colors]
+supports = "#7bb3ff"
+contradicts = "#ff8d8d"
+depends_on = "#f0b35f"
+enables = "#8fd3a4"
+precedes = "#d4a7ff"
+questions = "#7fe3de"
+extends = "#f4df7a"
+instances = "#b6c2cf"
+
+[metadata.weight]
+type = "float"
+minimum = 0.0
+maximum = 1.0
+default = 0.7

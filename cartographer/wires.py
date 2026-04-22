@@ -13,14 +13,18 @@ from .notes import Note, parse_link_target
 WIRE_PATTERN = re.compile(r"<!--\s*cart:wire(?P<attrs>[^>]*)-->")
 
 VALID_WIRE_PREDICATES = (
-    "relates_to",
     "supports",
-    "qualifies",
     "contradicts",
+    "depends_on",
+    "enables",
     "precedes",
+    "questions",
+    "extends",
+    "instances",
+    "relates_to",
+    "qualifies",
     "follows",
     "part_of",
-    "depends_on",
     "grounds",
     "intensifies_with",
     "co_occurs_with",
@@ -44,6 +48,8 @@ VALID_CURRENT_STATES = (
     "suspended",
     "provisional",
 )
+VALID_WIRE_METHODS = ("manual", "interactive", "agent", "confirmed")
+VALID_WIRE_CONFIDENCE = ("low", "medium", "high")
 
 
 def _parse_bool(value: str | None) -> bool:
@@ -70,8 +76,22 @@ def _normalize_text_attr(value: str | None) -> str | None:
     return normalized or None
 
 
+def _parse_optional_float(value: str | None) -> float | None:
+    normalized = _normalize_text_attr(value)
+    if normalized is None:
+        return None
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
 def _quote_attr(value: str) -> str:
     return html.escape(value, quote=True)
+
+
+def _format_float_attr(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
 @dataclass(slots=True)
@@ -81,6 +101,7 @@ class WireComment:
     target_note: str
     target_block: str | None
     predicate: str
+    weight: float | None
     bidirectional: bool
     relationship: str | None
     emotional_valence: str | None
@@ -91,6 +112,14 @@ class WireComment:
     since: str | None
     until: str | None
     valence_note: str | None
+    author: str | None
+    method: str | None
+    reviewed: bool | None
+    reviewed_by: str | None
+    reviewed_at: str | None
+    review_duration_s: float | None
+    confidence: str | None
+    note: str | None
     path: str
     line: int
     raw: str
@@ -122,6 +151,7 @@ def render_wire_comment(
     target_note: str,
     target_block: str | None,
     predicate: str,
+    weight: float | None = None,
     bidirectional: bool = False,
     relationship: str | None = None,
     emotional_valence: str | None = None,
@@ -132,9 +162,19 @@ def render_wire_comment(
     since: str | None = None,
     until: str | None = None,
     valence_note: str | None = None,
+    author: str | None = None,
+    method: str | None = None,
+    reviewed: bool | None = None,
+    reviewed_by: str | None = None,
+    reviewed_at: str | None = None,
+    review_duration_s: float | None = None,
+    confidence: str | None = None,
+    note: str | None = None,
 ) -> str:
     target = target_note if target_block is None else f"{target_note}#{target_block}"
     attrs = [f'target="{_quote_attr(target)}"', f'predicate="{_quote_attr(predicate)}"']
+    if weight is not None:
+        attrs.append(f'weight="{_format_float_attr(weight)}"')
     if bidirectional:
         attrs.append('bidirectional="true"')
     if relationship:
@@ -155,6 +195,22 @@ def render_wire_comment(
         attrs.append(f'until="{_quote_attr(until)}"')
     if valence_note:
         attrs.append(f'valence_note="{_quote_attr(valence_note)}"')
+    if author:
+        attrs.append(f'author="{_quote_attr(author)}"')
+    if method:
+        attrs.append(f'method="{_quote_attr(method)}"')
+    if reviewed is not None:
+        attrs.append(f'reviewed="{"true" if reviewed else "false"}"')
+    if reviewed_by:
+        attrs.append(f'reviewed_by="{_quote_attr(reviewed_by)}"')
+    if reviewed_at:
+        attrs.append(f'reviewed_at="{_quote_attr(reviewed_at)}"')
+    if review_duration_s is not None:
+        attrs.append(f'review_duration_s="{_format_float_attr(review_duration_s)}"')
+    if confidence:
+        attrs.append(f'confidence="{_quote_attr(confidence)}"')
+    if note:
+        attrs.append(f'note="{_quote_attr(note)}"')
     return f"<!-- cart:wire {' '.join(attrs)} -->"
 
 
@@ -178,6 +234,7 @@ def parse_wire_comments(
         predicate = _normalize_text_attr(attrs.get("predicate")) or _normalize_text_attr(
             attrs.get("relationship")
         )
+        weight = _parse_optional_float(attrs.get("weight"))
         relationship = _normalize_text_attr(attrs.get("relationship"))
         emotional_valence = _normalize_text_attr(attrs.get("emotional_valence"))
         energy_impact = _normalize_text_attr(attrs.get("energy_impact"))
@@ -187,6 +244,14 @@ def parse_wire_comments(
         since = _normalize_text_attr(attrs.get("since"))
         until = _normalize_text_attr(attrs.get("until"))
         valence_note = _normalize_text_attr(attrs.get("valence_note"))
+        author = _normalize_text_attr(attrs.get("author"))
+        method = _normalize_text_attr(attrs.get("method"))
+        reviewed = _parse_optional_bool(attrs.get("reviewed"))
+        reviewed_by = _normalize_text_attr(attrs.get("reviewed_by"))
+        reviewed_at = _normalize_text_attr(attrs.get("reviewed_at"))
+        review_duration_s = _parse_optional_float(attrs.get("review_duration_s"))
+        confidence = _normalize_text_attr(attrs.get("confidence"))
+        note = _normalize_text_attr(attrs.get("note"))
         line = body.count("\n", 0, match.start()) + 1
         if not target_raw:
             issues.append(
@@ -210,6 +275,16 @@ def parse_wire_comments(
                 )
             )
             continue
+        if attrs.get("weight") is not None and weight is None:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_weight",
+                    message=f"invalid weight value: {attrs.get('weight')}",
+                    raw=match.group(0),
+                )
+            )
         if emotional_valence is not None and emotional_valence not in VALID_EMOTIONAL_VALENCES:
             issues.append(
                 WireIssue(
@@ -260,6 +335,46 @@ def parse_wire_comments(
                     raw=match.group(0),
                 )
             )
+        if method is not None and method not in VALID_WIRE_METHODS:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_method",
+                    message=f"invalid method value: {method}",
+                    raw=match.group(0),
+                )
+            )
+        if attrs.get("reviewed") is not None and reviewed is None:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_reviewed",
+                    message=f"invalid reviewed value: {attrs.get('reviewed')}",
+                    raw=match.group(0),
+                )
+            )
+        if attrs.get("review_duration_s") is not None and review_duration_s is None:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_review_duration_s",
+                    message=f"invalid review_duration_s value: {attrs.get('review_duration_s')}",
+                    raw=match.group(0),
+                )
+            )
+        if confidence is not None and confidence not in VALID_WIRE_CONFIDENCE:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_confidence",
+                    message=f"invalid confidence value: {confidence}",
+                    raw=match.group(0),
+                )
+            )
         target_note, target_block = parse_link_target(target_raw)
         if not target_note:
             issues.append(
@@ -284,6 +399,7 @@ def parse_wire_comments(
                 target_note=target_note,
                 target_block=target_block,
                 predicate=predicate,
+                weight=weight,
                 bidirectional=_parse_bool(attrs.get("bidirectional")),
                 relationship=relationship,
                 emotional_valence=emotional_valence,
@@ -294,6 +410,14 @@ def parse_wire_comments(
                 since=since,
                 until=until,
                 valence_note=valence_note,
+                author=author,
+                method=method,
+                reviewed=reviewed,
+                reviewed_by=reviewed_by,
+                reviewed_at=reviewed_at,
+                review_duration_s=review_duration_s,
+                confidence=confidence,
+                note=note,
                 path=path_text,
                 line=line,
                 raw=match.group(0),
@@ -323,6 +447,72 @@ def insert_wire_comment(note: Note, *, source_block: str | None, comment: str) -
         )
         return
     raise ValueError(f"source block not found: {source_block}")
+
+
+def find_wire_comment(
+    note: Note,
+    *,
+    source_block: str | None,
+    target_note: str,
+    target_block: str | None,
+    predicate: str,
+) -> WireComment | None:
+    note_id = str(note.frontmatter.get("id") or note.path.stem)
+    wires, _ = parse_wire_comments(note.body, note_id=note_id, path=note.path)
+    for wire in wires:
+        if wire.source_block != source_block:
+            continue
+        if wire.target_note != target_note or wire.target_block != target_block:
+            continue
+        if wire.predicate != predicate:
+            continue
+        return wire
+    return None
+
+
+def replace_wire_comment(
+    note: Note,
+    *,
+    source_block: str | None,
+    target_note: str,
+    target_block: str | None,
+    predicate: str,
+    comment: str,
+) -> bool:
+    wire = find_wire_comment(
+        note,
+        source_block=source_block,
+        target_note=target_note,
+        target_block=target_block,
+        predicate=predicate,
+    )
+    if wire is None:
+        return False
+    if wire.raw == comment:
+        return False
+    note.body = note.body[: wire.start] + comment + note.body[wire.end :]
+    return True
+
+
+def delete_wire_comment(
+    note: Note,
+    *,
+    source_block: str | None,
+    target_note: str,
+    target_block: str | None,
+    predicate: str,
+) -> bool:
+    wire = find_wire_comment(
+        note,
+        source_block=source_block,
+        target_note=target_note,
+        target_block=target_block,
+        predicate=predicate,
+    )
+    if wire is None:
+        return False
+    note.body = remove_wire_spans(note.body, [(wire.start, wire.end)])
+    return True
 
 
 def remove_wire_spans(body: str, spans: list[tuple[int, int]]) -> str:

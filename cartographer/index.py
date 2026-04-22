@@ -12,11 +12,14 @@ from typing import Any
 
 from .config import load_config
 from .notes import Note, extract_wikilinks
+from .profiles import profile_payload
 from .wires import (
     VALID_AVOIDANCE_RISKS,
     VALID_CURRENT_STATES,
     VALID_EMOTIONAL_VALENCES,
     VALID_ENERGY_IMPACTS,
+    VALID_WIRE_CONFIDENCE,
+    VALID_WIRE_METHODS,
     VALID_WIRE_PREDICATES,
     parse_wire_comments,
 )
@@ -84,6 +87,7 @@ CREATE TABLE IF NOT EXISTS wires (
     target_note TEXT NOT NULL,
     target_block TEXT,
     predicate TEXT NOT NULL,
+    weight REAL,
     bidirectional INTEGER NOT NULL DEFAULT 0,
     relationship TEXT,
     emotional_valence TEXT,
@@ -94,6 +98,14 @@ CREATE TABLE IF NOT EXISTS wires (
     since TEXT,
     until TEXT,
     valence_note TEXT,
+    author TEXT,
+    method TEXT,
+    reviewed INTEGER,
+    reviewed_by TEXT,
+    reviewed_at TEXT,
+    review_duration_s REAL,
+    confidence TEXT,
+    note TEXT,
     path TEXT NOT NULL,
     line INTEGER NOT NULL
 );
@@ -174,6 +186,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(id, title, body);
 """
 
 WIRE_OPTIONAL_COLUMNS = {
+    "weight": "REAL",
     "relationship": "TEXT",
     "emotional_valence": "TEXT",
     "energy_impact": "TEXT",
@@ -183,6 +196,14 @@ WIRE_OPTIONAL_COLUMNS = {
     "since": "TEXT",
     "until": "TEXT",
     "valence_note": "TEXT",
+    "author": "TEXT",
+    "method": "TEXT",
+    "reviewed": "INTEGER",
+    "reviewed_by": "TEXT",
+    "reviewed_at": "TEXT",
+    "review_duration_s": "REAL",
+    "confidence": "TEXT",
+    "note": "TEXT",
 }
 
 NOTE_OPTIONAL_COLUMNS = {
@@ -192,6 +213,35 @@ NOTE_OPTIONAL_COLUMNS = {
     "superseded_by": "TEXT",
     "is_current": "INTEGER DEFAULT 1",
 }
+
+WIRE_SELECT_COLUMNS = """
+    source_note,
+    source_block,
+    target_note,
+    target_block,
+    predicate,
+    weight,
+    relationship,
+    bidirectional,
+    emotional_valence,
+    energy_impact,
+    avoidance_risk,
+    growth_edge,
+    current_state,
+    since,
+    until,
+    valence_note,
+    author,
+    method,
+    reviewed,
+    reviewed_by,
+    reviewed_at,
+    review_duration_s,
+    confidence,
+    note,
+    path,
+    line
+"""
 
 
 def _slugify_note_id(value: str) -> str:
@@ -260,6 +310,7 @@ def _row_to_wire_payload(row: sqlite3.Row, *, note_id: str | None = None, block_
         "target_note": target_note,
         "target_block": target_block,
         "predicate": str(row["predicate"]),
+        "weight": None if row["weight"] is None else float(row["weight"]),
         "relationship": None if row["relationship"] is None else str(row["relationship"]),
         "bidirectional": bool(row["bidirectional"]),
         "emotional_valence": None
@@ -272,6 +323,16 @@ def _row_to_wire_payload(row: sqlite3.Row, *, note_id: str | None = None, block_
         "since": None if row["since"] is None else str(row["since"]),
         "until": None if row["until"] is None else str(row["until"]),
         "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
+        "author": None if row["author"] is None else str(row["author"]),
+        "method": None if row["method"] is None else str(row["method"]),
+        "reviewed": None if row["reviewed"] is None else bool(row["reviewed"]),
+        "reviewed_by": None if row["reviewed_by"] is None else str(row["reviewed_by"]),
+        "reviewed_at": None if row["reviewed_at"] is None else str(row["reviewed_at"]),
+        "review_duration_s": None
+        if row["review_duration_s"] is None
+        else float(row["review_duration_s"]),
+        "confidence": None if row["confidence"] is None else str(row["confidence"]),
+        "note": None if row["note"] is None else str(row["note"]),
         "path": str(row["path"]),
         "line": int(row["line"]),
     }
@@ -550,6 +611,7 @@ class Index:
                             target_note,
                             target_block,
                             predicate,
+                            weight,
                             bidirectional,
                             relationship,
                             emotional_valence,
@@ -560,10 +622,18 @@ class Index:
                             since,
                             until,
                             valence_note,
+                            author,
+                            method,
+                            reviewed,
+                            reviewed_by,
+                            reviewed_at,
+                            review_duration_s,
+                            confidence,
+                            note,
                             path,
                             line
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             wire.source_note,
@@ -571,6 +641,7 @@ class Index:
                             normalized_target,
                             wire.target_block,
                             wire.predicate,
+                            wire.weight,
                             1 if wire.bidirectional else 0,
                             wire.relationship,
                             wire.emotional_valence,
@@ -581,6 +652,14 @@ class Index:
                             wire.since,
                             wire.until,
                             wire.valence_note,
+                            wire.author,
+                            wire.method,
+                            None if wire.reviewed is None else (1 if wire.reviewed else 0),
+                            wire.reviewed_by,
+                            wire.reviewed_at,
+                            wire.review_duration_s,
+                            wire.confidence,
+                            wire.note,
                             wire.path,
                             wire.line,
                         ),
@@ -816,23 +895,9 @@ class Index:
         statement = (
             """
             SELECT
-                source_note,
-                source_block,
-                target_note,
-                target_block,
-                predicate,
-                relationship,
-                bidirectional,
-                emotional_valence,
-                energy_impact,
-                avoidance_risk,
-                growth_edge,
-                current_state,
-                since,
-                until,
-                valence_note,
-                path,
-                line
+            """
+            + WIRE_SELECT_COLUMNS
+            + """
             FROM wires
             WHERE (
             """
@@ -862,6 +927,9 @@ class Index:
         avoidance_risk: str | None = None,
         growth_edge: bool | None = None,
         current_state: str | None = None,
+        method: str | None = None,
+        reviewed: bool | None = None,
+        pending_review: bool = False,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -889,26 +957,20 @@ class Index:
         if current_state is not None:
             clauses.append("current_state = ?")
             params.append(current_state)
+        if method is not None:
+            clauses.append("method = ?")
+            params.append(method)
+        if reviewed is not None:
+            clauses.append("reviewed = ?")
+            params.append(1 if reviewed else 0)
+        if pending_review:
+            clauses.append(
+                "((method IN ('agent', 'interactive') AND (reviewed IS NULL OR reviewed = 0)) OR (reviewed = 0))"
+            )
 
         statement = """
             SELECT
-                source_note,
-                source_block,
-                target_note,
-                target_block,
-                predicate,
-                relationship,
-                bidirectional,
-                emotional_valence,
-                energy_impact,
-                avoidance_risk,
-                growth_edge,
-                current_state,
-                since,
-                until,
-                valence_note,
-                path,
-                line
+        """ + WIRE_SELECT_COLUMNS + """
             FROM wires
         """
         if clauses:
@@ -921,6 +983,9 @@ class Index:
 
     def wire_doctor(self) -> dict[str, Any]:
         issues: list[dict[str, Any]] = []
+        profile = profile_payload(self.root, config=load_config(self.root))
+        valid_predicates = set(profile.get("default_predicates") or VALID_WIRE_PREDICATES)
+        metadata_fields = set(profile.get("metadata_fields") or [])
         with self._connection() as connection:
             malformed_rows = connection.execute(
                 """
@@ -932,29 +997,14 @@ class Index:
             wire_rows = connection.execute(
                 """
                 SELECT
-                    source_note,
-                    source_block,
-                    target_note,
-                    target_block,
-                    predicate,
-                    relationship,
-                    bidirectional,
-                    emotional_valence,
-                    energy_impact,
-                    avoidance_risk,
-                    growth_edge,
-                    current_state,
-                    since,
-                    until,
-                    valence_note,
-                    path,
-                    line
+                """
+                + WIRE_SELECT_COLUMNS
+                + """
                 FROM wires
                 ORDER BY path ASC, line ASC
                 """
             ).fetchall()
 
-        valid_predicates = set(VALID_WIRE_PREDICATES)
         valid_valences = set(VALID_EMOTIONAL_VALENCES)
         valid_impacts = set(VALID_ENERGY_IMPACTS)
         valid_risks = set(VALID_AVOIDANCE_RISKS)
@@ -977,10 +1027,13 @@ class Index:
             predicate = str(row["predicate"])
             path = str(row["path"])
             line = int(row["line"])
+            weight = None if row["weight"] is None else float(row["weight"])
             emotional_valence = None if row["emotional_valence"] is None else str(row["emotional_valence"])
             energy_impact = None if row["energy_impact"] is None else str(row["energy_impact"])
             avoidance_risk = None if row["avoidance_risk"] is None else str(row["avoidance_risk"])
             current_state = None if row["current_state"] is None else str(row["current_state"])
+            method = None if row["method"] is None else str(row["method"])
+            confidence = None if row["confidence"] is None else str(row["confidence"])
             if predicate not in valid_predicates:
                 issues.append(
                     {
@@ -997,6 +1050,16 @@ class Index:
                     }
                 )
                 continue
+            if weight is not None and not 0.0 <= weight <= 1.0:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_weight",
+                        "message": f"wire weight must be between 0.0 and 1.0: {weight}",
+                        "raw": "",
+                    }
+                )
             if emotional_valence is not None and emotional_valence not in valid_valences:
                 issues.append(
                     {
@@ -1034,6 +1097,57 @@ class Index:
                         "line": line,
                         "code": "invalid_current_state",
                         "message": f"invalid current state: {current_state}",
+                        "raw": "",
+                    }
+                )
+            if method is not None and method not in VALID_WIRE_METHODS:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_method",
+                        "message": f"invalid wire method: {method}",
+                        "raw": "",
+                    }
+                )
+            if confidence is not None and confidence not in VALID_WIRE_CONFIDENCE:
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "invalid_confidence",
+                        "message": f"invalid wire confidence: {confidence}",
+                        "raw": "",
+                    }
+                )
+            for field_name in (
+                "emotional_valence",
+                "energy_impact",
+                "avoidance_risk",
+                "growth_edge",
+                "current_state",
+                "since",
+                "until",
+                "valence_note",
+                "author",
+                "method",
+                "reviewed",
+                "reviewed_by",
+                "reviewed_at",
+                "review_duration_s",
+                "confidence",
+                "note",
+            ):
+                if row[field_name] is None:
+                    continue
+                if field_name in metadata_fields or field_name == "weight" or field_name == "relationship":
+                    continue
+                issues.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "code": "unsupported_metadata_field",
+                        "message": f"{field_name} is not enabled by the active wire profile",
                         "raw": "",
                     }
                 )
@@ -1087,26 +1201,17 @@ class Index:
             rows = connection.execute(
                 """
                 SELECT
-                    source_note,
-                    source_block,
-                    target_note,
-                    target_block,
-                    predicate,
-                    relationship,
-                    bidirectional,
-                    emotional_valence,
-                    energy_impact,
-                    avoidance_risk,
-                    growth_edge,
-                    current_state,
-                    since,
-                    until,
-                    valence_note
+                """
+                + WIRE_SELECT_COLUMNS
+                + """
                 FROM wires
                 """
             ).fetchall()
         adjacency: dict[str, list[dict[str, Any]]] = {}
-        valid_predicates = set(VALID_WIRE_PREDICATES)
+        valid_predicates = set(
+            profile_payload(self.root, config=load_config(self.root)).get("default_predicates")
+            or VALID_WIRE_PREDICATES
+        )
         for row in rows:
             predicate_value = str(row["predicate"])
             if predicate_value not in valid_predicates:
@@ -1121,6 +1226,7 @@ class Index:
                 "target_note": target,
                 "target_block": None if row["target_block"] is None else str(row["target_block"]),
                 "predicate": predicate_value,
+                "weight": None if row["weight"] is None else float(row["weight"]),
                 "relationship": None if row["relationship"] is None else str(row["relationship"]),
                 "bidirectional": bool(row["bidirectional"]),
                 "emotional_valence": None
@@ -1135,6 +1241,16 @@ class Index:
                 "since": None if row["since"] is None else str(row["since"]),
                 "until": None if row["until"] is None else str(row["until"]),
                 "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
+                "author": None if row["author"] is None else str(row["author"]),
+                "method": None if row["method"] is None else str(row["method"]),
+                "reviewed": None if row["reviewed"] is None else bool(row["reviewed"]),
+                "reviewed_by": None if row["reviewed_by"] is None else str(row["reviewed_by"]),
+                "reviewed_at": None if row["reviewed_at"] is None else str(row["reviewed_at"]),
+                "review_duration_s": None
+                if row["review_duration_s"] is None
+                else float(row["review_duration_s"]),
+                "confidence": None if row["confidence"] is None else str(row["confidence"]),
+                "note": None if row["note"] is None else str(row["note"]),
             }
             adjacency.setdefault(source, []).append(edge)
             if bool(row["bidirectional"]):

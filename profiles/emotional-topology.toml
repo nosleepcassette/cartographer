@@ -1,0 +1,128 @@
+name = "emotional-topology"
+description = "A profile for people who need their graph to reflect emotional reality, avoidance, and change over time."
+
+[wires]
+default_predicates = [
+  "relates_to",
+  "supports",
+  "qualifies",
+  "contradicts",
+  "precedes",
+  "follows",
+  "part_of",
+  "depends_on",
+  "grounds",
+  "intensifies_with",
+  "co_occurs_with",
+  "triggered_by",
+  "relates_to_goal",
+  "relates_to_person",
+  "intention_outcome",
+  "resistance_against",
+  "active-project",
+  "core-infrastructure",
+]
+metadata_fields = [
+  "weight",
+  "relationship",
+  "emotional_valence",
+  "energy_impact",
+  "avoidance_risk",
+  "growth_edge",
+  "current_state",
+  "since",
+  "until",
+  "valence_note",
+  "author",
+  "method",
+  "reviewed",
+  "reviewed_by",
+  "reviewed_at",
+  "review_duration_s",
+  "confidence",
+  "note",
+]
+
+[wires.predicate_colors]
+relates_to = "#8ec1ff"
+supports = "#67d98b"
+qualifies = "#d4a7ff"
+contradicts = "#f06a74"
+precedes = "#f0b35f"
+follows = "#7fe3de"
+part_of = "#9dc6ff"
+depends_on = "#f3d27d"
+grounds = "#8fd3a4"
+intensifies_with = "#c9a85c"
+co_occurs_with = "#9471b8"
+triggered_by = "#ff9978"
+relates_to_goal = "#b5e26d"
+relates_to_person = "#8ec1ff"
+intention_outcome = "#78e2ff"
+resistance_against = "#c8524a"
+active-project = "#f3df9a"
+core-infrastructure = "#9fb4d8"
+
+[metadata.weight]
+type = "float"
+minimum = 0.0
+maximum = 1.0
+default = 0.7
+
+[metadata.relationship]
+type = "string"
+
+[metadata.emotional_valence]
+type = "enum"
+values = ["positive", "negative", "mixed", "neutral"]
+
+[metadata.energy_impact]
+type = "enum"
+values = ["draining", "energizing", "neutral", "conflicted"]
+
+[metadata.avoidance_risk]
+type = "enum"
+values = ["high", "medium", "low", "none"]
+
+[metadata.growth_edge]
+type = "boolean"
+
+[metadata.current_state]
+type = "enum"
+values = ["active", "grieving", "building", "recovering", "suspended", "provisional"]
+
+[metadata.since]
+type = "string"
+
+[metadata.until]
+type = "string"
+
+[metadata.valence_note]
+type = "string"
+
+[metadata.author]
+type = "string"
+
+[metadata.method]
+type = "enum"
+values = ["manual", "interactive", "agent", "confirmed"]
+
+[metadata.reviewed]
+type = "boolean"
+
+[metadata.reviewed_by]
+type = "string"
+
+[metadata.reviewed_at]
+type = "string"
+
+[metadata.review_duration_s]
+type = "float"
+minimum = 0.0
+
+[metadata.confidence]
+type = "enum"
+values = ["low", "medium", "high"]
+
+[metadata.note]
+type = "string"

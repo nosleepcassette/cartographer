@@ -65,10 +65,14 @@ def _load_notes_and_wires(atlas_root: Path) -> tuple[list[sqlite3.Row], list[sql
                 source_note,
                 target_note,
                 predicate,
+                weight,
                 emotional_valence,
                 avoidance_risk,
                 growth_edge,
                 since,
+                method,
+                reviewed,
+                review_duration_s,
                 path,
                 line
             FROM wires
@@ -229,6 +233,30 @@ def atlas_stats(atlas_root: Path | str) -> dict[str, Any]:
         if since is not None and since >= week_ago:
             wires_this_week += 1
 
+    provenance_counts = Counter()
+    review_durations: list[float] = []
+    fast_accepts = 0
+    for row in wire_rows:
+        method = str(row["method"] or "").strip().lower()
+        reviewed = None if row["reviewed"] is None else bool(row["reviewed"])
+        duration = None if row["review_duration_s"] is None else float(row["review_duration_s"])
+        if duration is not None:
+            review_durations.append(duration)
+            if duration < 5:
+                fast_accepts += 1
+        if method == "manual" or (method == "" and reviewed is not False):
+            provenance_counts["human_created"] += 1
+        elif reviewed:
+            provenance_counts["agent_reviewed"] += 1
+        else:
+            provenance_counts["agent_pending"] += 1
+    total_wires = len(wire_rows)
+    avg_review_duration = (
+        round(sum(review_durations) / len(review_durations), 1)
+        if review_durations
+        else 0.0
+    )
+
     status = index.status()
     last_rebuild = None if status["last_rebuild"] is None else datetime.fromtimestamp(status["last_rebuild"])
     coverage = embeddings_coverage(atlas_root)
@@ -308,6 +336,22 @@ def atlas_stats(atlas_root: Path | str) -> dict[str, Any]:
             "daily_notes_this_week": daily_count,
             "wires_created_this_week": wires_this_week,
         },
+        "provenance": {
+            "human_created_wires": provenance_counts["human_created"],
+            "agent_created_reviewed": provenance_counts["agent_reviewed"],
+            "agent_created_pending": provenance_counts["agent_pending"],
+            "human_created_pct": 0.0
+            if total_wires == 0
+            else round((provenance_counts["human_created"] / total_wires) * 100, 1),
+            "agent_reviewed_pct": 0.0
+            if total_wires == 0
+            else round((provenance_counts["agent_reviewed"] / total_wires) * 100, 1),
+            "agent_pending_pct": 0.0
+            if total_wires == 0
+            else round((provenance_counts["agent_pending"] / total_wires) * 100, 1),
+            "avg_review_duration_s": avg_review_duration,
+            "fast_accepts_under_5s": fast_accepts,
+        },
         "temporal_patterns": temporal_patterns_section(atlas_root),
         "warnings": warnings,
     }
@@ -320,6 +364,7 @@ def render_stats_text(payload: dict[str, Any]) -> str:
     topology = payload["emotional_topology"]
     health = payload["health"]
     activity = payload["activity"]
+    provenance = payload.get("provenance", {})
     temporal = payload.get("temporal_patterns", {})
 
     most_connected = ", ".join(
@@ -360,6 +405,16 @@ def render_stats_text(payload: dict[str, Any]) -> str:
         "",
         "activity",
         f"  sessions this week: {activity['sessions_this_week']}  |  daily notes: {activity['daily_notes_this_week']}  |  wires created this week: {activity['wires_created_this_week']}",
+        "",
+        "provenance",
+        "  human-created wires: "
+        f"{provenance.get('human_created_wires', 0)} ({provenance.get('human_created_pct', 0)}%)",
+        "  agent-created reviewed: "
+        f"{provenance.get('agent_created_reviewed', 0)} ({provenance.get('agent_reviewed_pct', 0)}%)",
+        "  agent-created pending: "
+        f"{provenance.get('agent_created_pending', 0)} ({provenance.get('agent_pending_pct', 0)}%)",
+        f"  avg review duration: {provenance.get('avg_review_duration_s', 0)}s",
+        f"  fast accepts (<5s): {provenance.get('fast_accepts_under_5s', 0)}",
         "",
         "temporal patterns",
     ]

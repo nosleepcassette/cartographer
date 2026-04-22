@@ -6,6 +6,7 @@ from dataclasses import asdict
 import json
 import shlex
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from .plugins import (
     parse_plugin_args,
     run_plugin,
 )
+from .profiles import active_profile_ref, builtin_profile_names, profile_payload
 from .external_import import parse_chatgpt_export, parse_claude_web_export
 from .session_import import (
     _today_string,
@@ -123,6 +125,14 @@ def _with_schema(payload: dict[str, Any], *, surface: str) -> dict[str, Any]:
         "surface": surface,
         **payload,
     }
+
+
+def _current_actor() -> str:
+    return str(Path.home().name).strip() or "cartographer"
+
+
+def _active_profile_payload(atlas: Atlas) -> dict[str, Any]:
+    return profile_payload(atlas.root, config=atlas.config)
 
 
 def _format_timestamp(value: float | None) -> str:
@@ -533,13 +543,15 @@ def _wire_direction(incoming: bool, outgoing: bool) -> str:
 
 
 def _wire_predicate_and_relationship(
+    atlas: Atlas,
     predicate: str | None,
     relationship: str | None,
 ) -> tuple[str, str | None]:
     resolved = (predicate or relationship or "").strip()
     if not resolved:
         raise click.ClickException("wire add requires --predicate or --relationship")
-    if resolved not in VALID_WIRE_PREDICATES:
+    valid_predicates = set(_active_profile_payload(atlas).get("default_predicates") or VALID_WIRE_PREDICATES)
+    if resolved not in valid_predicates:
         raise click.ClickException(
             f"invalid wire predicate/relationship: {resolved}. See `cart wire predicates`."
         )
@@ -548,6 +560,8 @@ def _wire_predicate_and_relationship(
 
 def _wire_metadata_fields(wire: dict[str, Any]) -> list[str]:
     fields: list[str] = []
+    if wire.get("weight") is not None:
+        fields.append(f"weight={wire['weight']}")
     if wire.get("emotional_valence"):
         fields.append(f"valence={wire['emotional_valence']}")
     if wire.get("energy_impact"):
@@ -562,6 +576,14 @@ def _wire_metadata_fields(wire: dict[str, Any]) -> list[str]:
         fields.append(f"since={wire['since']}")
     if wire.get("until"):
         fields.append(f"until={wire['until']}")
+    if wire.get("author"):
+        fields.append(f"author={wire['author']}")
+    if wire.get("method"):
+        fields.append(f"method={wire['method']}")
+    if wire.get("reviewed") is not None:
+        fields.append("reviewed" if wire["reviewed"] else "unreviewed")
+    if wire.get("confidence"):
+        fields.append(f"confidence={wire['confidence']}")
     return fields
 
 
@@ -578,7 +600,9 @@ def _render_wire_summary(wire: dict[str, Any]) -> str:
     suffix = "  [bi]" if wire.get("bidirectional") else ""
     if metadata:
         suffix += "  {" + ", ".join(metadata) + "}"
-    if wire.get("valence_note"):
+    if wire.get("note"):
+        suffix += f"  — {wire['note']}"
+    elif wire.get("valence_note"):
         suffix += f"  — {wire['valence_note']}"
     return f"{source_ref} --{wire['predicate']}--> {target_ref}{suffix}"
 
@@ -712,16 +736,31 @@ def main() -> None:
 @click.option(
     "--no-obsidian", is_flag=True, help="Skip atlas-local Obsidian bootstrap."
 )
-def init(path: str, no_vimwiki: bool, no_obsidian: bool) -> None:
+@click.option(
+    "--profile",
+    "profile_ref",
+    default=None,
+    help="Profile to apply at init time: default, emotional-topology, or a custom TOML path.",
+)
+def init(path: str, no_vimwiki: bool, no_obsidian: bool, profile_ref: str | None) -> None:
     atlas = Atlas(root=path)
+    selected_profile = profile_ref
+    if selected_profile is None and sys.stdin.isatty():
+        selected_profile = click.prompt(
+            "Profile? [default / emotional-topology / path/to/custom.toml]",
+            default="default",
+            show_default=True,
+        ).strip()
     result = atlas.init(
         setup_vimwiki=not no_vimwiki,
         setup_obsidian=not no_obsidian,
+        profile_ref=selected_profile or "default",
     )
     click.echo(f"atlas: {result['root']}")
     click.echo(f"git: {result['git']}")
     click.echo(f"vimwiki: {result['vimwiki']}")
     click.echo(f"obsidian: {result['obsidian']}")
+    click.echo(f"profile: {result['profile']['name']}")
     for warning in result.get("backup_warnings", []):
         click.echo(f"warning: {warning}", err=True)
     if result["vault"]:
@@ -731,6 +770,49 @@ def init(path: str, no_vimwiki: bool, no_obsidian: bool) -> None:
     click.echo(
         "index: "
         f"{result['index']['notes']} notes, {result['index']['blocks']} blocks, {result['index']['refs']} refs"
+    )
+    from .discover import configured_discover_settings, discover_bridges
+
+    settings = configured_discover_settings(atlas.root)
+    threshold = float(settings.get("threshold", 0.6) or 0.6)
+    max_proposals = int(settings.get("max_proposals", 20) or 20)
+    click.echo("Atlas initialized. Running discovery pass on your notes...")
+    proposals = discover_bridges(atlas.root, threshold=threshold, max_proposals=max_proposals)
+    click.echo(
+        f"Found {len(proposals)} new candidate connections. Review with `cart discover --interactive`."
+    )
+
+
+@main.group("profile")
+def profile_group() -> None:
+    """List and apply wire vocabulary profiles."""
+
+
+@profile_group.command("list")
+def profile_list() -> None:
+    atlas = get_atlas()
+    active_ref = active_profile_ref(atlas.root, config=atlas.config)
+    active_name = _active_profile_payload(atlas).get("name")
+    for name in builtin_profile_names():
+        marker = " *" if name == active_name or name == active_ref else ""
+        click.echo(f"{name}{marker}")
+
+
+@profile_group.command("apply")
+@click.argument("name")
+def profile_apply(name: str) -> None:
+    atlas = get_atlas()
+    applied = atlas.apply_profile(name)
+    from .discover import configured_discover_settings, discover_bridges
+
+    settings = configured_discover_settings(atlas.root)
+    threshold = float(settings.get("threshold", 0.6) or 0.6)
+    max_proposals = int(settings.get("max_proposals", 20) or 20)
+    proposals = discover_bridges(atlas.root, threshold=threshold, max_proposals=max_proposals)
+    click.echo(f"Profile applied: {applied['name']}")
+    click.echo("Running discovery pass with updated predicate vocabulary...")
+    click.echo(
+        f"Found {len(proposals)} new candidate connections. Review with `cart discover --interactive`."
     )
 
 
@@ -1128,24 +1210,17 @@ def operating_truth_history_command(as_json: bool) -> None:
         click.echo(f"{item['id']}  {item['status']:<10} {item['type']:<20} {item['content']}")
 
 
-@main.command("think")
-@click.argument("note_id")
-@click.option("--depth", type=int, default=None, help="Traversal depth.")
-@click.option("--decay", type=float, default=None, help="Activation decay per hop.")
-@click.option(
-    "--no-emotional-weight",
-    is_flag=True,
-    help="Ignore emotional valence in wire weights.",
-)
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def think_command(
+def _run_trace_command(
+    *,
     note_id: str,
     depth: int | None,
     decay: float | None,
+    predicate: str | None,
+    strong_only: bool,
     no_emotional_weight: bool,
     as_json: bool,
+    surface: str,
 ) -> None:
-    """Spreading activation from a note - explore what's connected through the graph."""
     atlas = get_atlas()
     ensure_index_current(atlas)
     from .think import configured_think_settings, spreading_activation
@@ -1167,9 +1242,12 @@ def think_command(
             depth=resolved_depth,
             decay=resolved_decay,
             emotional_weight=emotional_weight,
+            predicate=predicate,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
+    if strong_only:
+        results = [item for item in results if float(item["activation"]) >= 0.7]
     if as_json:
         _emit_json(
             _with_schema(
@@ -1177,31 +1255,203 @@ def think_command(
                     "note_id": note_id,
                     "depth": resolved_depth,
                     "decay": resolved_decay,
+                    "predicate": predicate,
+                    "strong_only": strong_only,
                     "emotional_weight": emotional_weight,
                     "results": results,
                 },
-                surface="think",
+                surface=surface,
             )
         )
         return
-    click.echo(
-        f"{note_id} - spreading activation (depth={resolved_depth}, decay={resolved_decay:.2f})"
-    )
+    click.echo(f"trace from: {note_id}")
     click.echo("")
+    by_depth: dict[int, list[dict[str, Any]]] = {}
     for item in results:
-        path_text = " -> ".join(item["path_ids"])
-        hops = int(item["depth"])
-        click.echo(
-            f"{item['activation']:>5.2f}  {item['note_id']:<20} [{hops} hops: {path_text}]"
+        by_depth.setdefault(int(item["depth"]), []).append(item)
+    for depth_value in sorted(by_depth):
+        click.echo(f"  depth {depth_value}  " + "─" * 29)
+        for item in by_depth[depth_value]:
+            decay_tag = "  (decayed)" if depth_value > 1 else ""
+            via_predicate = item.get("via_predicate") or "wire"
+            via_weight = item.get("via_weight")
+            weight_text = "?" if via_weight is None else f"{float(via_weight):.1f}"
+            click.echo(
+                f"  [{item['note_id']}]".ljust(34)
+                + f"via: {via_predicate:<14} weight: {weight_text}{decay_tag}"
+            )
+        click.echo("")
+    strong_count = sum(1 for item in results if float(item["activation"]) >= 0.7)
+    weak_count = sum(1 for item in results if float(item["activation"]) < 0.4)
+    click.echo(
+        f"  {len(results)} nodes activated  ·  {strong_count} strong (>0.7)  ·  {weak_count} weak (<0.4)"
+    )
+
+
+@main.command("trace")
+@click.argument("note_id")
+@click.option("--depth", type=int, default=None, help="Traversal depth.")
+@click.option("--decay", type=float, default=None, help="Activation decay per hop.")
+@click.option("--type", "predicate", default=None, help="Filter traversal to one predicate.")
+@click.option("--strong", "strong_only", is_flag=True, help="Only show strong activations (>= 0.7).")
+@click.option(
+    "--no-emotional-weight",
+    is_flag=True,
+    help="Ignore emotional valence in traversal weighting.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def trace_command(
+    note_id: str,
+    depth: int | None,
+    decay: float | None,
+    predicate: str | None,
+    strong_only: bool,
+    no_emotional_weight: bool,
+    as_json: bool,
+) -> None:
+    """Trace outward from a note through typed wires."""
+    _run_trace_command(
+        note_id=note_id,
+        depth=depth,
+        decay=decay,
+        predicate=predicate,
+        strong_only=strong_only,
+        no_emotional_weight=no_emotional_weight,
+        as_json=as_json,
+        surface="trace",
+    )
+
+
+@main.command("think", hidden=True)
+@click.argument("note_id")
+@click.option("--depth", type=int, default=None, help="Traversal depth.")
+@click.option("--decay", type=float, default=None, help="Activation decay per hop.")
+@click.option("--type", "predicate", default=None, help="Filter traversal to one predicate.")
+@click.option("--strong", "strong_only", is_flag=True, help="Only show strong activations (>= 0.7).")
+@click.option(
+    "--no-emotional-weight",
+    is_flag=True,
+    help="Ignore emotional valence in traversal weighting.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def think_command(
+    note_id: str,
+    depth: int | None,
+    decay: float | None,
+    predicate: str | None,
+    strong_only: bool,
+    no_emotional_weight: bool,
+    as_json: bool,
+) -> None:
+    _run_trace_command(
+        note_id=note_id,
+        depth=depth,
+        decay=decay,
+        predicate=predicate,
+        strong_only=strong_only,
+        no_emotional_weight=no_emotional_weight,
+        as_json=as_json,
+        surface="think",
+    )
+
+
+def _discover_reason_parts(proposal: dict[str, Any]) -> list[str]:
+    reasons = proposal["reasons"]
+    reason_parts: list[str] = []
+    if reasons["tags"]:
+        reason_parts.append("#" + ", #".join(reasons["tags"][:3]))
+    if reasons["links"]:
+        reason_parts.append("links " + ", ".join(reasons["links"][:3]))
+    if reasons["keywords"]:
+        reason_parts.append('keyword "' + '", "'.join(reasons["keywords"][:4]) + '"')
+    if reasons["type_match"]:
+        reason_parts.append(f"type {proposal['left_type']}")
+    return reason_parts
+
+
+def _interactive_discover(atlas: Atlas, proposals: list[dict[str, Any]]) -> int:
+    from .discover import accept_bridge_proposals, active_predicates, default_discover_predicate, default_discover_weight
+
+    predicates = active_predicates(atlas.root)
+    default_predicate = default_discover_predicate(atlas.root)
+    actor = _current_actor()
+    accepted_count = 0
+    for index, proposal in enumerate(proposals, start=1):
+        shown_at = time.monotonic()
+        click.echo("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        click.echo(f"  candidate connection ({index} of {len(proposals)})")
+        click.echo("")
+        click.echo(f"  [{proposal['left_path']}]  ←?→  [{proposal['right_path']}]")
+        click.echo("")
+        reason_line = ", ".join(_discover_reason_parts(proposal)) or "shared context detected"
+        click.echo(f"  shared: {reason_line}")
+        click.echo("")
+        action = click.prompt(
+            "  action [a=accept / s=skip / r=reject / q=quit]",
+            default="a",
+            show_default=True,
+        ).strip().lower()
+        if action == "q":
+            break
+        if action in {"s", "r"}:
+            continue
+        predicate = click.prompt("  wire type", default=default_predicate, show_default=True).strip()
+        while predicate not in predicates:
+            click.echo(
+                "  invalid predicate. available: " + ", ".join(predicates),
+                err=True,
+            )
+            predicate = click.prompt("  wire type", default=default_predicate, show_default=True).strip()
+        weight = click.prompt(
+            "  weight",
+            type=float,
+            default=default_discover_weight(proposal),
+            show_default=True,
         )
+        if not 0.0 <= weight <= 1.0:
+            raise click.ClickException("discover weight must be between 0.0 and 1.0")
+        confidence = click.prompt(
+            "  confidence",
+            type=click.Choice(["low", "medium", "high"]),
+            default="medium",
+            show_default=True,
+        )
+        note_text = click.prompt("  note", default="", show_default=False).strip() or None
+        accepted_count += accept_bridge_proposals(
+            atlas.root,
+            [
+                {
+                    **proposal,
+                    "predicate": predicate,
+                    "weight": weight,
+                    "author": "cart-discover",
+                    "method": "interactive",
+                    "reviewed": True,
+                    "reviewed_by": actor,
+                    "reviewed_at": datetime.now().astimezone().replace(microsecond=0).isoformat(),
+                    "review_duration_s": round(time.monotonic() - shown_at, 3),
+                    "confidence": confidence,
+                    "note": note_text,
+                }
+            ],
+        )
+    return accepted_count
 
 
 @main.command("discover")
 @click.option("--threshold", type=float, default=None, help="Minimum similarity to propose.")
 @click.option("--accept", is_flag=True, help="Auto-create wires for all proposals.")
+@click.option("--interactive", "interactive_mode", is_flag=True, help="Step through candidates one by one.")
+@click.option("--export", "export_mode", is_flag=True, help="Emit the candidate list as raw JSON.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def discover_command(threshold: float | None, accept: bool, as_json: bool) -> None:
-    """Find similar but unwired note pairs - propose new connections."""
+def discover_command(
+    threshold: float | None,
+    accept: bool,
+    interactive_mode: bool,
+    export_mode: bool,
+    as_json: bool,
+) -> None:
+    """Find similar but unwired note pairs and surface likely new connections."""
     atlas = get_atlas()
     ensure_index_current(atlas)
     from .discover import accept_bridge_proposals, configured_discover_settings, discover_bridges
@@ -1221,14 +1471,30 @@ def discover_command(threshold: float | None, accept: bool, as_json: bool) -> No
         max_proposals=max_proposals,
     )
     accepted_count = 0
-    if accept:
-        accepted_count = accept_bridge_proposals(atlas.root, proposals)
+    if accept and interactive_mode:
+        raise click.ClickException("use either --accept or --interactive, not both")
+    if export_mode and as_json:
+        raise click.ClickException("use either --export or --json, not both")
+    if interactive_mode:
+        accepted_count = _interactive_discover(atlas, proposals)
+    elif accept:
+        accepted_count = accept_bridge_proposals(
+            atlas.root,
+            proposals,
+            author="cart-discover",
+            method="agent",
+            reviewed=False,
+        )
+    if export_mode:
+        _emit_json(proposals)
+        return
     if as_json:
         _emit_json(
             _with_schema(
                 {
                     "threshold": resolved_threshold,
                     "accept": accept,
+                    "interactive": interactive_mode,
                     "accepted_count": accepted_count,
                     "proposals": proposals,
                 },
@@ -1236,28 +1502,21 @@ def discover_command(threshold: float | None, accept: bool, as_json: bool) -> No
             )
         )
         return
-    click.echo(f"bridge proposals (threshold={resolved_threshold:.2f})")
+    click.echo(f"candidate connections (threshold={resolved_threshold:.2f})")
     click.echo("")
     for proposal in proposals:
-        reasons = proposal["reasons"]
-        reason_parts: list[str] = []
-        if reasons["tags"]:
-            reason_parts.append("tags: " + ", ".join(reasons["tags"][:3]))
-        if reasons["links"]:
-            reason_parts.append("links: " + ", ".join(reasons["links"][:3]))
-        if reasons["keywords"]:
-            reason_parts.append("keywords: " + ", ".join(reasons["keywords"][:4]))
-        if reasons["type_match"]:
-            reason_parts.append(f"type: {proposal['left_type']}")
+        reason_parts = _discover_reason_parts(proposal)
         click.echo(
             f"{proposal['score']:>5.2f}  {proposal['left_id']} <-> {proposal['right_id']}  "
             + " | ".join(reason_parts)
         )
     click.echo("")
-    if accept:
+    if interactive_mode:
+        click.echo(f"accepted {accepted_count} proposal(s) in interactive review.")
+    elif accept:
         click.echo(f"accepted {accepted_count} proposal(s).")
     else:
-        click.echo(f"{len(proposals)} proposals. Run with --accept to create wires.")
+        click.echo(f"Found {len(proposals)} candidate connections. Review with `cart discover --interactive`.")
 
 
 def _walk_metadata_summary(item: dict[str, Any]) -> str:
@@ -1684,9 +1943,14 @@ def wire_group() -> None:
 @wire_group.command("predicates")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def wire_predicates(as_json: bool) -> None:
+    atlas = get_atlas()
+    profile = _active_profile_payload(atlas)
     payload = {
-        "count": len(VALID_WIRE_PREDICATES),
-        "predicates": list(VALID_WIRE_PREDICATES),
+        "profile": profile["name"],
+        "count": len(profile["default_predicates"]),
+        "predicates": list(profile["default_predicates"]),
+        "predicate_colors": profile["predicate_colors"],
+        "metadata_fields": profile["metadata_fields"],
         "emotional_valences": list(VALID_EMOTIONAL_VALENCES),
         "energy_impacts": list(VALID_ENERGY_IMPACTS),
         "avoidance_risks": list(VALID_AVOIDANCE_RISKS),
@@ -1695,7 +1959,7 @@ def wire_predicates(as_json: bool) -> None:
     if as_json:
         _emit_json(_with_schema(payload, surface="wire.predicates"))
         return
-    for predicate in VALID_WIRE_PREDICATES:
+    for predicate in profile["default_predicates"]:
         click.echo(predicate)
 
 
@@ -1705,14 +1969,13 @@ def wire_predicates(as_json: bool) -> None:
 @click.option(
     "--predicate",
     required=False,
-    type=click.Choice(list(VALID_WIRE_PREDICATES)),
 )
 @click.option(
     "--relationship",
     required=False,
-    type=click.Choice(list(VALID_WIRE_PREDICATES)),
     help="Alias for --predicate and stored relationship label.",
 )
+@click.option("--weight", type=float, default=None, help="Relationship weight from 0.0 to 1.0.")
 @click.option("--bidirectional", is_flag=True, help="Mark the relationship as symmetric.")
 @click.option(
     "--emotional-valence",
@@ -1738,12 +2001,18 @@ def wire_predicates(as_json: bool) -> None:
 @click.option("--since", help="Optional ISO date or freeform start marker.")
 @click.option("--until", help="Optional ISO date or freeform end marker.")
 @click.option("--valence-note", help="Free-text note for emotional nuance.")
+@click.option(
+    "--confidence",
+    type=click.Choice(["low", "medium", "high"]),
+    help="Confidence marker for the new wire.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def wire_add(
     source: str,
     target: str,
     predicate: str | None,
     relationship: str | None,
+    weight: float,
     bidirectional: bool,
     emotional_valence: str | None,
     energy_impact: str | None,
@@ -1753,17 +2022,21 @@ def wire_add(
     since: str | None,
     until: str | None,
     valence_note: str | None,
+    confidence: str,
     as_json: bool,
 ) -> None:
     atlas = get_atlas()
     index = ensure_index_current(atlas)
-    predicate, relationship = _wire_predicate_and_relationship(predicate, relationship)
+    predicate, relationship = _wire_predicate_and_relationship(atlas, predicate, relationship)
+    if weight is not None and not 0.0 <= weight <= 1.0:
+        raise click.ClickException("wire weight must be between 0.0 and 1.0")
     source_note, source_block, source_path = _resolve_note_or_block_ref(index, source)
     target_note, target_block, _ = _resolve_note_or_block_ref(index, target)
     payload = {
         "source": _render_note_or_block(source_note, source_block),
         "target": _render_note_or_block(target_note, target_block),
         "predicate": predicate,
+        "weight": None if weight is None else round(weight, 3),
         "relationship": relationship,
         "bidirectional": bidirectional,
         "emotional_valence": emotional_valence,
@@ -1774,6 +2047,13 @@ def wire_add(
         "since": since,
         "until": until,
         "valence_note": valence_note,
+        "author": None,
+        "method": None,
+        "reviewed": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "confidence": confidence,
+        "note": None,
         "created": False,
         "updated": False,
     }
@@ -1783,6 +2063,7 @@ def wire_add(
         target_note=target_note,
         target_block=target_block,
         predicate=predicate,
+        weight=weight,
         bidirectional=bidirectional,
         relationship=relationship,
         emotional_valence=emotional_valence,
@@ -1793,6 +2074,12 @@ def wire_add(
         since=since,
         until=until,
         valence_note=valence_note,
+        author=None,
+        method=None,
+        reviewed=None,
+        reviewed_by=None,
+        reviewed_at=None,
+        confidence=confidence,
     )
     created, updated = _replace_or_append_wire_comment(
         note,
@@ -1885,6 +2172,14 @@ def wire_list(
     type=click.Choice(list(VALID_CURRENT_STATES)),
     help="Filter by current state.",
 )
+@click.option("--method", help="Filter by provenance method.")
+@click.option(
+    "--reviewed/--unreviewed",
+    "reviewed",
+    default=None,
+    help="Filter by reviewed state.",
+)
+@click.option("--pending-review", is_flag=True, help="Only show wires that still need review.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def wire_query(
     node: str | None,
@@ -1895,6 +2190,9 @@ def wire_query(
     avoidance_risk: str | None,
     growth_edge: bool,
     current_state: str | None,
+    method: str | None,
+    reviewed: bool | None,
+    pending_review: bool,
     as_json: bool,
 ) -> None:
     atlas = get_atlas()
@@ -1911,6 +2209,9 @@ def wire_query(
         avoidance_risk=avoidance_risk,
         growth_edge=True if growth_edge else None,
         current_state=current_state,
+        method=method,
+        reviewed=reviewed,
+        pending_review=pending_review,
     )
     payload = {
         "node": note_id,
@@ -1921,6 +2222,9 @@ def wire_query(
         "avoidance_risk": avoidance_risk,
         "growth_edge": growth_edge,
         "current_state": current_state,
+        "method": method,
+        "reviewed": reviewed,
+        "pending_review": pending_review,
         "count": len(wires),
         "wires": wires,
     }
@@ -1932,6 +2236,97 @@ def wire_query(
         return
     for wire in wires:
         click.echo(_render_wire_summary(wire))
+
+
+@wire_group.command("review")
+@click.option("--limit", default=20, type=int, show_default=True, help="Maximum pending wires to review.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_review(limit: int, as_json: bool) -> None:
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+    wires = index.query_wires(pending_review=True)[: max(limit, 0)]
+    payload = {
+        "count": len(wires),
+        "wires": wires,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.review"))
+        return
+    if not wires:
+        click.echo("no wires pending review")
+        return
+    actor = _current_actor()
+    changed = False
+    for offset, wire in enumerate(wires, start=1):
+        shown_at = time.monotonic()
+        click.echo("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        click.echo(f"  pending wire ({offset} of {len(wires)})")
+        click.echo("")
+        click.echo(f"  {_render_wire_summary(wire)}")
+        click.echo("")
+        action = click.prompt(
+            "  action [a=accept / s=skip / r=reject / q=quit]",
+            default="a",
+            show_default=True,
+        ).strip().lower()
+        if action == "q":
+            break
+        if action in {"s", "r"}:
+            continue
+        confidence = click.prompt(
+            "  confidence",
+            type=click.Choice(["low", "medium", "high"]),
+            default=str(wire.get("confidence") or "medium"),
+            show_default=True,
+        )
+        note_text = click.prompt(
+            "  note",
+            default=str(wire.get("note") or ""),
+            show_default=False,
+        ).strip() or None
+        note = Note.from_file(Path(str(wire["path"])))
+        review_duration = round(time.monotonic() - shown_at, 3)
+        method = str(wire.get("method") or "agent")
+        if method in {"agent", "interactive"}:
+            method = "confirmed"
+        comment = render_wire_comment(
+            target_note=str(wire["target_note"]),
+            target_block=None if wire["target_block"] is None else str(wire["target_block"]),
+            predicate=str(wire["predicate"]),
+            weight=None if wire.get("weight") is None else float(wire["weight"]),
+            bidirectional=bool(wire.get("bidirectional")),
+            relationship=None if wire.get("relationship") is None else str(wire["relationship"]),
+            emotional_valence=None if wire.get("emotional_valence") is None else str(wire["emotional_valence"]),
+            energy_impact=None if wire.get("energy_impact") is None else str(wire["energy_impact"]),
+            avoidance_risk=None if wire.get("avoidance_risk") is None else str(wire["avoidance_risk"]),
+            growth_edge=wire.get("growth_edge"),
+            current_state=None if wire.get("current_state") is None else str(wire["current_state"]),
+            since=None if wire.get("since") is None else str(wire["since"]),
+            until=None if wire.get("until") is None else str(wire["until"]),
+            valence_note=None if wire.get("valence_note") is None else str(wire["valence_note"]),
+            author=None if wire.get("author") is None else str(wire["author"]),
+            method=method,
+            reviewed=True,
+            reviewed_by=actor,
+            reviewed_at=datetime.now().astimezone().replace(microsecond=0).isoformat(),
+            review_duration_s=review_duration,
+            confidence=confidence,
+            note=note_text,
+        )
+        _replace_or_append_wire_comment(
+            note,
+            source_block=None if wire["source_block"] is None else str(wire["source_block"]),
+            target_note=str(wire["target_note"]),
+            target_block=None if wire["target_block"] is None else str(wire["target_block"]),
+            predicate=str(wire["predicate"]),
+            comment=comment,
+        )
+        note.frontmatter["modified"] = datetime.now().date().isoformat()
+        note.write()
+        changed = True
+    if changed:
+        atlas.refresh_index()
+        click.echo("reviewed pending wires")
 
 
 @wire_group.command("emotional-summary")

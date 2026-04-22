@@ -10,19 +10,20 @@ from typing import Any
 
 from .config import load_config
 from .notes import parse_frontmatter
+from .profiles import profile_payload
 from .wires import VALID_WIRE_PREDICATES
 
 
 TYPE_COLORS = {
     "person": "#8ec1ff",
-    "project": "#d97757",
+    "project": "#d9a95d",
     "goal": "#e6c15d",
     "entity": "#6cb88f",
     "agent-log": "#7aa6d9",
     "session": "#7aa6d9",
-    "daily": "#d08bd7",
+    "daily": "#7d9fd8",
     "learning": "#d5b06b",
-    "note": "#b6c2cf",
+    "note": "#e6ecf5",
 }
 
 EMOTIONAL_NODE_COLORS = {
@@ -58,6 +59,7 @@ def _discover_theme_files(atlas_root: Path) -> list[Path]:
 
 def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     config = load_config(root=atlas_root)
+    active_profile = profile_payload(atlas_root, config=config)
     graph = config.get("graph", {}) if isinstance(config, dict) else {}
     if not isinstance(graph, dict):
         graph = {}
@@ -74,6 +76,7 @@ def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
     )
     return {
         "theme_preset": theme_preset,
+        "profile": active_profile,
         "available_theme_presets": available_theme_presets,
         "theme_script_paths": [f"./themes/{path.name}" for path in theme_files],
         "show_people": bool(graph.get("show_people", True)),
@@ -90,6 +93,7 @@ def _graph_config_payload(atlas_root: Path) -> dict[str, Any]:
 
 def _wire_metadata_payload(row: sqlite3.Row) -> dict[str, Any]:
     return {
+        "weight": None if row["weight"] is None else float(row["weight"]),
         "relationship": None if row["relationship"] is None else str(row["relationship"]),
         "emotional_valence": None
         if row["emotional_valence"] is None
@@ -101,6 +105,16 @@ def _wire_metadata_payload(row: sqlite3.Row) -> dict[str, Any]:
         "since": None if row["since"] is None else str(row["since"]),
         "until": None if row["until"] is None else str(row["until"]),
         "valence_note": None if row["valence_note"] is None else str(row["valence_note"]),
+        "author": None if row["author"] is None else str(row["author"]),
+        "method": None if row["method"] is None else str(row["method"]),
+        "reviewed": None if row["reviewed"] is None else bool(row["reviewed"]),
+        "reviewed_by": None if row["reviewed_by"] is None else str(row["reviewed_by"]),
+        "reviewed_at": None if row["reviewed_at"] is None else str(row["reviewed_at"]),
+        "review_duration_s": None
+        if row["review_duration_s"] is None
+        else float(row["review_duration_s"]),
+        "confidence": None if row["confidence"] is None else str(row["confidence"]),
+        "note": None if row["note"] is None else str(row["note"]),
     }
 
 
@@ -272,6 +286,8 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
     if not db_path.exists():
         raise FileNotFoundError(db_path)
     graph_config = _graph_config_payload(atlas_root)
+    active_profile = graph_config.get("profile", {})
+    predicate_colors = active_profile.get("predicate_colors", {})
 
     connection = sqlite3.connect(str(db_path))
     connection.row_factory = sqlite3.Row
@@ -295,8 +311,11 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
             """
             SELECT
                 source_note,
+                source_block,
                 target_note,
+                target_block,
                 predicate,
+                weight,
                 relationship,
                 bidirectional,
                 emotional_valence,
@@ -306,7 +325,17 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
                 current_state,
                 since,
                 until,
-                valence_note
+                valence_note,
+                author,
+                method,
+                reviewed,
+                reviewed_by,
+                reviewed_at,
+                review_duration_s,
+                confidence,
+                note,
+                path,
+                line
             FROM wires
             ORDER BY source_note ASC, target_note ASC, predicate ASC
             """
@@ -354,7 +383,7 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
             "kind": "wikilink",
         }
 
-    valid_predicates = set(VALID_WIRE_PREDICATES)
+    valid_predicates = set(active_profile.get("default_predicates") or VALID_WIRE_PREDICATES)
     wire_count = 0
     incident_wires: dict[str, list[dict[str, Any]]] = {}
     for row in wire_rows:
@@ -372,14 +401,23 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
             "source": source,
             "target": target,
             "kind": "wire",
+            "source_block": None if row["source_block"] is None else str(row["source_block"]),
+            "target_block": None if row["target_block"] is None else str(row["target_block"]),
             "predicate": predicate,
+            "color": predicate_colors.get(predicate),
+            "path": None if row["path"] is None else str(row["path"]),
+            "line": None if row["line"] is None else int(row["line"]),
             **_wire_metadata_payload(row),
             "bidirectional": bool(row["bidirectional"]),
         }
         incident_payload = {
             "source": source,
             "target": target,
+            "source_block": None if row["source_block"] is None else str(row["source_block"]),
+            "target_block": None if row["target_block"] is None else str(row["target_block"]),
             "predicate": predicate,
+            "path": None if row["path"] is None else str(row["path"]),
+            "line": None if row["line"] is None else int(row["line"]),
             **_wire_metadata_payload(row),
             "bidirectional": bool(row["bidirectional"]),
         }
@@ -471,6 +509,13 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
         "generated": date.today().isoformat(),
         "atlas_root": str(atlas_root),
         "graph_config": graph_config,
+        "predicate_palette": [
+            {
+                "name": predicate,
+                "color": str(predicate_colors.get(predicate) or ""),
+            }
+            for predicate in active_profile.get("default_predicates", [])
+        ],
         "node_count": len(nodes),
         "edge_count": len(edges),
         "wire_count": wire_count,
@@ -523,7 +568,10 @@ def render_graph_html(payload: dict[str, Any]) -> str:
         const wireAspects = definition.wireAspects && typeof definition.wireAspects === 'object'
           ? { ...definition.wireAspects }
           : {};
-        return { id, preset, glyphs, wireAspects };
+        const runtime = definition.runtime && typeof definition.runtime === 'object'
+          ? { ...definition.runtime }
+          : {};
+        return { id, preset, glyphs, wireAspects, runtime };
       }
 
       function mergeTheme(baseTheme, overrideTheme) {
@@ -532,6 +580,7 @@ def render_graph_html(payload: dict[str, Any]) -> str:
           preset: { ...(baseTheme.preset || {}), ...(overrideTheme.preset || {}), id: overrideTheme.id || baseTheme.id },
           glyphs: { ...(baseTheme.glyphs || {}), ...(overrideTheme.glyphs || {}) },
           wireAspects: { ...(baseTheme.wireAspects || {}), ...(overrideTheme.wireAspects || {}) },
+          runtime: { ...(baseTheme.runtime || {}), ...(overrideTheme.runtime || {}) },
         };
       }
 
@@ -778,6 +827,29 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       background: #1a1f2e;
       color: var(--text);
     }
+    input[type="text"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.28);
+      color: var(--text);
+      border-radius: 0.7rem;
+      padding: 0.45rem 0.55rem;
+      outline: none;
+      font: inherit;
+      font-size: 0.78rem;
+    }
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    textarea:focus {
+      border-color: rgba(237, 203, 128, 0.42);
+      box-shadow: 0 0 0 3px rgba(237, 203, 128, 0.08);
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-warm);
+    }
     .controls, .toggle-grid {
       display: flex;
       flex-wrap: wrap;
@@ -820,6 +892,14 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     button.compact, .button-link.compact {
       padding: 0.28rem 0.5rem;
       font-size: 0.68rem;
+    }
+    button.danger {
+      border-color: rgba(255, 120, 120, 0.18);
+      color: #ffd0d0;
+    }
+    button.danger:hover {
+      border-color: rgba(255, 120, 120, 0.4);
+      background: rgba(255, 120, 120, 0.12);
     }
     label.toggle {
       display: inline-flex;
@@ -1158,6 +1238,17 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       gap: 0.5rem;
       margin-bottom: 0.25rem;
     }
+    .detail-actions {
+      margin: 0.4rem 0 0.2rem;
+    }
+    .inline-form {
+      display: grid;
+      gap: 0.35rem;
+      margin-top: 0.45rem;
+    }
+    .inline-form[hidden] {
+      display: none;
+    }
     .stage-toolbar {
       position: absolute;
       top: 0.6rem;
@@ -1232,6 +1323,25 @@ def render_graph_html(payload: dict[str, Any]) -> str:
     }
     #graph-error[hidden] { display: none; }
     #help-overlay[hidden] { display: none; }
+    #graph-tooltip {
+      position: absolute;
+      z-index: 5;
+      max-width: min(22rem, 40vw);
+      pointer-events: none;
+      padding: 0.55rem 0.65rem;
+      border-radius: 0.8rem;
+      border: 1px solid rgba(245, 166, 35, 0.35);
+      background: rgba(12, 14, 22, 0.92);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+      color: #ffe8bf;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      transform: translate(0.6rem, 0.6rem);
+      white-space: pre-wrap;
+    }
+    #graph-tooltip[hidden] {
+      display: none;
+    }
     #help-overlay-header {
       display: flex;
       align-items: center;
@@ -1327,6 +1437,10 @@ __THEME_SCRIPT_TAGS__
           <summary class="eyebrow">more controls</summary>
           <div style="display: grid; gap: 0.4rem; margin-top: 0.35rem;">
             <div>
+              <div class="eyebrow" style="margin-bottom: 0.28rem;">Predicate Filters</div>
+              <div class="legend" id="predicate-legend"></div>
+            </div>
+            <div>
               <div class="eyebrow" style="margin-bottom: 0.28rem;">Type Legend</div>
               <div class="legend" id="legend"></div>
             </div>
@@ -1355,6 +1469,11 @@ __THEME_SCRIPT_TAGS__
           <label class="toggle"><input id="show-sessions" type="checkbox"> sessions</label>
           <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
         </div>
+        <div class="mini-toggle-row">
+          <label class="toggle"><input id="show-unreviewed-only" type="checkbox"> unreviewed</label>
+          <label class="toggle"><input id="trace-mode" type="checkbox"> trace</label>
+          <label class="toggle"><input id="discover-overlay" type="checkbox"> discover</label>
+        </div>
 
         <div class="button-row">
           <button id="export-png" type="button" class="compact">png</button>
@@ -1372,6 +1491,7 @@ __THEME_SCRIPT_TAGS__
         </div>
         <div class="actions">
           <div class="status" id="selection-status">awaiting selection</div>
+          <div class="status" id="pending-review-status">0 wires pending review</div>
           <button id="toggle-help" type="button" class="compact" aria-expanded="false">help</button>
         </div>
       </div>
@@ -1397,6 +1517,7 @@ __THEME_SCRIPT_TAGS__
       <div id="graph-error" hidden></div>
       <div id="graph-canvas"></div>
       <div id="label-layer" aria-hidden="true"></div>
+      <div id="graph-tooltip" hidden></div>
     </main>
 
     <aside class="panel detail">
@@ -1410,7 +1531,25 @@ __THEME_SCRIPT_TAGS__
         <div class="card">
           <div class="detail-meta">
             <div class="eyebrow">Preview</div>
-            <a class="button-link" id="open-note" href="#" target="_blank" rel="noopener noreferrer">jump to note</a>
+            <a class="button-link" id="open-note" href="#" target="_blank" rel="noopener noreferrer">edit note</a>
+          </div>
+          <div class="button-row detail-actions">
+            <button id="run-trace" type="button" class="compact">run trace</button>
+            <button id="toggle-add-wire" type="button" class="compact">add wire</button>
+            <button id="discover-from-node" type="button" class="compact">discover from here</button>
+          </div>
+          <div class="inline-form" id="add-wire-form" hidden>
+            <label class="eyebrow" for="add-wire-target">Target note</label>
+            <input id="add-wire-target" type="text" list="node-id-options" placeholder="target note id">
+            <label class="eyebrow" for="add-wire-predicate">Predicate</label>
+            <select id="add-wire-predicate"></select>
+            <label class="eyebrow" for="add-wire-weight">Weight</label>
+            <input id="add-wire-weight" type="range" min="0" max="1" step="0.05" value="0.7">
+            <div class="mono subtle" id="add-wire-weight-label">0.70</div>
+            <div class="button-row detail-actions">
+              <button id="submit-add-wire" type="button" class="compact">save wire</button>
+              <button id="cancel-add-wire" type="button" class="compact">cancel</button>
+            </div>
           </div>
           <div class="preview" id="detail-preview">Select a node to show its note preview.</div>
         </div>
@@ -1446,9 +1585,65 @@ __THEME_SCRIPT_TAGS__
           <div class="eyebrow">Recent Sessions</div>
           <ul class="list" id="session-mentions"></ul>
         </div>
+
+        <div class="card">
+          <div class="eyebrow">Selected Edge</div>
+          <div class="mono" id="edge-detail-title">No edge selected.</div>
+          <div class="subtle" id="edge-detail-meta">Click a wire to inspect its provenance.</div>
+          <div class="button-row detail-actions">
+            <button id="mark-edge-reviewed" type="button" class="compact">mark reviewed</button>
+            <button id="delete-edge" type="button" class="compact danger">delete wire</button>
+          </div>
+          <div class="inline-form" id="edge-edit-form">
+            <label class="eyebrow" for="edge-predicate">Predicate</label>
+            <select id="edge-predicate"></select>
+            <label class="eyebrow" for="edge-weight">Weight</label>
+            <input id="edge-weight" type="range" min="0" max="1" step="0.05" value="0.7">
+            <div class="mono subtle" id="edge-weight-label">0.70</div>
+            <label class="eyebrow" for="edge-confidence">Confidence</label>
+            <select id="edge-confidence">
+              <option value="">unchanged</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+            <label class="eyebrow" for="edge-note">Note</label>
+            <textarea id="edge-note" rows="3" placeholder="optional review note"></textarea>
+            <div class="button-row detail-actions">
+              <button id="save-edge" type="button" class="compact">save edits</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="discover-card">
+          <div class="eyebrow">Discover Candidate</div>
+          <div class="mono" id="discover-detail-title">No candidate selected.</div>
+          <div class="subtle" id="discover-detail-meta">Turn on discover mode and click a dashed candidate edge.</div>
+          <div class="inline-form">
+            <label class="eyebrow" for="discover-predicate">Predicate</label>
+            <select id="discover-predicate"></select>
+            <label class="eyebrow" for="discover-weight">Weight</label>
+            <input id="discover-weight" type="range" min="0" max="1" step="0.05" value="0.7">
+            <div class="mono subtle" id="discover-weight-label">0.70</div>
+            <label class="eyebrow" for="discover-confidence">Confidence</label>
+            <select id="discover-confidence">
+              <option value="low">low</option>
+              <option value="medium" selected>medium</option>
+              <option value="high">high</option>
+            </select>
+            <label class="eyebrow" for="discover-note">Note</label>
+            <textarea id="discover-note" rows="3" placeholder="optional accept note"></textarea>
+            <div class="button-row detail-actions">
+              <button id="accept-discover" type="button" class="compact">accept</button>
+              <button id="reject-discover" type="button" class="compact">reject</button>
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
   </div>
+
+  <datalist id="node-id-options"></datalist>
 
   <script type="module">
     __THREE_VENDOR__
@@ -1466,6 +1661,7 @@ __THEME_SCRIPT_TAGS__
       IcosahedronGeometry,
       Line,
       LineBasicMaterial,
+      LineDashedMaterial,
       LineLoop,
       Mesh,
       MeshStandardMaterial,
@@ -1485,26 +1681,21 @@ __THEME_SCRIPT_TAGS__
     (() => {
     const atlasGraphPayload = __PAYLOAD__;
     const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-    const predicateColors = {
-      supports: '#68d39b',
-      qualifies: '#d7c86e',
-      contradicts: '#ff7c72',
-      precedes: '#5aa7ff',
-      follows: '#7cc0ff',
-      part_of: '#8a9cff',
-      depends_on: '#ffaf5c',
-      grounds: '#7ed3c2',
-      intensifies_with: '#d680ff',
-      co_occurs_with: '#eabf7e',
-      triggered_by: '#ff93b7',
-      relates_to_goal: '#9ef061',
-      relates_to_person: '#8ec1ff',
-      intention_outcome: '#f5d16f',
-      resistance_against: '#ff6a8c',
-      'active-project': '#ffd36a',
-      'core-infrastructure': '#7ec8ff',
-      relates_to: '#c2c9d6',
-    };
+    let predicatePalette = Array.isArray(atlasGraphPayload.predicate_palette)
+      ? atlasGraphPayload.predicate_palette
+      : [];
+    let predicateColors = Object.fromEntries(
+      predicatePalette
+        .filter((item) => item && item.name)
+        .map((item) => [item.name, item.color || '#f0b35f'])
+    );
+    function rebuildPredicateColorMap() {
+      predicateColors = Object.fromEntries(
+        predicatePalette
+          .filter((item) => item && item.name)
+          .map((item) => [item.name, item.color || '#f0b35f'])
+      );
+    }
     const emotionalColors = {
       positive: '#67d98b',
       negative: '#f06a74',
@@ -1546,14 +1737,23 @@ __THEME_SCRIPT_TAGS__
         showBiomes: false,
         showSurveyGrid: false,
 
-        // v0.4 compliance markers — metadata-only until the renderer consumes them
-        themeApiVersion: 'v0.4',
-        templateCompliance: ['v0.3', 'v0.4'],
+        // v0.5 compliance markers — make it obvious this preset understands the
+        // graph-workspace / provenance era of the renderer.
+        themeApiVersion: 'v0.5',
+        templateCompliance: ['v0.3', 'v0.4', 'v0.5'],
 
         // v0.4 feature flags — reserve explicit hooks for newer atlas surfaces
         temporalPatternSignals: false,
         pluginManifestStatus: false,
         patternCacheHints: false,
+
+        // v0.5 feature flags — graph-as-workspace behavior
+        provenanceEdgeStyles: true,
+        profilePredicatePalette: true,
+        traceAnimation: true,
+        discoverOverlayInteractions: true,
+        unreviewedFilter: true,
+        workspaceEditing: true,
       },
       astral: {
         id: 'astral',
@@ -1569,14 +1769,23 @@ __THEME_SCRIPT_TAGS__
         showBiomes: true,
         showSurveyGrid: true,
 
-        // v0.4 compliance markers — metadata-only until the renderer consumes them
-        themeApiVersion: 'v0.4',
-        templateCompliance: ['v0.3', 'v0.4'],
+        // v0.5 compliance markers — make it obvious this preset understands the
+        // graph-workspace / provenance era of the renderer.
+        themeApiVersion: 'v0.5',
+        templateCompliance: ['v0.3', 'v0.4', 'v0.5'],
 
         // v0.4 feature flags — reserve explicit hooks for newer atlas surfaces
         temporalPatternSignals: false,
         pluginManifestStatus: false,
         patternCacheHints: false,
+
+        // v0.5 feature flags — graph-as-workspace behavior
+        provenanceEdgeStyles: true,
+        profilePredicatePalette: true,
+        traceAnimation: true,
+        discoverOverlayInteractions: true,
+        unreviewedFilter: true,
+        workspaceEditing: true,
       },
     };
     const THEME_TYPE_GLYPHS = {
@@ -1662,11 +1871,15 @@ __THEME_SCRIPT_TAGS__
     const showLabelsToggle = document.getElementById('show-labels');
     const showSessionsToggle = document.getElementById('show-sessions');
     const showWiresToggle = document.getElementById('show-wires');
+    const showUnreviewedOnlyToggle = document.getElementById('show-unreviewed-only');
+    const traceModeToggle = document.getElementById('trace-mode');
+    const discoverOverlayToggle = document.getElementById('discover-overlay');
     const nodeCountEl = document.getElementById('node-count');
     const edgeCountEl = document.getElementById('edge-count');
     const typeCountEl = document.getElementById('type-count');
     const matchCountEl = document.getElementById('match-count');
     const legendEl = document.getElementById('legend');
+    const predicateLegendEl = document.getElementById('predicate-legend');
     const typeBrowserTitleEl = document.getElementById('type-browser-title');
     const typeNodeListEl = document.getElementById('type-node-list');
     const atlasRootEl = document.getElementById('atlas-root');
@@ -1675,6 +1888,7 @@ __THEME_SCRIPT_TAGS__
     const surveyMarkEl = document.getElementById('survey-mark');
     const surveyTitleEl = document.getElementById('survey-title');
     const selectionStatusEl = document.getElementById('selection-status');
+    const pendingReviewStatusEl = document.getElementById('pending-review-status');
     const detailTitleEl = document.getElementById('detail-title');
     const detailSubtitleEl = document.getElementById('detail-subtitle');
     const detailPreviewEl = document.getElementById('detail-preview');
@@ -1682,13 +1896,44 @@ __THEME_SCRIPT_TAGS__
     const detailTagsEl = document.getElementById('detail-tags');
     const detailEmotionalEl = document.getElementById('detail-emotional');
     const detailEmotionalNoteEl = document.getElementById('detail-emotional-note');
+    const runTraceButton = document.getElementById('run-trace');
+    const toggleAddWireButton = document.getElementById('toggle-add-wire');
+    const discoverFromNodeButton = document.getElementById('discover-from-node');
+    const addWireFormEl = document.getElementById('add-wire-form');
+    const addWireTargetEl = document.getElementById('add-wire-target');
+    const addWirePredicateEl = document.getElementById('add-wire-predicate');
+    const addWireWeightEl = document.getElementById('add-wire-weight');
+    const addWireWeightLabelEl = document.getElementById('add-wire-weight-label');
+    const submitAddWireButton = document.getElementById('submit-add-wire');
+    const cancelAddWireButton = document.getElementById('cancel-add-wire');
     const neighborListEl = document.getElementById('neighbor-list');
     const incomingWireListEl = document.getElementById('incoming-wire-list');
     const outgoingWireListEl = document.getElementById('outgoing-wire-list');
     const sessionMentionsEl = document.getElementById('session-mentions');
+    const edgeDetailTitleEl = document.getElementById('edge-detail-title');
+    const edgeDetailMetaEl = document.getElementById('edge-detail-meta');
+    const edgePredicateEl = document.getElementById('edge-predicate');
+    const edgeWeightEl = document.getElementById('edge-weight');
+    const edgeWeightLabelEl = document.getElementById('edge-weight-label');
+    const edgeConfidenceEl = document.getElementById('edge-confidence');
+    const edgeNoteEl = document.getElementById('edge-note');
+    const saveEdgeButton = document.getElementById('save-edge');
+    const markEdgeReviewedButton = document.getElementById('mark-edge-reviewed');
+    const deleteEdgeButton = document.getElementById('delete-edge');
+    const discoverDetailTitleEl = document.getElementById('discover-detail-title');
+    const discoverDetailMetaEl = document.getElementById('discover-detail-meta');
+    const discoverPredicateEl = document.getElementById('discover-predicate');
+    const discoverWeightEl = document.getElementById('discover-weight');
+    const discoverWeightLabelEl = document.getElementById('discover-weight-label');
+    const discoverConfidenceEl = document.getElementById('discover-confidence');
+    const discoverNoteEl = document.getElementById('discover-note');
+    const acceptDiscoverButton = document.getElementById('accept-discover');
+    const rejectDiscoverButton = document.getElementById('reject-discover');
     const openNoteEl = document.getElementById('open-note');
     const canvasHost = document.getElementById('graph-canvas');
     const labelLayer = document.getElementById('label-layer');
+    const graphTooltipEl = document.getElementById('graph-tooltip');
+    const nodeIdOptionsEl = document.getElementById('node-id-options');
     const helpOverlay = document.getElementById('help-overlay');
     const graphErrorEl = document.getElementById('graph-error');
     const toggleHelpButton = document.getElementById('toggle-help');
@@ -1742,6 +1987,7 @@ __THEME_SCRIPT_TAGS__
           preset: THEME_PRESETS.baseline,
           glyphs: THEME_TYPE_GLYPHS.baseline,
           wireAspects: {},
+          runtime: {},
         },
       ];
     }
@@ -1755,6 +2001,7 @@ __THEME_SCRIPT_TAGS__
           preset: THEME_PRESETS.baseline,
           glyphs: THEME_TYPE_GLYPHS.baseline,
           wireAspects: {},
+          runtime: {},
         }
       );
     }
@@ -1813,6 +2060,7 @@ __THEME_SCRIPT_TAGS__
     const activeTheme = activeThemeVariant.preset || THEME_PRESETS.baseline;
     const activeTypeGlyphs = activeThemeVariant.glyphs || THEME_TYPE_GLYPHS.baseline;
     const activeWireAspects = activeThemeVariant.wireAspects || {};
+    const activeThemeRuntime = activeThemeVariant.runtime || {};
     const usingThemeSigils = activeTheme.id !== 'baseline';
     document.body.dataset.theme = activeTheme.id;
     graphTitleEl.textContent = activeTheme.title || activeTheme.id || 'Atlas Graph';
@@ -1832,6 +2080,29 @@ __THEME_SCRIPT_TAGS__
     }
 
     renderThemePicker();
+
+    function syncRangeLabel(input, label) {
+      label.textContent = Number(input.value || 0).toFixed(2);
+    }
+
+    function populatePredicateSelect(selectEl, selectedValue = '') {
+      if (!selectEl) {
+        return;
+      }
+      const currentValue = String(selectedValue || '');
+      selectEl.innerHTML = '';
+      for (const entry of predicatePalette) {
+        const option = document.createElement('option');
+        option.value = entry.name;
+        option.textContent = entry.name;
+        selectEl.appendChild(option);
+      }
+      if (currentValue && Array.from(selectEl.options).some((option) => option.value === currentValue)) {
+        selectEl.value = currentValue;
+      } else if (selectEl.options.length) {
+        selectEl.value = selectEl.options[0].value;
+      }
+    }
 
     nodeCountEl.textContent = String(atlasGraphPayload.node_count);
     edgeCountEl.textContent = String(atlasGraphPayload.edge_count);
@@ -1862,6 +2133,7 @@ __THEME_SCRIPT_TAGS__
       search: '',
       hiddenFolders: new Set(),
       hiddenTypes: new Set(),
+      hiddenPredicates: new Set(),
       browserType: null,
       showSessions: storageBool(SESSION_STORAGE_KEY, false),
       showLabels: storageBool(LABEL_STORAGE_KEY, false),
@@ -1869,6 +2141,12 @@ __THEME_SCRIPT_TAGS__
         ? (window.localStorage.getItem(PRIVACY_MODE_KEY) || '')
         : DEFAULT_PRIVACY_MODE,
       showWires: storageBool(WIRES_STORAGE_KEY, true),
+      showUnreviewedOnly: false,
+      traceMode: false,
+      discoverOverlay: false,
+      traceData: null,
+      traceStartedAt: 0,
+      serverLastRegen: null,
     };
 
     const initialHashState = readHashState();
@@ -1892,9 +2170,18 @@ __THEME_SCRIPT_TAGS__
     privacyModeSelect.value = state.privacyMode;
     showSessionsToggle.checked = state.showSessions;
     showWiresToggle.checked = state.showWires;
+    showUnreviewedOnlyToggle.checked = state.showUnreviewedOnly;
+    traceModeToggle.checked = state.traceMode;
+    discoverOverlayToggle.checked = state.discoverOverlay;
+    populatePredicateSelect(addWirePredicateEl);
+    populatePredicateSelect(edgePredicateEl);
+    populatePredicateSelect(discoverPredicateEl);
+    syncRangeLabel(addWireWeightEl, addWireWeightLabelEl);
+    syncRangeLabel(edgeWeightEl, edgeWeightLabelEl);
+    syncRangeLabel(discoverWeightEl, discoverWeightLabelEl);
 
     function syncCompactToggles() {
-      for (const input of [showWiresToggle, showSessionsToggle, showLabelsToggle]) {
+      for (const input of [showWiresToggle, showSessionsToggle, showLabelsToggle, showUnreviewedOnlyToggle, traceModeToggle, discoverOverlayToggle]) {
         input.closest('.toggle')?.classList.toggle('active', input.checked);
       }
     }
@@ -1948,6 +2235,12 @@ __THEME_SCRIPT_TAGS__
     }
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    for (const node of sortNodes(nodes)) {
+      const option = document.createElement('option');
+      option.value = node.id;
+      option.label = node.title || node.id;
+      nodeIdOptionsEl.appendChild(option);
+    }
     const folderNames = Array.from(new Set(nodes.map((node) => node.folder).filter(Boolean))).sort((a, b) => a.localeCompare(b));
     const folderOrder = new Map(folderNames.map((folder, index) => [folder, index]));
     const folderGlyphFamilyCache = new Map();
@@ -2004,7 +2297,7 @@ __THEME_SCRIPT_TAGS__
         isWire: edge.kind === 'wire',
         baseColor: new THREE.Color(
           edge.kind === 'wire'
-            ? emotionalColors[edge.emotional_valence] || predicateColors[edge.predicate] || '#f0b35f'
+            ? predicateColors[edge.predicate] || '#f0b35f'
             : '#6e7b96'
         ),
         line: null,
@@ -2556,16 +2849,27 @@ __THEME_SCRIPT_TAGS__
         new THREE.Vector3(),
         new THREE.Vector3(),
       ]);
-      const material = new THREE.LineBasicMaterial({
+      const themedEdgeStyle = edgeStyle(edge);
+      const reviewedEdge = themedEdgeStyle.lineStyle !== 'dashed';
+      const material = new (reviewedEdge ? THREE.LineBasicMaterial : THREE.LineDashedMaterial)({
         color: edge.baseColor,
         transparent: true,
-        opacity: edge.isWire ? (usingThemeSigils ? 0.72 : 0.62) : 0.2,
+        opacity: edge.isWire
+          ? (reviewedEdge ? (usingThemeSigils ? 0.72 : 0.62) : 0.52) * themedEdgeStyle.opacityMultiplier
+          : 0.2,
+        dashSize: reviewedEdge ? undefined : 10,
+        gapSize: reviewedEdge ? undefined : 6,
       });
+      material.linewidth = 1 + (Number(edge.weight || 0.5) * 3);
       const line = new THREE.Line(geometry, material);
       line.userData.edge = edge;
+      if (!reviewedEdge && typeof line.computeLineDistances === 'function') {
+        line.computeLineDistances();
+      }
       scene.add(line);
       edge.line = line;
       edge.material = material;
+      edge.lineStyle = themedEdgeStyle.lineStyle;
       if (edge.isWire) {
         const markerMaterial = new THREE.SpriteMaterial({
           map: createWireMarkerTexture(),
@@ -2587,14 +2891,78 @@ __THEME_SCRIPT_TAGS__
     }
 
     const raycaster = new THREE.Raycaster();
+    raycaster.params.Line = { threshold: 10 };
     const pointer = new THREE.Vector2();
     let selectedNode = null;
+    let selectedEdge = null;
+    let selectedDiscoverCandidate = null;
+    let discoverOverlayData = [];
     let cameraGoal = null;
     let homeTarget = new THREE.Vector3();
     let homePosition = new THREE.Vector3(0, 120, 520);
     let pointerDown = null;
     let moved = false;
     let dragMode = null;
+
+    function clearDiscoverOverlay() {
+      for (const candidate of discoverOverlayData) {
+        if (candidate.line) {
+          scene.remove(candidate.line);
+        }
+      }
+      discoverOverlayData = [];
+      if (selectedDiscoverCandidate) {
+        selectedDiscoverCandidate = null;
+      }
+    }
+
+    async function loadDiscoverOverlay(noteId = null) {
+      const params = new URLSearchParams({ format: 'json' });
+      if (noteId) {
+        params.set('note', noteId);
+      }
+      const response = await fetch(`/api/discover?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`discover overlay failed: ${response.status}`);
+      }
+      const payload = await response.json();
+      clearDiscoverOverlay();
+      for (const candidate of payload.candidates || []) {
+        const source = nodeById.get(candidate.left_id);
+        const target = nodeById.get(candidate.right_id);
+        if (!source || !target) {
+          continue;
+        }
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(),
+          new THREE.Vector3(),
+        ]);
+        const material = new THREE.LineDashedMaterial({
+          color: '#f5a623',
+          transparent: true,
+          opacity: 0.0,
+          dashSize: 10,
+          gapSize: 6,
+        });
+        const line = new THREE.Line(geometry, material);
+        line.userData.discoverCandidate = candidate;
+        scene.add(line);
+        if (typeof line.computeLineDistances === 'function') {
+          line.computeLineDistances();
+        }
+        discoverOverlayData.push({
+          ...candidate,
+          source,
+          target,
+          line,
+          material,
+          selectedAt: 0,
+        });
+      }
+      refreshSceneState();
+      updateLabels();
+      updateDiscoverDetail(selectedDiscoverCandidate);
+    }
 
     function fileHref(path) {
       if (!path) {
@@ -2751,6 +3119,9 @@ __THEME_SCRIPT_TAGS__
 
     function edgeMetaLine(edge) {
       const bits = [];
+      if (edge.weight !== null && edge.weight !== undefined) {
+        bits.push(`weight ${Number(edge.weight).toFixed(1)}`);
+      }
       if (!relationshipPrivacyEnabled() && edge.relationship && edge.relationship !== edge.predicate) {
         bits.push(edge.relationship);
       }
@@ -2769,7 +3140,73 @@ __THEME_SCRIPT_TAGS__
       if (edge.current_state) {
         bits.push(`state ${edge.current_state}`);
       }
+      if (edge.author) {
+        bits.push(`author ${edge.author}`);
+      }
+      if (edge.method) {
+        bits.push(`method ${edge.method}`);
+      }
+      if (edge.reviewed === false) {
+        bits.push('unreviewed');
+      } else if (edge.reviewed === true) {
+        bits.push('reviewed');
+      }
       return bits.join(' · ') || 'wire';
+    }
+
+    function edgeReviewed(edge) {
+      return edge.reviewed === true || edge.method === 'manual' || (!edge.method && edge.reviewed !== false);
+    }
+
+    function edgeStyle(edge) {
+      const fallback = edgeReviewed(edge)
+        ? { lineStyle: 'solid', opacityMultiplier: 1.0 }
+        : { lineStyle: 'dashed', opacityMultiplier: 0.7 };
+      if (typeof activeThemeRuntime.getEdgeStyle !== 'function') {
+        return fallback;
+      }
+      try {
+        const custom = activeThemeRuntime.getEdgeStyle(edge, { edgeReviewed });
+        return {
+          lineStyle: custom?.lineStyle || custom?.['line-style'] || fallback.lineStyle,
+          opacityMultiplier: Number(custom?.opacityMultiplier ?? custom?.opacity ?? fallback.opacityMultiplier),
+        };
+      } catch (_error) {
+        return fallback;
+      }
+    }
+
+    function candidateReasonText(candidate) {
+      const reasons = candidate?.reasons || {};
+      const bits = [];
+      if (Array.isArray(reasons.tags) && reasons.tags.length) {
+        bits.push(`#${reasons.tags.slice(0, 3).join(', #')}`);
+      }
+      if (Array.isArray(reasons.keywords) && reasons.keywords.length) {
+        bits.push(`keyword "${reasons.keywords.slice(0, 4).join('", "')}"`);
+      }
+      if (Array.isArray(reasons.links) && reasons.links.length) {
+        bits.push(`links ${reasons.links.slice(0, 3).join(', ')}`);
+      }
+      if (Array.isArray(reasons.frontmatter) && reasons.frontmatter.length) {
+        bits.push(`frontmatter ${reasons.frontmatter.slice(0, 3).join(', ')}`);
+      }
+      if (reasons.type_match) {
+        bits.push('matching note type');
+      }
+      return bits.join(' · ') || 'shared context detected';
+    }
+
+    function showGraphTooltip(text, event) {
+      if (!text || !event) {
+        graphTooltipEl.hidden = true;
+        graphTooltipEl.textContent = '';
+        return;
+      }
+      graphTooltipEl.hidden = false;
+      graphTooltipEl.textContent = text;
+      graphTooltipEl.style.left = `${event.clientX - canvasHost.getBoundingClientRect().left}px`;
+      graphTooltipEl.style.top = `${event.clientY - canvasHost.getBoundingClientRect().top}px`;
     }
 
     function nodeEmotionalSummary(node) {
@@ -3010,11 +3447,30 @@ __THEME_SCRIPT_TAGS__
         positions[5] = edge.target.position.z;
         edge.line.geometry.attributes.position.needsUpdate = true;
         edge.line.geometry.computeBoundingSphere();
+        if (typeof edge.line.computeLineDistances === 'function') {
+          edge.line.computeLineDistances();
+        }
         if (edge.marker) {
           const targetPoint = edge.source.position.clone().lerp(edge.target.position, edge.markerT);
           edge.marker.position.copy(targetPoint);
-          const markerScale = edge.isWire ? (usingThemeSigils ? 16 : 12) : 10;
+          const markerScale = edge.isWire
+            ? ((usingThemeSigils ? 16 : 12) + Number(edge.weight || 0.5) * 6)
+            : 10;
           edge.marker.scale.set(markerScale, markerScale, 1);
+        }
+      }
+      for (const candidate of discoverOverlayData) {
+        const positions = candidate.line.geometry.attributes.position.array;
+        positions[0] = candidate.source.position.x;
+        positions[1] = candidate.source.position.y;
+        positions[2] = candidate.source.position.z;
+        positions[3] = candidate.target.position.x;
+        positions[4] = candidate.target.position.y;
+        positions[5] = candidate.target.position.z;
+        candidate.line.geometry.attributes.position.needsUpdate = true;
+        candidate.line.geometry.computeBoundingSphere();
+        if (typeof candidate.line.computeLineDistances === 'function') {
+          candidate.line.computeLineDistances();
         }
       }
       updateBiomes();
@@ -3531,9 +3987,75 @@ __THEME_SCRIPT_TAGS__
       renderList(sessionMentionsEl, sessions, 'No recent session mentions.');
     }
 
-    function refreshSceneState() {
+    function updateEdgeDetail(edge) {
+      if (!edge) {
+        edgeDetailTitleEl.textContent = 'No edge selected.';
+        edgeDetailMetaEl.textContent = 'Click a wire to inspect its provenance.';
+        populatePredicateSelect(edgePredicateEl);
+        edgeWeightEl.value = '0.7';
+        edgeConfidenceEl.value = '';
+        edgeNoteEl.value = '';
+        syncRangeLabel(edgeWeightEl, edgeWeightLabelEl);
+        saveEdgeButton.disabled = true;
+        markEdgeReviewedButton.disabled = true;
+        deleteEdgeButton.disabled = true;
+        return;
+      }
+      edgeDetailTitleEl.textContent = `${displayNodeIdentifier(edge.source)} → ${displayNodeIdentifier(edge.target)}`;
+      edgeDetailMetaEl.textContent = [
+        edge.predicate,
+        edge.weight !== null && edge.weight !== undefined ? `weight ${Number(edge.weight).toFixed(1)}` : null,
+        edge.author ? `author ${edge.author}` : null,
+        edge.method ? `method ${edge.method}` : null,
+        edge.reviewed === false ? 'unreviewed' : edge.reviewed === true ? 'reviewed' : null,
+        edge.reviewed_by ? `reviewed by ${edge.reviewed_by}` : null,
+        edge.reviewed_at ? edge.reviewed_at : null,
+        edge.review_duration_s !== null && edge.review_duration_s !== undefined ? `${Number(edge.review_duration_s).toFixed(1)}s` : null,
+        edge.confidence ? `confidence ${edge.confidence}` : null,
+        edge.note ? edge.note : null,
+      ].filter(Boolean).join(' · ');
+      populatePredicateSelect(edgePredicateEl, edge.predicate);
+      edgeWeightEl.value = String(edge.weight ?? 0.7);
+      edgeConfidenceEl.value = edge.confidence || '';
+      edgeNoteEl.value = edge.note || '';
+      syncRangeLabel(edgeWeightEl, edgeWeightLabelEl);
+      saveEdgeButton.disabled = false;
+      markEdgeReviewedButton.disabled = !!edgeReviewed(edge);
+      deleteEdgeButton.disabled = false;
+    }
+
+    function updateDiscoverDetail(candidate) {
+      if (!candidate) {
+        discoverDetailTitleEl.textContent = 'No candidate selected.';
+        discoverDetailMetaEl.textContent = 'Turn on discover mode and click a dashed candidate edge.';
+        populatePredicateSelect(discoverPredicateEl);
+        discoverWeightEl.value = '0.7';
+        discoverConfidenceEl.value = 'medium';
+        discoverNoteEl.value = '';
+        syncRangeLabel(discoverWeightEl, discoverWeightLabelEl);
+        acceptDiscoverButton.disabled = true;
+        rejectDiscoverButton.disabled = true;
+        return;
+      }
+      discoverDetailTitleEl.textContent = `${displayNodeIdentifier(candidate.source)} ←?→ ${displayNodeIdentifier(candidate.target)}`;
+      discoverDetailMetaEl.textContent = `score ${Number(candidate.score || 0).toFixed(2)} · ${candidateReasonText(candidate)}`;
+      populatePredicateSelect(discoverPredicateEl, predicatePalette[0]?.name || '');
+      discoverWeightEl.value = String(Math.max(0, Math.min(1, Number(candidate.score || 0.7))).toFixed(2));
+      discoverConfidenceEl.value = 'medium';
+      discoverNoteEl.value = candidate.note || '';
+      syncRangeLabel(discoverWeightEl, discoverWeightLabelEl);
+      acceptDiscoverButton.disabled = false;
+      rejectDiscoverButton.disabled = false;
+    }
+
+    function refreshSceneState(nowMs = performance.now()) {
       const needle = searchInput.value.trim();
       const selectedNeighbors = selectedNode ? neighbors.get(selectedNode.id) || new Set() : new Set();
+      const traceById = state.traceData
+        ? new Map(state.traceData.results.map((item) => [item.note_id, item]))
+        : new Map();
+      const traceActive = !!state.traceMode && traceById.size > 0;
+      const traceElapsed = traceActive ? Math.max(0, nowMs - (state.traceStartedAt || nowMs)) : Number.POSITIVE_INFINITY;
       for (const node of nodes) {
         const isFolderHidden = !!(node.folder && state.hiddenFolders.has(node.folder));
         node.visibleByToggle = !state.hiddenTypes.has(node.type)
@@ -3544,13 +4066,37 @@ __THEME_SCRIPT_TAGS__
         const connected = !!selectedNode && selectedNeighbors.has(node.id);
         const dimForSearch = needle && !node.matched && node !== selectedNode;
         const dimForBrowser = state.browserType && state.browserType !== node.type && node !== selectedNode;
+        const traceHit = traceById.get(node.id);
+        const traceStrength = traceHit ? Math.max(0, Math.min(1, Number(traceHit.activation || 0))) : 0;
+        const traceDepth = traceHit ? Math.max(1, Number(traceHit.depth || 1)) : 0;
+        const traceReveal = !traceHit
+          ? 0
+          : Math.max(0, Math.min(1, (traceElapsed - (traceDepth - 1) * 300) / 220));
         node.mesh.visible = visible;
-        const visibleColor = node === selectedNode
+        const visibleColor = traceActive
+          ? (
+            node.id === state.traceData.note_id
+              ? node.displayColor.clone().lerp(new THREE.Color('#ffffff'), 0.36)
+              : traceHit
+                ? node.displayColor.clone().lerp(new THREE.Color('#ffffff'), 0.22 + traceStrength * 0.48 * traceReveal)
+                : node.baseColor.clone()
+          )
+          : node === selectedNode
           ? node.displayColor.clone().lerp(new THREE.Color('#fffdf4'), 0.2)
           : connected || node.matched
             ? node.displayColor
             : node.baseColor.clone().lerp(new THREE.Color('#f4d7a3'), usingThemeSigils ? 0.18 : 0.12);
-        const visibleOpacity = !visible ? 0 : (dimForSearch || dimForBrowser ? 0.28 : connected || node === selectedNode ? 1 : 0.94);
+        const visibleOpacity = !visible
+          ? 0
+          : traceActive
+            ? (
+              node.id === state.traceData.note_id
+                ? 1
+                : traceHit
+                  ? 0.2 + 0.8 * traceReveal
+                  : 0.2
+            )
+            : (dimForSearch || dimForBrowser ? 0.28 : connected || node === selectedNode ? 1 : 0.94);
         const glow = node === selectedNode
           ? node.glowColor.clone().multiplyScalar(0.8)
           : connected || node.matched
@@ -3585,10 +4131,22 @@ __THEME_SCRIPT_TAGS__
       }
 
       for (const edge of edges) {
-        const visible = edge.source.visibleByToggle && edge.target.visibleByToggle && (!edge.isWire || state.showWires);
+        const hiddenByPredicate = edge.isWire && state.hiddenPredicates.has(edge.predicate);
+        const visible = edge.source.visibleByToggle
+          && edge.target.visibleByToggle
+          && (!edge.isWire || state.showWires)
+          && !hiddenByPredicate;
         const connected = !!selectedNode && (edge.source === selectedNode || edge.target === selectedNode);
         const matches = !needle || edge.source.matched || edge.target.matched;
         const dimForBrowser = state.browserType && edge.source.type !== state.browserType && edge.target.type !== state.browserType && !connected;
+        const reviewedWire = edgeReviewed(edge);
+        const themedEdgeStyle = edgeStyle(edge);
+        const traceEdge = traceActive
+          && (
+            edge.source.id === state.traceData.note_id
+            || edge.target.id === state.traceData.note_id
+            || (traceById.has(edge.source.id) && traceById.has(edge.target.id))
+          );
         edge.line.visible = visible;
         if (!visible) {
           continue;
@@ -3602,12 +4160,16 @@ __THEME_SCRIPT_TAGS__
         );
         edge.renderOpacity = connected
           ? (edge.isWire ? 1 : 0.64)
+          : state.showUnreviewedOnly && edge.isWire && reviewedWire
+            ? 0.15
+            : traceActive
+              ? (traceEdge ? 0.96 : 0.14)
           : dimForBrowser
             ? 0.08
             : matches
               ? (edge.isWire ? (usingThemeSigils ? 0.84 : 0.76) : 0.28)
               : (usingThemeSigils ? (edge.isWire ? 0.18 : 0.12) : 0.12);
-        edge.material.opacity = edge.renderOpacity;
+        edge.material.opacity = edge.renderOpacity * (themedEdgeStyle.opacityMultiplier || 1);
         if (edge.marker && edge.markerMaterial) {
           edge.marker.visible = visible;
           edge.markerMaterial.color.copy(
@@ -3618,11 +4180,29 @@ __THEME_SCRIPT_TAGS__
           edge.markerMaterial.opacity = !visible ? 0 : (
             connected
               ? 0.96
+              : state.showUnreviewedOnly && reviewedWire
+                ? 0.12
+                : traceActive
+                  ? (traceEdge ? 0.82 : 0.08)
               : matches
                 ? (usingThemeSigils ? 0.52 : 0.34)
                 : (usingThemeSigils ? 0.16 : 0.1)
           );
         }
+      }
+
+      for (const candidate of discoverOverlayData) {
+        const candidateVisible = !!state.discoverOverlay
+          && candidate.source.visibleByToggle
+          && candidate.target.visibleByToggle
+          && (!selectedNode || candidate.source === selectedNode || candidate.target === selectedNode);
+        const selected = selectedDiscoverCandidate === candidate;
+        const connected = !!selectedNode && (candidate.source === selectedNode || candidate.target === selectedNode);
+        candidate.line.visible = candidateVisible;
+        if (!candidateVisible) {
+          continue;
+        }
+        candidate.material.opacity = selected ? 0.96 : connected ? 0.72 : 0.42;
       }
 
       for (const [folder, biome] of biomeObjects.entries()) {
@@ -3634,6 +4214,7 @@ __THEME_SCRIPT_TAGS__
         biome.outerRing.material.opacity = emphasized ? 0.22 : 0.12;
         biome.dust.material.opacity = emphasized ? 0.2 : 0.14;
       }
+      pendingReviewStatusEl.textContent = `${edges.filter((edge) => edge.isWire && !edgeReviewed(edge)).length} wires pending review`;
     }
 
     function updateLabels() {
@@ -3777,6 +4358,7 @@ __THEME_SCRIPT_TAGS__
             }
           }
           renderLegend();
+          renderPredicateLegend();
           renderFolderChips();
           renderTypeBrowser();
           refreshSceneState();
@@ -3805,6 +4387,7 @@ __THEME_SCRIPT_TAGS__
           layoutNodes();
           applySearch();
           renderLegend();
+          renderPredicateLegend();
           renderFolderChips();
           renderTypeBrowser();
           smartFitCamera();
@@ -3814,6 +4397,53 @@ __THEME_SCRIPT_TAGS__
         row.appendChild(main);
         row.appendChild(actions);
         legendEl.appendChild(row);
+      }
+    }
+
+    function renderPredicateLegend() {
+      predicateLegendEl.innerHTML = '';
+      for (const entry of predicatePalette) {
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        const main = document.createElement('button');
+        main.type = 'button';
+        main.className = 'legend-main';
+        main.innerHTML = `<span class="swatch" style="background:${entry.color || '#f0b35f'}"></span><span>${escapeHtml(entry.name)}</span>`;
+        main.addEventListener('click', () => {
+          if (state.hiddenPredicates.has(entry.name)) {
+            state.hiddenPredicates.delete(entry.name);
+          } else {
+            state.hiddenPredicates.add(entry.name);
+          }
+          renderPredicateLegend();
+          refreshSceneState();
+          updateLabels();
+        });
+        const actions = document.createElement('div');
+        actions.className = 'legend-actions';
+        const count = document.createElement('span');
+        count.className = 'mono subtle';
+        count.textContent = String(edges.filter((edge) => edge.isWire && edge.predicate === entry.name).length);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = `legend-toggle${state.hiddenPredicates.has(entry.name) ? ' inactive' : ''}`;
+        toggle.textContent = state.hiddenPredicates.has(entry.name) ? 'show' : 'hide';
+        toggle.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (state.hiddenPredicates.has(entry.name)) {
+            state.hiddenPredicates.delete(entry.name);
+          } else {
+            state.hiddenPredicates.add(entry.name);
+          }
+          renderPredicateLegend();
+          refreshSceneState();
+          updateLabels();
+        });
+        actions.appendChild(count);
+        actions.appendChild(toggle);
+        row.appendChild(main);
+        row.appendChild(actions);
+        predicateLegendEl.appendChild(row);
       }
     }
 
@@ -3856,11 +4486,70 @@ __THEME_SCRIPT_TAGS__
 
     function selectNode(node, center = true) {
       selectedNode = node || null;
+      selectedEdge = null;
+      selectedDiscoverCandidate = null;
       updateDetail(selectedNode);
+      updateEdgeDetail(selectedEdge);
+      updateDiscoverDetail(selectedDiscoverCandidate);
+      if (state.traceMode && selectedNode) {
+        fetch(`/api/trace?note=${encodeURIComponent(selectedNode.id)}&depth=3`)
+          .then((response) => response.json())
+          .then((payload) => {
+            state.traceData = payload;
+            state.traceStartedAt = performance.now();
+            refreshSceneState();
+            updateLabels();
+          })
+          .catch(() => {
+            state.traceData = null;
+          });
+      } else if (!selectedNode) {
+        state.traceData = null;
+        state.traceStartedAt = 0;
+      }
+      if (state.discoverOverlay) {
+        loadDiscoverOverlay(selectedNode ? selectedNode.id : null).catch(() => {
+          clearDiscoverOverlay();
+          updateDiscoverDetail(null);
+        });
+      }
       refreshSceneState();
       if (center && selectedNode) {
         focusNode(selectedNode);
       }
+      writeHashState();
+    }
+
+    function selectEdge(edge) {
+      selectedEdge = edge || null;
+      selectedNode = null;
+      selectedDiscoverCandidate = null;
+      updateDetail(null);
+      updateEdgeDetail(selectedEdge);
+      updateDiscoverDetail(selectedDiscoverCandidate);
+      if (selectedEdge) {
+        selectionStatusEl.textContent = `${selectedEdge.predicate} · ${displayNodeIdentifier(selectedEdge.source)} → ${displayNodeIdentifier(selectedEdge.target)}`;
+      }
+      refreshSceneState();
+      writeHashState();
+    }
+
+    function selectDiscoverCandidate(candidate) {
+      selectedDiscoverCandidate = candidate || null;
+      selectedNode = null;
+      selectedEdge = null;
+      updateDetail(null);
+      updateEdgeDetail(null);
+      updateDiscoverDetail(selectedDiscoverCandidate);
+      if (selectedDiscoverCandidate && !selectedDiscoverCandidate.selectedAt) {
+        selectedDiscoverCandidate.selectedAt = performance.now();
+      }
+      if (selectedDiscoverCandidate) {
+        selectionStatusEl.textContent = `candidate · ${displayNodeIdentifier(selectedDiscoverCandidate.source)} ↔ ${displayNodeIdentifier(selectedDiscoverCandidate.target)}`;
+      } else {
+        selectionStatusEl.textContent = 'awaiting selection';
+      }
+      refreshSceneState();
       writeHashState();
     }
 
@@ -3872,7 +4561,7 @@ __THEME_SCRIPT_TAGS__
       camera.updateProjectionMatrix();
     }
 
-    function pickNode(event) {
+    function pickGraphTarget(event) {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -3883,7 +4572,28 @@ __THEME_SCRIPT_TAGS__
           continue;
         }
         if (hit.object.userData?.node) {
-          return hit.object.userData.node;
+          return { type: 'node', value: hit.object.userData.node };
+        }
+      }
+      const edgeHits = raycaster.intersectObjects(edges.map((edge) => edge.line), true);
+      for (const hit of edgeHits) {
+        if (!hit.object.visible) {
+          continue;
+        }
+        if (hit.object.userData?.edge) {
+          return { type: 'edge', value: hit.object.userData.edge };
+        }
+      }
+      const discoverHits = raycaster.intersectObjects(discoverOverlayData.map((candidate) => candidate.line), true);
+      for (const hit of discoverHits) {
+        if (!hit.object.visible) {
+          continue;
+        }
+        if (hit.object.userData?.discoverCandidate) {
+          const candidate = discoverOverlayData.find((item) => item.line === hit.object);
+          if (candidate) {
+            return { type: 'discover', value: candidate };
+          }
         }
       }
       return null;
@@ -4045,6 +4755,76 @@ __THEME_SCRIPT_TAGS__
       link.click();
     }
 
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || `request failed: ${response.status}`);
+      }
+      return data;
+    }
+
+    async function refreshPredicatePaletteFromServer() {
+      try {
+        const response = await fetch('/api/predicates');
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json();
+        if (!Array.isArray(payload) || !payload.length) {
+          return;
+        }
+        predicatePalette = payload;
+        rebuildPredicateColorMap();
+        for (const edge of edges) {
+          if (!edge.isWire) {
+            continue;
+          }
+          edge.baseColor = new THREE.Color(predicateColors[edge.predicate] || '#f0b35f');
+          edge.material.color.copy(edge.baseColor);
+          if (edge.markerMaterial) {
+            edge.markerMaterial.color.copy(edge.baseColor);
+          }
+        }
+        populatePredicateSelect(addWirePredicateEl, addWirePredicateEl.value);
+        populatePredicateSelect(edgePredicateEl, edgePredicateEl.value || selectedEdge?.predicate || '');
+        populatePredicateSelect(discoverPredicateEl, discoverPredicateEl.value);
+        renderPredicateLegend();
+        refreshSceneState();
+      } catch (_error) {
+        // Static HTML exports don't have the live API surface. Keep payload colors.
+      }
+    }
+
+    async function pollLiveServerStatus() {
+      try {
+        const response = await fetch('/status');
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json();
+        if (!state.serverLastRegen) {
+          state.serverLastRegen = payload.last_regen || null;
+          return;
+        }
+        if (payload.last_regen && payload.last_regen !== state.serverLastRegen) {
+          location.reload();
+        }
+      } catch (_error) {
+        // Ignore in exported, offline HTML.
+      }
+    }
+
+    function showActionStatus(message) {
+      selectionStatusEl.textContent = message;
+    }
+
     function restoreHashSelection() {
       if (!initialHashState) {
         return;
@@ -4064,7 +4844,11 @@ __THEME_SCRIPT_TAGS__
 
     function animate() {
       requestAnimationFrame(animate);
-      const now = performance.now() * 0.001;
+      const nowMs = performance.now();
+      const now = nowMs * 0.001;
+      if (state.traceMode && state.traceData) {
+        refreshSceneState(nowMs);
+      }
       if (usingThemeSigils) {
         stars.rotation.y += 0.0002;
         stars.rotation.x += 0.00004;
@@ -4169,6 +4953,12 @@ __THEME_SCRIPT_TAGS__
     });
     renderer.domElement.addEventListener('pointermove', (event) => {
       if (!pointerDown) {
+        const target = pickGraphTarget(event);
+        if (target?.type === 'discover') {
+          showGraphTooltip(candidateReasonText(target.value), event);
+        } else {
+          showGraphTooltip('', null);
+        }
         return;
       }
       const dx = event.clientX - pointerDown.x;
@@ -4192,9 +4982,18 @@ __THEME_SCRIPT_TAGS__
     });
     renderer.domElement.addEventListener('pointerup', (event) => {
       if (!moved) {
-        const node = pickNode(event);
-        if (node) {
-          selectNode(node, false);
+        const target = pickGraphTarget(event);
+        if (target?.type === 'node') {
+          selectNode(target.value, false);
+        } else if (target?.type === 'edge') {
+          selectEdge(target.value);
+        } else if (target?.type === 'discover') {
+          selectDiscoverCandidate(target.value);
+        } else if (state.traceMode) {
+          state.traceData = null;
+          state.traceStartedAt = 0;
+          refreshSceneState();
+          updateLabels();
         }
       }
       if (pointerDown) {
@@ -4202,6 +5001,7 @@ __THEME_SCRIPT_TAGS__
       }
       pointerDown = null;
       dragMode = null;
+      showGraphTooltip('', null);
       writeHashState();
     });
     renderer.domElement.addEventListener('dblclick', () => {
@@ -4211,6 +5011,9 @@ __THEME_SCRIPT_TAGS__
         resetCamera();
       }
     });
+    renderer.domElement.addEventListener('mouseleave', () => {
+      showGraphTooltip('', null);
+    });
 
     searchInput.addEventListener('input', applySearch);
     searchInput.addEventListener('keydown', (event) => {
@@ -4219,6 +5022,161 @@ __THEME_SCRIPT_TAGS__
         applySearch();
         searchInput.blur();
       }
+    });
+    addWireWeightEl.addEventListener('input', () => syncRangeLabel(addWireWeightEl, addWireWeightLabelEl));
+    edgeWeightEl.addEventListener('input', () => syncRangeLabel(edgeWeightEl, edgeWeightLabelEl));
+    discoverWeightEl.addEventListener('input', () => syncRangeLabel(discoverWeightEl, discoverWeightLabelEl));
+    runTraceButton.addEventListener('click', async () => {
+      if (!selectedNode) {
+        return;
+      }
+      traceModeToggle.checked = true;
+      traceModeToggle.dispatchEvent(new Event('change'));
+    });
+    toggleAddWireButton.addEventListener('click', () => {
+      addWireFormEl.hidden = !addWireFormEl.hidden;
+      if (!addWireFormEl.hidden) {
+        populatePredicateSelect(addWirePredicateEl, addWirePredicateEl.value);
+        addWireTargetEl.focus();
+      }
+    });
+    cancelAddWireButton.addEventListener('click', () => {
+      addWireFormEl.hidden = true;
+    });
+    submitAddWireButton.addEventListener('click', async () => {
+      if (!selectedNode) {
+        return;
+      }
+      try {
+        const payload = await postJson('/api/wire/create', {
+          source_note: selectedNode.id,
+          source_path: selectedNode.path,
+          target_note: addWireTargetEl.value,
+          predicate: addWirePredicateEl.value,
+          weight: addWireWeightEl.value,
+        });
+        showActionStatus(payload.created ? 'wire created' : payload.updated ? 'wire updated' : 'wire unchanged');
+        location.reload();
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    saveEdgeButton.addEventListener('click', async () => {
+      if (!selectedEdge) {
+        return;
+      }
+      try {
+        await postJson('/api/wire/update', {
+          path: selectedEdge.path,
+          source_note: selectedEdge.source.id,
+          source_block: selectedEdge.source_block,
+          target_note: selectedEdge.target.id,
+          target_block: selectedEdge.target_block,
+          predicate: selectedEdge.predicate,
+          new_predicate: edgePredicateEl.value,
+          weight: edgeWeightEl.value,
+          confidence: edgeConfidenceEl.value || null,
+          note: edgeNoteEl.value || null,
+        });
+        showActionStatus('wire updated');
+        location.reload();
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    markEdgeReviewedButton.addEventListener('click', async () => {
+      if (!selectedEdge) {
+        return;
+      }
+      try {
+        await postJson('/api/wire/review', {
+          path: selectedEdge.path,
+          source_note: selectedEdge.source.id,
+          source_block: selectedEdge.source_block,
+          target_note: selectedEdge.target.id,
+          target_block: selectedEdge.target_block,
+          predicate: selectedEdge.predicate,
+          confidence: edgeConfidenceEl.value || selectedEdge.confidence || 'medium',
+          note: edgeNoteEl.value || selectedEdge.note || null,
+        });
+        showActionStatus('wire reviewed');
+        location.reload();
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    deleteEdgeButton.addEventListener('click', async () => {
+      if (!selectedEdge || !window.confirm('Delete this wire from the note file?')) {
+        return;
+      }
+      try {
+        await postJson('/api/wire/delete', {
+          path: selectedEdge.path,
+          source_note: selectedEdge.source.id,
+          source_block: selectedEdge.source_block,
+          target_note: selectedEdge.target.id,
+          target_block: selectedEdge.target_block,
+          predicate: selectedEdge.predicate,
+        });
+        showActionStatus('wire deleted');
+        location.reload();
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    discoverFromNodeButton.addEventListener('click', async () => {
+      if (!selectedNode) {
+        return;
+      }
+      discoverOverlayToggle.checked = true;
+      state.discoverOverlay = true;
+      syncCompactToggles();
+      try {
+        await loadDiscoverOverlay(selectedNode.id);
+        showActionStatus(`discover overlay for ${displayNodeIdentifier(selectedNode)}`);
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    acceptDiscoverButton.addEventListener('click', async () => {
+      if (!selectedDiscoverCandidate) {
+        return;
+      }
+      try {
+        await postJson('/api/discover/accept', {
+          left_id: selectedDiscoverCandidate.left_id,
+          right_id: selectedDiscoverCandidate.right_id,
+          left_path: selectedDiscoverCandidate.left_path,
+          right_path: selectedDiscoverCandidate.right_path,
+          score: selectedDiscoverCandidate.score,
+          reasons: selectedDiscoverCandidate.reasons,
+          predicate: discoverPredicateEl.value,
+          weight: discoverWeightEl.value,
+          confidence: discoverConfidenceEl.value,
+          note: discoverNoteEl.value || null,
+          review_duration_s: selectedDiscoverCandidate.selectedAt
+            ? (performance.now() - selectedDiscoverCandidate.selectedAt) / 1000
+            : null,
+        });
+        showActionStatus('candidate accepted');
+        location.reload();
+      } catch (error) {
+        showActionStatus(String(error.message || error));
+      }
+    });
+    rejectDiscoverButton.addEventListener('click', () => {
+      if (!selectedDiscoverCandidate) {
+        return;
+      }
+      const rejecting = selectedDiscoverCandidate;
+      discoverOverlayData = discoverOverlayData.filter((candidate) => candidate !== rejecting);
+      if (rejecting.line) {
+        scene.remove(rejecting.line);
+      }
+      selectDiscoverCandidate(null);
+      refreshSceneState();
+      updateLabels();
+      showActionStatus('candidate dismissed');
     });
 
     showLabelsToggle.addEventListener('change', () => {
@@ -4243,6 +5201,7 @@ __THEME_SCRIPT_TAGS__
       layoutNodes();
       applySearch();
       renderLegend();
+      renderPredicateLegend();
       renderFolderChips();
       renderTypeBrowser();
       smartFitCamera();
@@ -4253,6 +5212,47 @@ __THEME_SCRIPT_TAGS__
       saveToggles();
       refreshSceneState();
       writeHashState();
+    });
+    showUnreviewedOnlyToggle.addEventListener('change', () => {
+      state.showUnreviewedOnly = showUnreviewedOnlyToggle.checked;
+      syncCompactToggles();
+      refreshSceneState();
+      updateLabels();
+    });
+    traceModeToggle.addEventListener('change', async () => {
+      state.traceMode = traceModeToggle.checked;
+      syncCompactToggles();
+      if (state.traceMode && selectedNode) {
+        try {
+          const response = await fetch(`/api/trace?note=${encodeURIComponent(selectedNode.id)}&depth=3`);
+          state.traceData = await response.json();
+          state.traceStartedAt = performance.now();
+        } catch (_error) {
+          state.traceData = null;
+          state.traceStartedAt = 0;
+        }
+      } else {
+        state.traceData = null;
+        state.traceStartedAt = 0;
+      }
+      refreshSceneState();
+      updateLabels();
+    });
+    discoverOverlayToggle.addEventListener('change', async () => {
+      state.discoverOverlay = discoverOverlayToggle.checked;
+      syncCompactToggles();
+      if (state.discoverOverlay) {
+        try {
+          await loadDiscoverOverlay(selectedNode ? selectedNode.id : null);
+        } catch (_error) {
+          clearDiscoverOverlay();
+        }
+      } else {
+        clearDiscoverOverlay();
+        updateDiscoverDetail(null);
+      }
+      refreshSceneState();
+      updateLabels();
     });
     themeSelect.addEventListener('change', () => {
       const nextTheme = normalizeThemeName(themeSelect.value) || 'baseline';
@@ -4276,6 +5276,7 @@ __THEME_SCRIPT_TAGS__
       state.hiddenFolders.clear();
       state.browserType = null;
       renderLegend();
+      renderPredicateLegend();
       layoutNodes();
       applySearch();
       renderFolderChips();
@@ -4357,6 +5358,9 @@ __THEME_SCRIPT_TAGS__
           searchInput.blur();
           return;
         }
+        state.traceData = null;
+        refreshSceneState();
+        updateLabels();
       }
       if (isTextEntryTarget(document.activeElement)) {
         return;
@@ -4388,8 +5392,10 @@ __THEME_SCRIPT_TAGS__
         event.preventDefault();
         state.hiddenTypes.clear();
         state.hiddenFolders.clear();
+        state.hiddenPredicates.clear();
         state.browserType = null;
         renderLegend();
+        renderPredicateLegend();
         layoutNodes();
         applySearch();
         renderFolderChips();
@@ -4438,7 +5444,10 @@ __THEME_SCRIPT_TAGS__
       layoutNodes();
       restoreHashSelection();
       renderLegend();
+      renderPredicateLegend();
       renderFolderChips();
+      updateEdgeDetail(null);
+      updateDiscoverDetail(null);
       applySearch();
       renderTypeBrowser();
       refreshSceneState();
@@ -4450,6 +5459,8 @@ __THEME_SCRIPT_TAGS__
       if (!initialHashState || !initialHashState.cameraPosition) {
         resetCamera();
       }
+      refreshPredicatePaletteFromServer();
+      window.setInterval(pollLiveServerStatus, 2000);
       animate();
     } catch (error) {
       console.error('graph init failed', error);

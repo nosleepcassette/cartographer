@@ -86,6 +86,286 @@ def test_graph_serve_command_defaults_to_html(tmp_path, monkeypatch) -> None:
     }
 
 
+def test_graph_api_predicates_returns_active_profile_palette(tmp_path, monkeypatch) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "projects" / "alpha.md",
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body="# Alpha\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    state = GraphState()
+    regenerate_graph(state, atlas_root)
+    server = build_graph_http_server(atlas_root, state, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("localhost", server.server_port, timeout=2.0)
+        connection.request("GET", "/api/predicates")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert response.status == 200
+    assert any(item["name"] == "relates_to" for item in payload)
+
+
+def test_graph_api_trace_returns_activation_results(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "projects" / "alpha.md",
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body='# Alpha\n\n<!-- cart:wire target="beta" predicate="supports" weight="0.9" -->\n',
+    )
+    _write_note(
+        atlas_root / "projects" / "beta.md",
+        note_id="beta",
+        title="Beta",
+        note_type="project",
+        body="# Beta\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    state = GraphState()
+    regenerate_graph(state, atlas_root)
+    server = build_graph_http_server(atlas_root, state, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("localhost", server.server_port, timeout=2.0)
+        connection.request("GET", "/api/trace?note=alpha&depth=2")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert response.status == 200
+    assert payload["note_id"] == "alpha"
+    assert payload["results"][0]["note_id"] == "beta"
+
+
+def test_graph_api_discover_returns_candidates(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    _write_note(
+        atlas_root / "projects" / "alpha.md",
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body="# Alpha\n\nbridge memory support\n",
+    )
+    _write_note(
+        atlas_root / "projects" / "beta.md",
+        note_id="beta",
+        title="Beta",
+        note_type="project",
+        body="# Beta\n\nbridge memory support\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    state = GraphState()
+    regenerate_graph(state, atlas_root)
+    server = build_graph_http_server(atlas_root, state, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("localhost", server.server_port, timeout=2.0)
+        connection.request("GET", "/api/discover?format=json&threshold=0.1")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert response.status == 200
+    assert payload["count"] >= 1
+    assert any({item["left_id"], item["right_id"]} == {"alpha", "beta"} for item in payload["candidates"])
+
+
+def test_graph_api_discover_accept_writes_wire(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    alpha_path = atlas_root / "projects" / "alpha.md"
+    beta_path = atlas_root / "projects" / "beta.md"
+    _write_note(
+        alpha_path,
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body="# Alpha\n\nbridge memory support\n",
+    )
+    _write_note(
+        beta_path,
+        note_id="beta",
+        title="Beta",
+        note_type="project",
+        body="# Beta\n\nbridge memory support\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    state = GraphState()
+    regenerate_graph(state, atlas_root)
+    server = build_graph_http_server(atlas_root, state, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("localhost", server.server_port, timeout=2.0)
+        connection.request(
+            "POST",
+            "/api/discover/accept",
+            body=json.dumps(
+                {
+                    "left_id": "alpha",
+                    "right_id": "beta",
+                    "score": 0.8,
+                    "reasons": {"keywords": ["bridge", "memory", "support"]},
+                    "predicate": "supports",
+                    "weight": 0.8,
+                    "confidence": "medium",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert response.status == 200
+    assert payload["accepted"] == 1
+    content = alpha_path.read_text(encoding="utf-8")
+    assert 'predicate="supports"' in content
+    assert 'target="beta"' in content
+
+
+def test_graph_api_wire_update_review_and_delete(tmp_path) -> None:
+    atlas_root = tmp_path / "atlas"
+    _init_atlas(atlas_root)
+    alpha_path = atlas_root / "projects" / "alpha.md"
+    _write_note(
+        alpha_path,
+        note_id="alpha",
+        title="Alpha",
+        note_type="project",
+        body=(
+            '# Alpha\n\n'
+            '<!-- cart:wire target="beta" predicate="supports" weight="0.9" '
+            'author="cart-discover" method="agent" reviewed="false" -->\n'
+        ),
+    )
+    _write_note(
+        atlas_root / "projects" / "beta.md",
+        note_id="beta",
+        title="Beta",
+        note_type="project",
+        body="# Beta\n",
+    )
+    Atlas(root=atlas_root).refresh_index()
+
+    state = GraphState()
+    regenerate_graph(state, atlas_root)
+    server = build_graph_http_server(atlas_root, state, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("localhost", server.server_port, timeout=2.0)
+        connection.request(
+            "POST",
+            "/api/wire/update",
+            body=json.dumps(
+                {
+                    "path": str(alpha_path),
+                    "source_note": "alpha",
+                    "target_note": "beta",
+                    "predicate": "supports",
+                    "new_predicate": "contradicts",
+                    "weight": 0.4,
+                    "confidence": "high",
+                    "note": "reviewed in graph",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        update_response = connection.getresponse()
+        update_payload = json.loads(update_response.read().decode("utf-8"))
+        updated_content = alpha_path.read_text(encoding="utf-8")
+
+        connection.request(
+            "POST",
+            "/api/wire/review",
+            body=json.dumps(
+                {
+                    "path": str(alpha_path),
+                    "source_note": "alpha",
+                    "target_note": "beta",
+                    "predicate": "contradicts",
+                    "confidence": "high",
+                    "note": "reviewed in graph",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        review_response = connection.getresponse()
+        review_payload = json.loads(review_response.read().decode("utf-8"))
+        reviewed_content = alpha_path.read_text(encoding="utf-8")
+
+        connection.request(
+            "POST",
+            "/api/wire/delete",
+            body=json.dumps(
+                {
+                    "path": str(alpha_path),
+                    "source_note": "alpha",
+                    "target_note": "beta",
+                    "predicate": "contradicts",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        delete_response = connection.getresponse()
+        delete_payload = json.loads(delete_response.read().decode("utf-8"))
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert update_response.status == 200
+    assert update_payload["updated"] is True
+    assert 'predicate="contradicts"' in updated_content
+    assert 'weight="0.4"' in updated_content
+    assert 'confidence="high"' in updated_content
+
+    assert review_response.status == 200
+    assert review_payload["updated"] is True
+    assert 'reviewed="true"' in reviewed_content
+    assert 'method="confirmed"' in reviewed_content
+
+    assert delete_response.status == 200
+    assert delete_payload["deleted"] is True
+    final_content = alpha_path.read_text(encoding="utf-8")
+    assert "cart:wire" not in final_content
+
+
 def test_graph_serve_rejects_json_format(tmp_path, monkeypatch) -> None:
     atlas_root = tmp_path / "atlas"
     _init_atlas(atlas_root)

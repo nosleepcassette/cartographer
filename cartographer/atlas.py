@@ -19,6 +19,7 @@ from .notes import Note, parse_frontmatter
 from .obsidian import bootstrap as bootstrap_obsidian
 from .obsidian import detect_external_vault
 from .plugins import sync_builtin_plugins
+from .profiles import apply_profile_to_config, profile_payload
 from .tasks import summarize_tasks
 from .templates import sync_builtin_templates, render_template
 from .vimwiki import backup_vimwiki_assets, patch_vimrc
@@ -248,6 +249,7 @@ class Atlas:
         *,
         setup_vimwiki: bool | None = None,
         setup_obsidian: bool | None = None,
+        profile_ref: str | None = None,
     ) -> dict[str, Any]:
         created: list[str] = []
         for directory in self._default_directories():
@@ -262,6 +264,8 @@ class Atlas:
             self.config["vimwiki"]["sync"] = bool(setup_vimwiki)
         if setup_obsidian is not None:
             self.config["obsidian"]["enabled"] = bool(setup_obsidian)
+        resolved_profile_ref = profile_ref if profile_ref is not None else "emotional-topology"
+        self.config, profile = apply_profile_to_config(self.config, resolved_profile_ref)
 
         external_vault = detect_external_vault(self.config, atlas_root=self.root)
         if external_vault is not None:
@@ -345,7 +349,13 @@ class Atlas:
             "backups": backups,
             "backup_warnings": backup_warnings,
             "index": index_result,
+            "profile": profile_payload(self.root, config=self.config),
         }
+
+    def apply_profile(self, profile_ref: str | Path) -> dict[str, Any]:
+        self.config, profile = apply_profile_to_config(self.config, profile_ref)
+        save_config(self.config, root=self.root)
+        return profile_payload(self.root, config=self.config)
 
     def refresh_index(self) -> dict[str, Any]:
         result = Index(self.root).rebuild()

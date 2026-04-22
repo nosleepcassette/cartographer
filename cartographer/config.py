@@ -52,6 +52,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "threshold": 0.6,
         "max_proposals": 20,
     },
+    "wires": {
+        "profile": "default",
+        "default_predicates": [
+            "supports",
+            "contradicts",
+            "depends_on",
+            "enables",
+            "precedes",
+            "questions",
+            "extends",
+            "instances",
+        ],
+        "metadata_fields": ["weight"],
+        "predicate_colors": {},
+    },
     "think": {
         "default_depth": 3,
         "default_decay": 0.85,

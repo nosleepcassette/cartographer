@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 from .atlas import Atlas
 from .config import load_config
 from .notes import Note
+from .profiles import profile_payload
 from .wires import insert_wire_comment, parse_wire_comments, render_wire_comment
 
 
@@ -129,7 +131,7 @@ def _note_payload(atlas_root: Path) -> list[dict[str, Any]]:
         payload.append(
             {
                 "id": str(row[0]),
-                "path": path,
+                "path": str(path),
                 "title": title,
                 "type": str(row[3] or "note"),
                 "tags": tags,
@@ -195,6 +197,37 @@ def configured_discover_settings(atlas_root: Path | str) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def active_predicates(atlas_root: Path | str) -> list[str]:
+    return list(profile_payload(atlas_root, config=load_config(root=atlas_root)).get("default_predicates") or [])
+
+
+def default_discover_predicate(atlas_root: Path | str) -> str:
+    predicates = active_predicates(atlas_root)
+    if "relates_to" in predicates:
+        return "relates_to"
+    if "supports" in predicates:
+        return "supports"
+    if predicates:
+        return str(predicates[0])
+    return "supports"
+
+
+def default_discover_weight(proposal: dict[str, Any]) -> float:
+    try:
+        score = float(proposal.get("score") or 0.7)
+    except (TypeError, ValueError):
+        score = 0.7
+    return max(0.0, min(1.0, round(score, 3)))
+
+
+def current_wire_actor() -> str:
+    return (
+        str(Path.home().name).strip()
+        or str(os.environ.get("USER") or "").strip()
+        or "cartographer"
+    )
+
+
 def discover_bridges(
     atlas_root: Path | str,
     *,
@@ -220,9 +253,11 @@ def discover_bridges(
                     "left_id": left["id"],
                     "left_title": left["title"],
                     "left_type": left["type"],
+                    "left_path": left["path"],
                     "right_id": right["id"],
                     "right_title": right["title"],
                     "right_type": right["type"],
+                    "right_path": right["path"],
                     "reasons": reasons,
                 }
             )
@@ -239,9 +274,41 @@ def discover_bridges(
     return proposals
 
 
+def _replace_wire_for_target(
+    note: Note,
+    *,
+    target_note: str,
+    target_block: str | None,
+    predicate: str,
+    comment: str,
+) -> bool:
+    note_id = str(note.frontmatter.get("id") or note.path.stem)
+    wires, _ = parse_wire_comments(note.body, note_id=note_id, path=note.path)
+    for wire in wires:
+        if wire.target_note != target_note or wire.target_block != target_block:
+            continue
+        if wire.predicate != predicate:
+            continue
+        if wire.raw == comment:
+            return False
+        note.body = note.body[: wire.start] + comment + note.body[wire.end :]
+        return True
+    insert_wire_comment(note, source_block=None, comment=comment)
+    return True
+
+
 def accept_bridge_proposals(
     atlas_root: Path | str,
     proposals: list[dict[str, Any]],
+    *,
+    predicate: str | None = None,
+    author: str | None = None,
+    method: str = "agent",
+    reviewed: bool = False,
+    reviewed_by: str | None = None,
+    reviewed_at: str | None = None,
+    confidence: str | None = None,
+    note_text: str | None = None,
 ) -> int:
     atlas_root = Path(atlas_root).expanduser()
     if not proposals:
@@ -249,6 +316,14 @@ def accept_bridge_proposals(
     atlas = Atlas(root=atlas_root)
     created = 0
     touched_paths: set[Path] = set()
+    selected_predicate = predicate or default_discover_predicate(atlas_root)
+    actor = author or "cart-discover"
+    review_actor = reviewed_by or (current_wire_actor() if reviewed else None)
+    review_time = reviewed_at or (
+        datetime.now().astimezone().replace(microsecond=0).isoformat()
+        if reviewed
+        else None
+    )
 
     for proposal in proposals:
         source_id, target_id = sorted(
@@ -261,18 +336,35 @@ def accept_bridge_proposals(
         note_id = str(note.frontmatter.get("id") or source_path.stem)
         existing_wires, _ = parse_wire_comments(note.body, note_id=note_id, path=source_path)
         if any(
-            wire.target_note == target_id and wire.predicate == "relates_to"
+            wire.target_note == target_id and wire.predicate == selected_predicate
             for wire in existing_wires
         ):
             continue
         comment = render_wire_comment(
             target_note=target_id,
             target_block=None,
-            predicate="relates_to",
-            relationship="relates_to",
+            predicate=str(proposal.get("predicate") or selected_predicate),
+            weight=float(proposal.get("weight") or default_discover_weight(proposal)),
+            relationship=str(proposal.get("predicate") or selected_predicate),
             bidirectional=True,
+            author=str(proposal.get("author") or actor),
+            method=str(proposal.get("method") or method),
+            reviewed=bool(proposal.get("reviewed", reviewed)),
+            reviewed_by=str(proposal.get("reviewed_by") or review_actor) if (proposal.get("reviewed_by") or review_actor) else None,
+            reviewed_at=str(proposal.get("reviewed_at") or review_time) if (proposal.get("reviewed_at") or review_time) else None,
+            review_duration_s=proposal.get("review_duration_s"),
+            confidence=str(proposal.get("confidence") or confidence) if (proposal.get("confidence") or confidence) else None,
+            note=str(proposal.get("note") or note_text) if (proposal.get("note") or note_text) else None,
         )
-        insert_wire_comment(note, source_block=None, comment=comment)
+        changed = _replace_wire_for_target(
+            note,
+            target_note=target_id,
+            target_block=None,
+            predicate=str(proposal.get("predicate") or selected_predicate),
+            comment=comment,
+        )
+        if not changed:
+            continue
         note.frontmatter["modified"] = date.today().isoformat()
         note.write()
         touched_paths.add(source_path)
