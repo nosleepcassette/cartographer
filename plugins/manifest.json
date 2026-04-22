@@ -1,0 +1,28 @@
+{
+  "plugins": {
+    "therapy": {
+      "executable": "therapy.py",
+      "description": "Emotional pattern detection and counter-evidence queries",
+      "commands": ["review", "counter-evidence"],
+      "source": "hermes-skill:therapy-plugin"
+    },
+    "lovelife": {
+      "executable": "lovelife.py",
+      "description": "Relational pattern detection with bid tracking and transit timing",
+      "commands": ["review", "forecast", "emergency"],
+      "source": "hermes-skill:lovelife-plugin"
+    },
+    "avoidance": {
+      "executable": "avoidance.py",
+      "description": "Real-time avoidance pattern detection and intervention",
+      "commands": ["detect", "status"],
+      "source": "hermes-skill:avoidance-intervention"
+    },
+    "temporal-patterns": {
+      "executable": "temporal-patterns.py",
+      "description": "Cross-dimensional temporal correlation detection",
+      "commands": ["detect", "report"],
+      "source": "cartographer:temporal_patterns"
+    }
+  }
+}

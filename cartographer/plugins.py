@@ -21,6 +21,7 @@ except ImportError:
 
 BUILTIN_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "plugins"
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+MANIFEST_NAME = "manifest.json"
 
 
 def atlas_plugin_dir(atlas_root: Path) -> Path:
@@ -31,29 +32,61 @@ def sync_builtin_plugins(atlas_root: Path) -> list[Path]:
     target_dir = atlas_plugin_dir(atlas_root)
     target_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for source in sorted(BUILTIN_PLUGIN_DIR.glob("*.py")):
+    sources = sorted(BUILTIN_PLUGIN_DIR.glob("*.py")) + sorted(
+        BUILTIN_PLUGIN_DIR.glob("*.json")
+    )
+    for source in sources:
         target = target_dir / source.name
         should_copy = not target.exists() or source.read_text(
             encoding="utf-8"
         ) != target.read_text(encoding="utf-8")
         if should_copy:
             shutil.copy2(source, target)
-            target.chmod(target.stat().st_mode | stat.S_IXUSR)
+            if source.suffix == ".py":
+                target.chmod(target.stat().st_mode | stat.S_IXUSR)
             written.append(target)
     return written
+
+
+def _plugin_manifest_entries(atlas_root: Path) -> dict[str, dict[str, Any]]:
+    manifest_path = atlas_plugin_dir(atlas_root) / MANIFEST_NAME
+    if not manifest_path.exists():
+        return {}
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    plugins = raw.get("plugins", {})
+    if not isinstance(plugins, dict):
+        return {}
+    return {
+        str(name): entry
+        for name, entry in plugins.items()
+        if isinstance(entry, dict)
+    }
 
 
 def list_plugins(atlas_root: Path) -> list[str]:
     sync_builtin_plugins(atlas_root)
     plugins: set[str] = set()
+    plugins.update(_plugin_manifest_entries(atlas_root).keys())
     for path in atlas_plugin_dir(atlas_root).iterdir():
-        if path.is_file() and not path.name.startswith("."):
-            plugins.add(path.stem)
+        if not path.is_file() or path.name.startswith(".") or path.name.startswith("_"):
+            continue
+        if path.name == MANIFEST_NAME or path.suffix == ".json":
+            continue
+        plugins.add(path.stem if path.suffix else path.name)
     return sorted(plugins)
 
 
 def resolve_plugin_path(atlas_root: Path, name: str) -> Path:
     sync_builtin_plugins(atlas_root)
+    manifest_entry = _plugin_manifest_entries(atlas_root).get(name, {})
+    executable = str(manifest_entry.get("executable") or "").strip()
+    if executable:
+        manifest_candidate = atlas_plugin_dir(atlas_root) / executable
+        if manifest_candidate.exists() and manifest_candidate.is_file():
+            return manifest_candidate
     candidates = [
         atlas_plugin_dir(atlas_root) / name,
         atlas_plugin_dir(atlas_root) / f"{name}.py",

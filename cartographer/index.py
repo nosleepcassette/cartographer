@@ -154,6 +154,19 @@ CREATE TABLE IF NOT EXISTS guardrail_violations (
     detected_at REAL NOT NULL,
     resolved INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS pattern_cache (
+    id TEXT PRIMARY KEY,
+    signal_a TEXT NOT NULL,
+    signal_b TEXT NOT NULL,
+    lead_hours INTEGER NOT NULL,
+    correlation REAL NOT NULL,
+    p_value REAL NOT NULL,
+    significant INTEGER NOT NULL DEFAULT 0,
+    n_buckets INTEGER NOT NULL,
+    computed_at REAL NOT NULL,
+    description TEXT
+);
 """
 
 FTS_SCHEMA = """
@@ -683,6 +696,26 @@ class Index:
         with self._connection() as connection:
             rows = connection.execute(statement, params).fetchall()
         return [str(row["path"]) for row in rows]
+
+    def record_accesses(
+        self,
+        note_ids: list[str] | tuple[str, ...],
+        *,
+        access_type: str = "query",
+        timestamp: float | None = None,
+    ) -> None:
+        ids = [str(note_id).strip() for note_id in note_ids if str(note_id).strip()]
+        if not ids:
+            return
+        when = time.time() if timestamp is None else float(timestamp)
+        with self._connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO access_log (note_id, accessed_at, access_type)
+                VALUES (?, ?, ?)
+                """,
+                [(note_id, when, access_type) for note_id in ids],
+            )
 
     def backlinks(self, note_id: str) -> list[str]:
         with self._connection() as connection:

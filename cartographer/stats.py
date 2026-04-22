@@ -83,6 +83,20 @@ def _load_notes_and_wires(atlas_root: Path) -> tuple[list[sqlite3.Row], list[sql
     return notes, wires, block_refs
 
 
+def temporal_patterns_section(atlas_root: Path | str) -> dict[str, Any]:
+    try:
+        from .temporal_patterns import TemporalPatternDetector
+
+        detector = TemporalPatternDetector(atlas_root)
+        return detector.quick_summary()
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "error": str(exc),
+            "note": "run cart temporal-patterns for full correlation report",
+        }
+
+
 def _components_without(adjacency: dict[str, set[str]], *, removed: str | None = None) -> int:
     remaining = [node for node in adjacency.keys() if node != removed]
     seen: set[str] = set()
@@ -294,6 +308,7 @@ def atlas_stats(atlas_root: Path | str) -> dict[str, Any]:
             "daily_notes_this_week": daily_count,
             "wires_created_this_week": wires_this_week,
         },
+        "temporal_patterns": temporal_patterns_section(atlas_root),
         "warnings": warnings,
     }
 
@@ -305,6 +320,7 @@ def render_stats_text(payload: dict[str, Any]) -> str:
     topology = payload["emotional_topology"]
     health = payload["health"]
     activity = payload["activity"]
+    temporal = payload.get("temporal_patterns", {})
 
     most_connected = ", ".join(
         f"{item['note_id']}({item['count']})"
@@ -344,7 +360,29 @@ def render_stats_text(payload: dict[str, Any]) -> str:
         "",
         "activity",
         f"  sessions this week: {activity['sessions_this_week']}  |  daily notes: {activity['daily_notes_this_week']}  |  wires created this week: {activity['wires_created_this_week']}",
+        "",
+        "temporal patterns",
     ]
+    if not temporal.get("enabled", True):
+        lines.append("  disabled")
+    elif temporal.get("error"):
+        lines.append(f"  unavailable: {temporal['error']}")
+    else:
+        lines.append(
+            "  enabled: true"
+            f"  |  data: {temporal.get('data_days', 0)} days, {temporal.get('state_transitions', 0)} state transitions, {temporal.get('wire_events', 0)} wire events"
+        )
+        strongest = temporal.get("strongest")
+        if isinstance(strongest, dict):
+            lines.append(
+                "  strongest: "
+                f"{strongest.get('signal_a')} -> {strongest.get('signal_b')}"
+                f" (r={float(strongest.get('correlation', 0.0)):.2f}, p={float(strongest.get('p_value', 1.0)):.3f})"
+            )
+        lines.append(
+            f"  significant correlations: {temporal.get('significant_correlations', 0)}"
+        )
+        lines.append(f"  run: {temporal.get('note') or 'cart temporal-patterns'}")
     for warning in warnings:
         lines.append(f"  ! {warning}")
     return "\n".join(lines) + "\n"

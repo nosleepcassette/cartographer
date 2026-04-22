@@ -166,3 +166,5 @@ def test_stats_command_reports_health_and_connectivity(tmp_path, monkeypatch) ->
     assert payload["summary"]["total_wires"] == 1
     assert payload["connectivity"]["most_connected"][0]["note_id"] in {"maps", "alpha"}
     assert payload["emotional_topology"]["high_avoidance_risk_count"] == 1
+    assert payload["temporal_patterns"]["enabled"] is True
+    assert "note" in payload["temporal_patterns"]

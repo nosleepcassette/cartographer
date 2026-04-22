@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from .agent_memory import iter_learning_blocks
+from .config import load_config
 from .notes import Note
 from .operating_truth import operating_truth_brief_section
 from .patterns import entries_since, latest_entry, load_state_log, recent_entries, summarize_patterns
@@ -64,7 +65,53 @@ def _active_arcs_lines(root: Path) -> list[str]:
     return [f"- {arc} ({count})" for arc, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:6]]
 
 
-def build_daily_brief(root: Path, *, format: str = "markdown") -> str:
+def _temporal_pattern_lines(
+    root: Path,
+    *,
+    include_temporal: bool | None,
+    limit: int = 3,
+) -> list[str]:
+    config = load_config(root=root)
+    temporal_config = config.get("temporal_patterns", {})
+    if not isinstance(temporal_config, dict):
+        temporal_config = {}
+    should_include = (
+        bool(temporal_config.get("auto_run_on_brief", False))
+        if include_temporal is None
+        else include_temporal
+    )
+    if not should_include:
+        return []
+    if not bool(temporal_config.get("enabled", True)):
+        return ["- temporal pattern detection disabled in config"]
+    try:
+        from .temporal_patterns import TemporalPatternDetector
+
+        detector = TemporalPatternDetector(root)
+        min_n = int(temporal_config.get("min_data_points", 3) or 3)
+        patterns = detector.detect_all_patterns(lead_hours=24, min_n=min_n)
+    except Exception as exc:
+        return [f"- temporal pattern analysis unavailable: {exc}"]
+    if not patterns:
+        return ["- no significant temporal patterns detected"]
+    lines: list[str] = []
+    for pattern in patterns[:limit]:
+        correlation = pattern.correlations[0] if pattern.correlations else None
+        metrics = (
+            ""
+            if correlation is None
+            else f" (r={correlation.correlation:.2f}, p={correlation.p_value:.3f})"
+        )
+        lines.append(f"- {pattern.title}{metrics}")
+    return lines
+
+
+def build_daily_brief(
+    root: Path,
+    *,
+    format: str = "markdown",
+    include_temporal: bool | None = None,
+) -> str:
     open_tasks = sort_tasks(iter_tasks(root, include_done=False))
     tasks = [
         task
@@ -102,29 +149,43 @@ def build_daily_brief(root: Path, *, format: str = "markdown") -> str:
         if extracted:
             open_questions_lines = [line if line.startswith("- ") else f"- {line}" for line in extracted[:8]]
 
+    temporal_lines = _temporal_pattern_lines(root, include_temporal=include_temporal)
+
     sections = [
         f"# atlas brief — {date.today().isoformat()}",
         "",
         *operating_truth_brief_section(root),
         "",
-        "## open tasks (P0-P1)",
-        *task_lines,
-        "",
-        "## active arcs",
-        *_active_arcs_lines(root),
-        "",
-        "## last mapsOS state",
-        *state_lines,
-        "",
-        "## recent patterns (last 5 sessions)",
-        *pattern_lines,
-        "",
-        "## recent learnings (last 7 days)",
-        *learning_lines,
-        "",
-        "## open questions",
-        *open_questions_lines,
     ]
+    if temporal_lines:
+        sections.extend(
+            [
+                "## temporal patterns",
+                *temporal_lines,
+                "",
+            ]
+        )
+    sections.extend(
+        [
+            "## open tasks (P0-P1)",
+            *task_lines,
+            "",
+            "## active arcs",
+            *_active_arcs_lines(root),
+            "",
+            "## last mapsOS state",
+            *state_lines,
+            "",
+            "## recent patterns (last 5 sessions)",
+            *pattern_lines,
+            "",
+            "## recent learnings (last 7 days)",
+            *learning_lines,
+            "",
+            "## open questions",
+            *open_questions_lines,
+        ]
+    )
     markdown = "\n".join(sections).rstrip() + "\n"
     if format == "markdown":
         return markdown

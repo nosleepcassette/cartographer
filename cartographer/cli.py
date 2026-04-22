@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from dataclasses import asdict
 import json
 import shlex
 import sys
@@ -402,6 +403,35 @@ def load_note_payload(path: Path) -> dict[str, object]:
         "frontmatter": note.frontmatter,
         "content": note.body,
     }
+
+
+def _record_path_accesses(
+    atlas: Atlas,
+    paths: list[str] | tuple[str, ...],
+    *,
+    access_type: str,
+) -> None:
+    note_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        try:
+            note = Note.from_file(path)
+        except Exception:
+            continue
+        note_id = str(note.frontmatter.get("id") or path.stem)
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        note_ids.append(note_id)
+    if not note_ids:
+        return
+    try:
+        Index(atlas.root).record_accesses(note_ids, access_type=access_type)
+    except Exception:
+        return
 
 
 def _session_metadata(path: Path) -> dict[str, Any]:
@@ -890,6 +920,10 @@ def _open_note(note_id: str) -> None:
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     atlas.refresh_index()
+    try:
+        Index(atlas.root).record_accesses([note_id], access_type="open")
+    except Exception:
+        pass
     click.echo(path)
 
 
@@ -955,6 +989,15 @@ def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
         from .query_router import route_query
 
         payload = route_query(atlas.root, expr)
+        _record_path_accesses(
+            atlas,
+            [
+                str(item.get("path"))
+                for item in payload.get("results", [])
+                if isinstance(item, dict) and item.get("path")
+            ],
+            access_type="query-route",
+        )
         if as_json:
             _emit_json(
                 _with_schema(
@@ -970,6 +1013,7 @@ def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
         _render_routed_results(payload)
         return
     results = resolve_query_paths(atlas, expr)
+    _record_path_accesses(atlas, results, access_type="query")
     if as_json:
         _emit_json(
             _with_schema(
@@ -1328,6 +1372,69 @@ def stats_command(as_json: bool) -> None:
         _emit_json(_with_schema(payload, surface="stats"))
         return
     click.echo(render_stats_text(payload), nl=False)
+
+
+@main.command("temporal-patterns")
+@click.option(
+    "--signal",
+    type=click.Choice(["state", "wires", "sessions", "daily", "access", "all"]),
+    default="all",
+    show_default=True,
+    help="Which signal domain to analyze.",
+)
+@click.option("--lead", default=48, type=int, show_default=True, help="Lead time in hours.")
+@click.option("--min-n", default=3, type=int, show_default=True, help="Minimum aligned buckets required.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable output.")
+@click.option("--write", "write_report_flag", is_flag=True, help="Write the report to the configured temporal patterns directory.")
+def temporal_patterns_command(
+    signal: str,
+    lead: int,
+    min_n: int,
+    as_json: bool,
+    write_report_flag: bool,
+) -> None:
+    """Detect cross-dimensional temporal correlations across the atlas."""
+    atlas = get_atlas()
+    ensure_index_current(atlas)
+    from .temporal_patterns import TemporalPatternDetector
+
+    detector = TemporalPatternDetector(atlas.root)
+    try:
+        patterns = detector.detect_all_patterns(
+            lead_hours=lead,
+            min_n=min_n,
+            signal_domain=signal,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    written_path: Path | None = None
+    if write_report_flag:
+        output_dir = Path(
+            str(detector.config.get("output_dir") or "ref/temporal-patterns")
+        ).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = atlas.root / output_dir
+        written_path = detector.write_report(patterns, output_dir)
+
+    payload = {
+        "signal": signal,
+        "lead_hours": lead,
+        "min_n": min_n,
+        "pattern_count": len(patterns),
+        "patterns": [asdict(pattern) for pattern in patterns],
+        "summary": detector.quick_summary(),
+    }
+    if written_path is not None:
+        payload["written"] = str(written_path)
+
+    if as_json:
+        _emit_json(_with_schema(payload, surface="temporal-patterns"))
+        return
+
+    if written_path is not None:
+        click.echo(f"written: {written_path}")
+    click.echo(detector.format_report(patterns), nl=False)
 
 
 @main.command("supersede")
@@ -2381,10 +2488,15 @@ def summarize(
     default="markdown",
     show_default=True,
 )
+@click.option("--temporal", "include_temporal", is_flag=True, help="Include temporal pattern correlations in the brief.")
 @click.option("--output")
-def daily_brief(output_format: str, output: str | None) -> None:
+def daily_brief(output_format: str, include_temporal: bool, output: str | None) -> None:
     atlas = get_atlas()
-    rendered = build_daily_brief(atlas.root, format=output_format)
+    rendered = build_daily_brief(
+        atlas.root,
+        format=output_format,
+        include_temporal=True if include_temporal else None,
+    )
     if output:
         destination = Path(output).expanduser()
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -2604,6 +2716,7 @@ def therapy_export(
     type=click.Choice(["markdown", "json"]),
     show_default=True,
 )
+@click.option("--temporal", "include_temporal", is_flag=True, help="Include therapy-relevant temporal pattern correlations.")
 @click.option("--write", "write_path", help="Write the therapy review to a specific atlas path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit the payload as JSON instead of writing a file.")
 def therapy_review(
@@ -2612,6 +2725,7 @@ def therapy_review(
     sessions: int,
     task_query: str,
     output_format: str,
+    include_temporal: bool,
     write_path: str | None,
     as_json: bool,
 ) -> None:
@@ -2639,6 +2753,7 @@ def therapy_review(
             tasks=tasks,
             role=role,
             scope=scope,
+            include_temporal=include_temporal,
         )
     except (FileNotFoundError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc

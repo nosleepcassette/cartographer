@@ -92,6 +92,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "corpus_budget": 1000,
         "rrf_k": 60,
     },
+    "temporal_patterns": {
+        "enabled": True,
+        "default_lead_hours": 48,
+        "bucket_hours": 24,
+        "min_data_points": 3,
+        "significance_threshold": 0.05,
+        "permutation_count": 1000,
+        "output_dir": "ref/temporal-patterns",
+        "auto_run_on_brief": False,
+    },
     "mapsos": {
         "tasks_file": "tasks/mapsos.md",
         "snapshot_dir": "agents/mapsOS",

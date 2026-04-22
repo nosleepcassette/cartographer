@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from .config import load_config
 from .mapsos import default_export_paths, load_mapsos_payload
 
 
@@ -150,6 +151,7 @@ def build_therapy_review_context(
     sessions: list[dict[str, Any]],
     tasks: list[dict[str, Any]],
     mapsos_state: dict[str, Any],
+    temporal_patterns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     sources: list[dict[str, Any]] = []
     lines: list[str] = []
@@ -204,6 +206,19 @@ def build_therapy_review_context(
         )
         lines.append(content)
 
+    for pattern in temporal_patterns or []:
+        title = str(pattern.get("title") or "Temporal Pattern").strip()
+        summary = str(pattern.get("summary") or "").strip()
+        content = f"TEMPORAL PATTERN {title}: {summary}".strip()
+        sources.append(
+            {
+                "kind": "temporal-pattern",
+                "label": title,
+                "content": content,
+            }
+        )
+        lines.append(content)
+
     return {
         "content": "\n".join(lines).strip(),
         "sources": sources,
@@ -225,6 +240,88 @@ def _matching_sources(
     return matches
 
 
+def _temporal_pattern_payload_for_review(
+    atlas_root: Path,
+    *,
+    max_patterns: int = 3,
+) -> dict[str, Any]:
+    config = load_config(root=atlas_root)
+    temporal_config = config.get("temporal_patterns", {})
+    if not isinstance(temporal_config, dict):
+        temporal_config = {}
+    if not bool(temporal_config.get("enabled", True)):
+        return {
+            "enabled": False,
+            "included": False,
+            "pattern_count": 0,
+            "patterns": [],
+            "error": None,
+        }
+    try:
+        from .temporal_patterns import TemporalPatternDetector
+
+        detector = TemporalPatternDetector(atlas_root)
+        patterns = detector.detect_all_patterns(
+            min_n=int(temporal_config.get("min_data_points", 3) or 3)
+        )
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "included": True,
+            "pattern_count": 0,
+            "patterns": [],
+            "error": str(exc),
+        }
+
+    relevant_signals = {
+        "state_transition",
+        "state_drop",
+        "state_stability",
+        "intention_misses",
+        "operating_truth_churn",
+        "wire_activity",
+    }
+    filtered = [
+        pattern
+        for pattern in patterns
+        if any(
+            correlation.signal_a in relevant_signals
+            or correlation.signal_b in relevant_signals
+            for correlation in pattern.correlations
+        )
+    ]
+    payload_patterns: list[dict[str, Any]] = []
+    for pattern in filtered[:max_patterns]:
+        payload_patterns.append(
+            {
+                "title": pattern.title,
+                "summary": pattern.summary,
+                "recommendation": pattern.recommendation,
+                "counter_evidence": list(pattern.counter_evidence[:3]),
+                "correlations": [
+                    {
+                        "signal_a": correlation.signal_a,
+                        "signal_b": correlation.signal_b,
+                        "lead_hours": correlation.lead_hours,
+                        "correlation": correlation.correlation,
+                        "n_buckets": correlation.n_buckets,
+                        "p_value": correlation.p_value,
+                        "significant": correlation.significant,
+                        "description": correlation.description,
+                    }
+                    for correlation in pattern.correlations
+                ],
+            }
+        )
+    return {
+        "enabled": True,
+        "included": True,
+        "pattern_count": len(payload_patterns),
+        "patterns": payload_patterns,
+        "error": None,
+    }
+
+
 def build_therapy_review_payload(
     atlas_root: Path,
     *,
@@ -233,14 +330,27 @@ def build_therapy_review_payload(
     tasks: list[dict[str, Any]],
     role: str,
     scope: str,
+    include_temporal: bool = False,
 ) -> dict[str, Any]:
     plugin = therapy_plugin_status(atlas_root)
     mapsos_state = latest_mapsos_state()
+    temporal_payload = (
+        _temporal_pattern_payload_for_review(atlas_root)
+        if include_temporal
+        else {
+            "enabled": False,
+            "included": False,
+            "pattern_count": 0,
+            "patterns": [],
+            "error": None,
+        }
+    )
     context = build_therapy_review_context(
         working_set_entries=working_set_entries,
         sessions=sessions,
         tasks=tasks,
         mapsos_state=mapsos_state,
+        temporal_patterns=list(temporal_payload.get("patterns") or []),
     )
     patterns: list[dict[str, Any]] = []
     if context["content"]:
@@ -279,6 +389,7 @@ def build_therapy_review_payload(
         "session_count": len(sessions),
         "task_count": len(tasks),
         "context": context,
+        "temporal_patterns": temporal_payload,
         "pattern_count": len(patterns),
         "patterns": patterns,
     }
@@ -318,6 +429,23 @@ def render_therapy_review_markdown(payload: dict[str, Any]) -> str:
                     lines.append(f"    - {match.get('label')}: {match.get('content')}")
     else:
         lines.append("- none")
+
+    temporal = payload.get("temporal_patterns") or {}
+    if temporal.get("included") or temporal.get("error"):
+        lines.extend(["", "## Temporal Patterns", ""])
+        error = str(temporal.get("error") or "").strip()
+        if error:
+            lines.append(f"- unavailable: {error}")
+        elif temporal.get("patterns"):
+            for item in temporal.get("patterns", []):
+                lines.append(f"- {item.get('title')}: {item.get('summary')}")
+                counter = item.get("counter_evidence") or []
+                if counter:
+                    lines.append("  - counter-evidence:")
+                    for entry in counter[:3]:
+                        lines.append(f"    - {entry}")
+        else:
+            lines.append("- no therapy-relevant temporal patterns detected")
 
     lines.extend(["", "## Context", ""])
     content = str(payload.get("context", {}).get("content") or "").strip()

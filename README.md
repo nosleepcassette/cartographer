@@ -80,7 +80,12 @@ The atlas and cartographer are designed to be shaped by whoever runs them. What'
 - Privacy modes: `off`, `names`, `names_relationships`, `full` — driven from config, not code
 - Person ordering and never-redact IDs for the graph
 - qmd collection path for hybrid retrieval
-- Embedding backend/model settings and auto-embed-on-write
+- mapsOS integration settings
+- Embedding backend, model, auto-embed-on-write, similarity threshold
+- Bridge discovery threshold and max proposals
+- Spreading activation defaults (depth, decay, emotional weighting)
+- Dream engine settings (bridge discovery, weight decay, pruning threshold)
+- Temporal pattern detection settings (lead time, bucket size, significance threshold, permutation count)
 - Operating-truth extraction and retention settings
 - Temporal review thresholds for stale/current truth
 - Guardrail rules for secrets, stack traces, duplicate notes, and raw code blobs
@@ -239,6 +244,13 @@ The plugin includes a configurable crisis protocol. Default: trust the person to
 - `cart guardrails scan|status|enable|disable`
 - Write-time guardrails reject obvious secrets, flag stack traces, and warn on large raw code or duplicate notes
 
+**Temporal pattern detection:**
+- `cart temporal-patterns` detects cross-dimensional correlations across the atlas: does social isolation predict longer recovery? Do connection events feed creative output 2-3 days later? Does operating-truth churn predict state drops?
+- Pure Python — Pearson correlation + permutation significance testing, no scipy needed
+- Reads from mapsOS state transitions, wire activity timestamps, session frequency, daily note data, and access patterns
+- Output is pattern reports (not interventions) — the data surfaces, the human decides
+- `cart daily-brief --temporal` and `cart therapy review --temporal` for integration
+
 **Session import:**
 - Claude Code, Hermes, Codex — deduped, idempotent
 - External: ChatGPT and Claude.ai conversation exports
@@ -281,6 +293,7 @@ session → export → cart ingest → atlas update → operating truth → emot
 - Live local serving with background daemon support
 - Offline Firefox-safe rendering
 - Theme system with auto-loaded atlas-local skins
+- Built-in `Atlas Graph` and `Astral Survey` presets now carry explicit v0.4 theme metadata markers for template compatibility
 
 **Graph-native tooling:**
 - `cart think`, `cart walk`, `cart discover`, `cart embed`, `cart stats`
@@ -296,7 +309,14 @@ session → export → cart ingest → atlas update → operating truth → emot
 **Lifecycle + query control:**
 - `cart delete` with impact preview, archive mode, and reference cleanup
 - `cart query --route` across operating-truth/profile/graph/corpus shelves
+- Query/open access events are recorded so temporal-pattern analysis can learn from actual atlas usage
 - `cart guardrails` for secret rejection, stack-trace flagging, duplicate warnings, and atlas hygiene
+
+**Temporal pattern detection:**
+- `cart temporal-patterns` for cross-dimensional correlation detection across mapsOS state, wire activity, session frequency, daily note data, and atlas access patterns
+- Pattern reports (not interventions) — significant correlations surfaced, human decides what to do
+- `cart temporal-patterns --write` writes timestamped reports into `ref/temporal-patterns/`
+- `cart daily-brief --temporal` and `cart therapy review --temporal` for integration
 
 **Therapy:**
 - Pattern detection and counter-evidence queries
@@ -328,7 +348,9 @@ session → export → cart ingest → atlas update → operating truth → emot
 │   ├── config.toml
 │   ├── plugins/
 │   ├── templates/
-│   ├── index.db        # SQLite index, NOT the source of truth
+│   ├── hooks/
+│   ├── exports/             # graph HTML/JSON exports
+│   ├── index.db             # SQLite index + embeddings + operating truth
 │   └── worklog.db
 ├── index.md
 ├── daily/
@@ -339,8 +361,12 @@ session → export → cart ingest → atlas update → operating truth → emot
 │   └── codex/sessions/
 ├── entities/
 ├── tasks/
-├── themes/             # atlas-local graph skins
-└── ref/
+├── ref/                     # reference docs, specs, analysis
+├── readings/                # divination readings + renders
+├── shared/                  # cross-agent resources
+│   ├── SHARED_CONTEXT.md    # agent-independent file map (all agents read this first)
+│   └── skills → ~/.hermes/skills/  # symlink to canonical skills
+└── themes/                  # atlas-local graph skins
 ```
 
 ---
@@ -589,6 +615,20 @@ cart guardrails disable
 
 `cart delete` is not just `rm`: it previews wires, block refs, frontmatter links, embeddings, and operating-truth references before deleting or archiving. Guardrails run on write and are there to keep the atlas from turning into a credential dump or crash-log graveyard.
 
+### temporal patterns
+
+```zsh
+cart temporal-patterns
+cart temporal-patterns --signal state
+cart temporal-patterns --lead 72 --min-n 5
+cart temporal-patterns --write
+cart temporal-patterns --json
+cart daily-brief --temporal
+cart therapy review --temporal
+```
+
+`cart temporal-patterns` detects cross-dimensional temporal correlations across your atlas. It reads mapsOS state transitions, wire activity timestamps, session frequency, daily note data, and access patterns — then checks whether events in one signal predict events in another (with configurable lead time and permutation significance testing). The output is pattern reports, not interventions: "social isolation in the 48h before a state drop correlates with longer recovery (r=0.72, p=0.003)." The data surfaces. You decide.
+
 ### external import
 
 ```zsh
@@ -648,7 +688,7 @@ See `DEVELOPERS.md` for the full extension surface. Short version:
 
 **The plugin API is 30 seconds to learn:**
 
-Any executable that reads JSON on stdin and writes JSON on stdout is a plugin. Drop it in `.cartographer/plugins/`. Run with `cart plugin run my-plugin`. Python, shell, Rust, Lua — anything.
+Any executable that reads JSON on stdin and writes JSON on stdout is a plugin. Drop it in `.cartographer/plugins/`. Run with `cart plugin run my-plugin`. Python, shell, Rust, Lua — anything. If you want stable aliases/metadata, add a sibling `.cartographer/plugins/manifest.json` with `description`, `commands`, and `executable` entries.
 
 ```json
 // stdin
@@ -678,7 +718,7 @@ The atlas is a local-first knowledge graph where agents and humans write to the 
 | mapsOS tracks | `tracks:` in `~/.maps_os_config.yaml` |
 | mapsOS state vocab | `state.tags:` in config |
 | Agent adapters | `cart session-import` reads any agent writing the ECC session format |
-| Graph skins | `~/atlas/themes/*.js` — auto-loaded, theme picker in graph sidebar |
+| Graph skins | `~/atlas/themes/*.js` — auto-loaded, theme picker in graph sidebar, `template.js` now marks v0.4 compliance explicitly |
 
 This was built for one brain and configured for that brain's specific needs. The whole point is that you configure it for yours. Come build.
 

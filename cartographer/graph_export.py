@@ -1545,6 +1545,15 @@ __THEME_SCRIPT_TAGS__
         starfieldSize: 2.8,
         showBiomes: false,
         showSurveyGrid: false,
+
+        // v0.4 compliance markers — metadata-only until the renderer consumes them
+        themeApiVersion: 'v0.4',
+        templateCompliance: ['v0.3', 'v0.4'],
+
+        // v0.4 feature flags — reserve explicit hooks for newer atlas surfaces
+        temporalPatternSignals: false,
+        pluginManifestStatus: false,
+        patternCacheHints: false,
       },
       astral: {
         id: 'astral',
@@ -1559,6 +1568,15 @@ __THEME_SCRIPT_TAGS__
         starfieldSize: 3.7,
         showBiomes: true,
         showSurveyGrid: true,
+
+        // v0.4 compliance markers — metadata-only until the renderer consumes them
+        themeApiVersion: 'v0.4',
+        templateCompliance: ['v0.3', 'v0.4'],
+
+        // v0.4 feature flags — reserve explicit hooks for newer atlas surfaces
+        temporalPatternSignals: false,
+        pluginManifestStatus: false,
+        patternCacheHints: false,
       },
     };
     const THEME_TYPE_GLYPHS = {
