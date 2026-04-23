@@ -1,6 +1,6 @@
 # cartographer
-
-Run `cart discover` on the notes you already have and get immediate graph value in the first five minutes. Semantic search over Markdown. Typed, weighted wires. Human-readable provenance. Trace paths across the graph. Live graph server. All local, all git-native, all files.
+    Your notes already know things you don't. cartographer finds them.
+https://github.com/user-attachments/assets/0994a47a-c47a-43ac-891c-16d0235b37d3
 
 ```
 cart discover             →  find 23 similar-but-unwired note pairs in your existing notes
@@ -11,8 +11,7 @@ cart stats                →  557 notes · 234 wires · 23 orphans · 78% embed
 cart query 'relationship drift with grungler'  →  semantic match, not keyword grep
 cart operating-truth      →  active work, open decisions, commitments, next steps
 ```
-
-Your agents should know how you're actually doing — and remember everything they learn.
+Run `cart discover` on the notes you already have and get immediate graph value in the first five minutes. Semantic search over Markdown. Typed, weighted wires. Human-readable provenance. Trace paths across the graph. Live graph server. All local, all git-native, all files.
 
 Local-first knowledge filesystem and agent memory layer. Plain Markdown. Git history. Queryable graph. Block-addressable text. Embedding search. Emotional topology. Agents and humans write to the same substrate. Nothing is trapped in an app.
 
