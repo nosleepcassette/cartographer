@@ -2,9 +2,9 @@
 
 Your notes already know things you don't. cartographer finds them.
 
-https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
+https://github.com/user-attachments/assets/0994a47a-c47a-43ac-891c-16d0235b37d3
 
-Local-first knowledge filesystem. Plain Markdown. Git-native. Queryable graph. Semantic wiring with emotional predicates. Embedding search. Block-addressable text. Agents and humans write to the same substrate. Nothing is trapped in an app.
+A knowledge graph for the notes you already have. Plain Markdown, git-native, fully local. Wire anything to anything with semantic predicates — supports, depends on, contradicts, relates to goal — and query the graph by structure and by feeling. Nothing trapped in an app.
 
 ---
 
@@ -57,7 +57,7 @@ cart daily-brief                 # what matters right now
 
 Most knowledge tools store notes. Some add links. Almost none ask *how things relate* — and even fewer make that answer queryable.
 
-cartographer wires notes with predicates that carry meaning, not just connectivity. A wire says "supports" or "contradicts" or "relates_to_goal." It carries emotional metadata — is this connection energizing or draining? Is avoidance active? Is this a growth edge? — and that metadata is a first-class query surface.
+Cartographer wires notes with predicates that carry meaning, not just connectivity. A wire says "supports" or "contradicts" or "relates_to_goal." It carries emotional metadata — is this connection energizing or draining? Is avoidance active? Is this a growth edge? — and that metadata is a first-class query surface.
 
 `cart wire query --avoidance-risk high` returns every relationship where avoidance is active. `cart walk grungler --avoidance-only high` traverses only the high-avoidance neighborhood. The graph answers questions about your life, not just your files.
 
@@ -95,7 +95,7 @@ Wires are stored inline as HTML comments — invisible in any Markdown renderer,
 
 `cart graph --serve` starts a localhost HTTP server with an interactive HTML graph that auto-regenerates on file change. Predicate colors, trace data, discover overlays, and wire editing all work directly in the browser. `--daemon` sends it to the background.
 
-https://github.com/user-attachments/assets/0994a47a-c47a-43ac-891c-16d0235b37d3
+https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
 
 ### Embedding-backed search
 
@@ -139,18 +139,18 @@ The plugin API takes 30 seconds to learn. Any executable that reads JSON on stdi
 { "output": "result text", "writes": [{"path": "agents/mine/output.md", "content": "..."}], "errors": [] }
 ```
 
-Four plugins ship with cartographer:
+Four plugins ship with Cartographer:
 
 | Plugin | What it does |
 |--------|-------------|
-| **therapy** | Pattern detection (RSD spiral, isolation, executive paralysis, shame spiral, time blindness) with counter-evidence queries against the atlas. Not reassurance — grounded data at the moment it matters. |
-| **lovelife** | Relational pattern detection: Gottman bid-tracking, courtship/heartbreak/navigator modes, and transit-timing for communication windows. Catches the pattern where your nervous system kills connections that could have been extraordinary. |
-| **avoidance** | Real-time avoidance pattern detection and intervention. Surfaces when you're running instead of engaging. |
-| **temporal-patterns** | Cross-dimensional temporal correlation detection across state transitions, wire activity, and session frequency. |
+| **Therapy** | Pattern detection (RSD spiral, isolation, executive paralysis, shame spiral, time blindness) with counter-evidence queries against the atlas. Not reassurance — grounded data at the moment it matters. |
+| **Lovelife** | Relational pattern detection: Gottman bid-tracking, courtship/heartbreak/navigator modes, and transit-timing for communication windows. Catches the pattern where your nervous system kills connections that could have been extraordinary. |
+| **Avoidance** | Real-time avoidance pattern detection and intervention. Surfaces when you're running instead of engaging. |
+| **Temporal patterns** | Cross-dimensional temporal correlation detection across state transitions, wire activity, and session frequency. |
 
-### The therapy plugin in detail
+### The Therapy plugin in detail
 
-A concrete example of what a plugin actually does. The therapy plugin queries the atlas to surface grounded evidence when a spiral pattern is detected.
+A concrete example of what a plugin actually does. The Therapy plugin queries the atlas to surface grounded evidence when a spiral pattern is detected.
 
 **What it detects:**
 
@@ -193,7 +193,7 @@ A script that reads stdin and writes JSON. Plugs into any agent that speaks the 
 
 ## Agent memory
 
-cartographer is a knowledge substrate that happens to be excellent at agent memory. Agents write to the same files humans do. Session import turns context windows into a growing graph — Claude Code, Hermes, Codex, ChatGPT, and Claude.ai exports are all supported, deduped, and idempotent. `cart daily-brief` seeds the next session from everything that happened today.
+Cartographer is a knowledge substrate that happens to be excellent at agent memory. Agents write to the same files humans do. Session import turns context windows into a growing graph — Claude Code, Hermes, Codex, ChatGPT, and Claude.ai exports are all supported, deduped, and idempotent. `cart daily-brief` seeds the next session from everything that happened today.
 
 ```zsh
 cart session-import claude --latest 5
@@ -218,7 +218,7 @@ The atlas loop: session → import → atlas update → wires → daily brief �
 
 ## Configurability
 
-The atlas and cartographer are designed to be shaped by whoever runs them. What's configurable:
+The atlas and Cartographer are designed to be shaped by whoever runs them. What's configurable:
 
 - Graph theme preset and custom skins (`~/atlas/themes/*.js`)
 - Privacy modes: `off`, `names`, `names_relationships`, `full`
@@ -239,17 +239,17 @@ The system doesn't tell you what your knowledge should look like. It gives you t
 
 ## Integrations
 
-**Obsidian** — Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail. Cart uses standard Markdown plus HTML comment block markers — Obsidian renders these as notes, cart reads them as structured data.
+**Obsidian** — Point Obsidian at `~/atlas`. `.cartographer/` stays implementation detail. Cart uses standard Markdown plus HTML comment block markers — Obsidian renders these as notes, Cart reads them as structured data.
 
-**vimwiki** — `cart init` can patch `~/.vimrc` to make the atlas your primary wiki. Skip with `CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1`.
+**Vimwiki** — `cart init` can patch `~/.vimrc` to make the atlas your primary wiki. Skip with `CARTOGRAPHER_SKIP_VIMWIKI_PATCH=1`.
 
-**mapsOS** — The qualitative life OS that cartographer builds on. Braindump to your agent and it parses your data into a detailed map of your life. State vocabulary, arc definitions, capacity thresholds, and track definitions are all configurable. `cart mapsos ingest-exports --latest` bridges the two systems.
+**mapsOS** — The qualitative life OS that Cartographer builds on. Braindump to your agent and it parses your data into a detailed map of your life. State vocabulary, arc definitions, capacity thresholds, and track definitions are all configurable. `cart mapsos ingest-exports --latest` bridges the two systems.
 
 ---
 
 ## Design rules
 
-1. **Files are the API.** Delete cartographer and your files still make sense.
+1. **Files are the API.** Delete Cartographer and your files still make sense.
 2. **Structure lives in frontmatter, not migrations.**
 3. **Git is the database.**
 4. **Agents are first-class writers** — but they write to the same substrate you do.
@@ -318,7 +318,7 @@ Block refs: `[[project-alpha#b001]]`.
 
 ## Core commands
 
-### atlas + status
+### Atlas + status
 
 ```zsh
 cart init [path]
@@ -335,7 +335,7 @@ cart index rebuild
 
 `cart tui` — `j`/`k` move, `[`/`]` section jump, `1`-`5` slot jump, `/` filter, `t` task overlay, `m` mapsOS handoff.
 
-### notes
+### Notes
 
 ```zsh
 cart new project "Project Alpha"
@@ -346,7 +346,7 @@ cart show project-alpha
 cart edit project-alpha
 ```
 
-### query + backlinks
+### Query + backlinks
 
 ```zsh
 cart query 'session drift in hermetica'
@@ -357,7 +357,7 @@ cart query 'text:"release checklist"'
 cart backlinks project-alpha
 ```
 
-### tasks
+### Tasks
 
 ```zsh
 cart todo list
@@ -365,7 +365,7 @@ cart todo add "ship the thing" -p P0 --project project-alpha
 cart todo done t123abc
 ```
 
-### session import
+### Session import
 
 ```zsh
 cart session-import claude --latest 5
@@ -374,7 +374,7 @@ cart import chatgpt ~/Downloads/conversations.json
 cart import claude-web ~/Downloads/conversations.json
 ```
 
-### semantic wires
+### Semantic wires
 
 ```zsh
 cart wire predicates
@@ -390,7 +390,7 @@ cart wire doctor
 cart wire gc
 ```
 
-### graph-native tools
+### Graph-native tools
 
 ```zsh
 cart trace project-alpha
@@ -407,7 +407,7 @@ cart embed
 cart stats
 ```
 
-### graph export + live server
+### Graph export + live server
 
 ```zsh
 cart graph --format html --open
@@ -419,7 +419,7 @@ cart graph --stop-daemon
 
 HTML output is self-contained and offline-safe. Theme and privacy settings come from `~/atlas/.cartographer/config.toml`. Atlas-local theme skins in `~/atlas/themes/*.js` auto-load in the graph sidebar picker.
 
-### operating truth + temporal truth
+### Operating truth + temporal truth
 
 ```zsh
 cart operating-truth
@@ -431,7 +431,7 @@ cart conflicts
 cart stale
 ```
 
-### therapy
+### Therapy
 
 ```zsh
 cart therapy export
@@ -439,7 +439,7 @@ cart therapy review --json
 cart therapy counter-evidence "I wasn't giving them what they needed"
 ```
 
-### temporal patterns
+### Temporal patterns
 
 ```zsh
 cart temporal-patterns
@@ -449,7 +449,7 @@ cart temporal-patterns --write
 cart daily-brief --temporal
 ```
 
-### deletion + guardrails
+### Deletion + guardrails
 
 ```zsh
 cart delete project-alpha              # previews blast radius first
@@ -500,9 +500,9 @@ This was built for one brain and configured for that brain's specific needs. The
 
 - `SPEC.md` — product spec and locked decisions
 - `DEVELOPERS.md` — extension points and developer-facing framing
-- `orchestra/` — allowlist-friendly shell wrappers for common cart operations
+- `orchestra/` — allowlist-friendly shell wrappers for common Cart operations
 - `skills/` — agent skill definitions for Hermes, Claude Code, etc.
-- `plugins/` — shipped plugins (therapy, lovelife, avoidance, temporal-patterns)
+- `plugins/` — shipped plugins (Therapy, Lovelife, Avoidance, Temporal patterns)
 - `profiles/` — wire vocabulary profiles (`default`, `emotional-topology`)
 
 ---
