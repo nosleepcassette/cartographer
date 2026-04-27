@@ -1,0 +1,62 @@
+/* wire_styling.html — Hook: wire_styling + edge_rendering */
+/* Predicate-driven edge styling — applied via CSS custom properties */
+/* The graph renderer sets these on the SVG <line>/<path> element */
+/* When emotional styling is OFF, all values resolve to neutral */
+
+ .et-edge {
+ --et-edge-color: var(--et-predicate-color, #71717a);
+ --et-edge-thickness: var(--et-predicate-thickness, 1);
+ --et-edge-dash: var(--et-review-dash, none);
+ }
+
+ .et-edge line, .et-edge path {
+ stroke: var(--et-edge-color);
+ stroke-width: var(--et-edge-thickness);
+ stroke-dasharray: var(--et-edge-dash);
+ transition: stroke 0.2s ease, stroke-width 0.2s ease;
+ }
+
+ /* Directional arrow markers */
+ .et-edge-arrow {
+ fill: var(--et-edge-color);
+ transition: fill 0.2s ease;
+ }
+
+ /* State modifier overlays */
+ .et-modifier-dot-dash {
+ stroke-dasharray: 2 4 6 4;
+ }
+ .et-modifier-arrowhead-emphasis .et-edge-arrow {
+ transform: scale(1.4);
+ }
+ .et-modifier-faded-endpoint {
+ opacity: 0.5;
+ }
+ .et-modifier-question-mark::after {
+ content: "?";
+ font-size: 10px;
+ fill: var(--et-edge-color);
+ }
+
+ /* Neutral mode — when emotional styling is OFF */
+ .et-neutral-mode .et-edge line,
+ .et-neutral-mode .et-edge path {
+ stroke: #71717a;
+ stroke-width: 1;
+ }
+ .et-neutral-mode .et-edge-arrow {
+ fill: #71717a;
+ }
+
+/*
+ Edge data attributes for renderer wiring:
+ Each SVG edge group gets:
+ data-plugin-hook="edge-rendering"
+ data-et-predicate="in_love"
+ data-et-color="#f59e0b"
+ data-et-thickness="3"
+ data-et-dash="none"
+ data-et-modifiers="separated,wants_reunion"
+ data-et-direction="forward"
+ data-et-privacy="inner-circle"
+*/

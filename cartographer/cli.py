@@ -815,6 +815,13 @@ def profile_apply(name: str) -> None:
         f"Found {len(proposals)} new candidate connections. Review with `cart discover --interactive`."
     )
 
+    # Auto-load graph-rendering plugins that extend the applied profile
+    profile_name = str(applied.get("name") or name).strip().lower()
+    from .graph_plugins import discover_graph_plugins
+    for plugin in discover_graph_plugins():
+        if plugin.extends and plugin.extends.lower() == profile_name:
+            click.echo(f"Plugin auto-loaded: {plugin.name} v{plugin.version} (extends {profile_name})")
+
 
 @main.command("completion")
 @click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
@@ -2006,6 +2013,18 @@ def wire_predicates(as_json: bool) -> None:
     type=click.Choice(["low", "medium", "high"]),
     help="Confidence marker for the new wire.",
 )
+@click.option(
+    "--privacy",
+    type=click.Choice(["public", "inner-circle", "private"]),
+    default="public",
+    show_default=True,
+    help="Privacy tier for the wire.",
+)
+@click.option(
+    "--state-modifiers",
+    default="",
+    help="Comma-separated state modifiers (separated, wants_reunion, formerly_romantic, unexplored).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def wire_add(
     source: str,
@@ -2023,6 +2042,8 @@ def wire_add(
     until: str | None,
     valence_note: str | None,
     confidence: str,
+    privacy: str,
+    state_modifiers: str,
     as_json: bool,
 ) -> None:
     atlas = get_atlas()
@@ -2053,6 +2074,8 @@ def wire_add(
         "reviewed_by": None,
         "reviewed_at": None,
         "confidence": confidence,
+        "privacy": privacy if privacy != "public" else None,
+        "state_modifiers": state_modifiers if state_modifiers else None,
         "note": None,
         "created": False,
         "updated": False,
@@ -2080,6 +2103,8 @@ def wire_add(
         reviewed_by=None,
         reviewed_at=None,
         confidence=confidence,
+        privacy=privacy if privacy != "public" else None,
+        state_modifiers=state_modifiers if state_modifiers else None,
     )
     created, updated = _replace_or_append_wire_comment(
         note,
@@ -2327,6 +2352,115 @@ def wire_review(limit: int, as_json: bool) -> None:
     if changed:
         atlas.refresh_index()
         click.echo("reviewed pending wires")
+
+
+@wire_group.command("privacy")
+@click.argument("wire_id")
+@click.option(
+    "--tier",
+    type=click.Choice(["public", "inner-circle", "private"]),
+    required=True,
+    help="Privacy tier to set for the wire.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def wire_privacy(wire_id: str, tier: str, as_json: bool) -> None:
+    """Update the privacy tier of a wire.
+
+    WIRE_ID identifies the wire in source:target#predicate format.
+    The wire's privacy field is updated in the index DB.
+    """
+    atlas = get_atlas()
+    index = ensure_index_current(atlas)
+
+    # Parse wire_id — expected format: "source_note:target_note#predicate"
+    parts = wire_id.split(":", 1)
+    if len(parts) != 2:
+        raise click.ClickException(
+            "WIRE_ID must be in source:target#predicate format "
+            "(e.g. alice:bob#loves)"
+        )
+    source_note = parts[0].strip()
+    target_and_pred = parts[1]
+    pred_parts = target_and_pred.rsplit("#", 1)
+    if len(pred_parts) != 2:
+        raise click.ClickException(
+            "WIRE_ID must be in source:target#predicate format "
+            "(e.g. alice:bob#loves)"
+        )
+    target_note = pred_parts[0].strip()
+    predicate = pred_parts[1].strip()
+
+    # Look up the wire in the DB via query_wires
+    candidate_wires = index.query_wires(predicate=predicate)
+    match = None
+    for w in candidate_wires:
+        if (
+            str(w.get("source_note")) == source_note
+            and str(w.get("target_note")) == target_note
+        ):
+            match = w
+            break
+
+    if match is None:
+        raise click.ClickException(
+            f"no wire found for {wire_id}"
+        )
+
+    wire_path = Path(str(match["path"]))
+    wire_line = int(match["line"])
+    source_block = None if match.get("source_block") is None else str(match["source_block"])
+    target_block = None if match.get("target_block") is None else str(match["target_block"])
+
+    # Rewrite the wire comment in the note file with updated privacy
+    note = Note.from_file(wire_path)
+    comment = render_wire_comment(
+        target_note=str(match["target_note"]),
+        target_block=target_block,
+        predicate=str(match["predicate"]),
+        weight=None if match.get("weight") is None else float(match["weight"]),
+        bidirectional=bool(match.get("bidirectional")),
+        relationship=None if match.get("relationship") is None else str(match["relationship"]),
+        emotional_valence=None if match.get("emotional_valence") is None else str(match["emotional_valence"]),
+        energy_impact=None if match.get("energy_impact") is None else str(match["energy_impact"]),
+        avoidance_risk=None if match.get("avoidance_risk") is None else str(match["avoidance_risk"]),
+        growth_edge=match.get("growth_edge"),
+        current_state=None if match.get("current_state") is None else str(match["current_state"]),
+        since=None if match.get("since") is None else str(match["since"]),
+        until=None if match.get("until") is None else str(match["until"]),
+        valence_note=None if match.get("valence_note") is None else str(match["valence_note"]),
+        author=None if match.get("author") is None else str(match["author"]),
+        method=None if match.get("method") is None else str(match["method"]),
+        reviewed=match.get("reviewed"),
+        reviewed_by=None if match.get("reviewed_by") is None else str(match["reviewed_by"]),
+        reviewed_at=None if match.get("reviewed_at") is None else str(match["reviewed_at"]),
+        confidence=None if match.get("confidence") is None else str(match["confidence"]),
+        note=None if match.get("note") is None else str(match["note"]),
+        privacy=tier if tier != "public" else None,
+        state_modifiers=None if match.get("state_modifiers") is None else str(match["state_modifiers"]),
+    )
+
+    _replace_or_append_wire_comment(
+        note,
+        source_block=source_block,
+        target_note=str(match["target_note"]),
+        target_block=target_block,
+        predicate=str(match["predicate"]),
+        comment=comment,
+    )
+    note.write()
+    atlas.refresh_index()
+
+    payload = {
+        "wire_id": wire_id,
+        "privacy": tier,
+        "source_note": source_note,
+        "target_note": target_note,
+        "predicate": predicate,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="wire.privacy"))
+        return
+    click.echo(f"wire privacy updated: {wire_id} → {tier}")
 
 
 @wire_group.command("emotional-summary")
@@ -3702,6 +3836,12 @@ def plugin_run(name: str, args: tuple[str, ...]) -> None:
     is_flag=True,
     help="Stop the background graph daemon on --port.",
 )
+@click.option(
+    "--plugin",
+    "plugin_names",
+    multiple=True,
+    help="Load a graph-rendering plugin by name.",
+)
 @click.pass_context
 def graph_export(
     ctx: click.Context,
@@ -3713,6 +3853,7 @@ def graph_export(
     daemon_mode: bool,
     status_daemon: bool,
     stop_daemon: bool,
+    plugin_names: tuple[str, ...],
 ) -> None:
     """Export the atlas note graph as JSON or an interactive HTML view."""
 
@@ -3787,6 +3928,7 @@ def graph_export(
                 atlas.root,
                 port=port,
                 open_in_browser=open_in_browser,
+                plugin_names=plugin_names,
             )
             click.echo(
                 f"graph daemon started: pid {daemon['pid']} serving {daemon['url']}"
@@ -3796,7 +3938,7 @@ def graph_export(
             return
         from .graph_serve import serve_graph
 
-        serve_graph(atlas.root, port=port, open_in_browser=open_in_browser)
+        serve_graph(atlas.root, port=port, open_in_browser=open_in_browser, plugin_names=plugin_names)
         return
 
     import webbrowser
@@ -3817,7 +3959,7 @@ def graph_export(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
     else:
-        out_path.write_text(render_graph_html(payload), encoding="utf-8")
+        out_path.write_text(render_graph_html(payload, plugin_names=plugin_names), encoding="utf-8")
     click.echo(
         f"graph exported: {out_path} ({payload['node_count']} nodes, {payload['edge_count']} edges)"
     )

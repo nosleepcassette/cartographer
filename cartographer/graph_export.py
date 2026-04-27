@@ -113,9 +113,11 @@ def _wire_metadata_payload(row: sqlite3.Row) -> dict[str, Any]:
         "review_duration_s": None
         if row["review_duration_s"] is None
         else float(row["review_duration_s"]),
-        "confidence": None if row["confidence"] is None else str(row["confidence"]),
-        "note": None if row["note"] is None else str(row["note"]),
-    }
+ "confidence": None if row["confidence"] is None else str(row["confidence"]),
+ "note": None if row["note"] is None else str(row["note"]),
+ "privacy": None if row["privacy"] is None else str(row["privacy"]),
+ "state_modifiers": None if row["state_modifiers"] is None else str(row["state_modifiers"]),
+ }
 
 
 def _primary_emotional_summary(
@@ -280,7 +282,7 @@ def _vendor_script_text(filename: str) -> str:
     )
 
 
-def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
+def load_graph_payload(atlas_root: Path | str, *, plugin_names: tuple[str, ...] = ()) -> dict[str, Any]:
     atlas_root = Path(atlas_root)
     db_path = atlas_root / ".cartographer" / "index.db"
     if not db_path.exists():
@@ -332,11 +334,13 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
                 reviewed_by,
                 reviewed_at,
                 review_duration_s,
-                confidence,
-                note,
-                path,
-                line
-            FROM wires
+    confidence,
+    note,
+    privacy,
+    state_modifiers,
+    path,
+    line
+    FROM wires
             ORDER BY source_note ASC, target_note ASC, predicate ASC
             """
         ).fetchall()
@@ -384,6 +388,13 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
         }
 
     valid_predicates = set(active_profile.get("default_predicates") or VALID_WIRE_PREDICATES)
+    # Merge plugin predicates so plugin-provided wires aren't filtered out
+    if plugin_names:
+        from .graph_plugins import discover_graph_plugins, plugin_predicate_lookup
+        _payload_plugins = [p for p in discover_graph_plugins() if p.name in plugin_names]
+        if _payload_plugins:
+            for pred_name in plugin_predicate_lookup(_payload_plugins):
+                valid_predicates.add(pred_name)
     wire_count = 0
     incident_wires: dict[str, list[dict[str, Any]]] = {}
     for row in wire_rows:
@@ -526,7 +537,15 @@ def load_graph_payload(atlas_root: Path | str) -> dict[str, Any]:
     }
 
 
-def render_graph_html(payload: dict[str, Any]) -> str:
+def render_graph_html(payload: dict[str, Any], *, plugin_names: tuple[str, ...] = ()) -> str:
+    # Load graph plugin predicates for edge styling (only when plugins are requested)
+    if plugin_names:
+        from .graph_plugins import discover_graph_plugins, plugin_predicate_lookup
+        _graph_plugins = [p for p in discover_graph_plugins() if p.name in plugin_names]
+        if _graph_plugins:
+            payload['graph_config']['plugin_predicates'] = plugin_predicate_lookup(_graph_plugins)
+            payload['graph_config']['privacy_tiers'] = [t for t in ['public', 'inner-circle', 'private']]
+
     payload_json = (
         json.dumps(payload, ensure_ascii=False)
         .replace("</", "<\\/")
@@ -740,6 +759,8 @@ def render_graph_html(payload: dict[str, Any]) -> str:
       border: 1px solid rgba(255, 232, 184, 0.12);
       box-shadow: 0 0 16px rgba(0, 0, 0, 0.26);
     }
+ /* PLUGIN_HOOK:wire_styling */
+ /* PLUGIN_HOOK:edge_rendering */
     .eyebrow {
       color: var(--muted);
       font-size: 0.65rem;
@@ -1406,7 +1427,8 @@ __THEME_SCRIPT_TAGS__
         </div>
 
         <div class="button-row">
-          <button id="reset-layout" type="button" class="compact">re-layout</button>
+          <!-- PLUGIN_HOOK:toolbar -->
+<button id="reset-layout" type="button" class="compact">re-layout</button>
           <button id="fit-view" type="button" class="compact">fit view</button>
           <button id="show-all-types" type="button" class="compact">reset</button>
         </div>
@@ -1469,11 +1491,12 @@ __THEME_SCRIPT_TAGS__
           <label class="toggle"><input id="show-sessions" type="checkbox"> sessions</label>
           <label class="toggle"><input id="show-labels" type="checkbox"> force labels</label>
         </div>
-        <div class="mini-toggle-row">
-          <label class="toggle"><input id="show-unreviewed-only" type="checkbox"> unreviewed</label>
-          <label class="toggle"><input id="trace-mode" type="checkbox"> trace</label>
-          <label class="toggle"><input id="discover-overlay" type="checkbox"> discover</label>
-        </div>
+ <div class="mini-toggle-row">
+ <label class="toggle"><input id="show-unreviewed-only" type="checkbox"> unreviewed</label>
+ <label class="toggle"><input id="trace-mode" type="checkbox"> trace</label>
+ <label class="toggle"><input id="discover-overlay" type="checkbox"> discover</label>
+ <label class="toggle"><input id="emotional-styling" type="checkbox"> emotional</label>
+ </div>
 
         <div class="button-row">
           <button id="export-png" type="button" class="compact">png</button>
@@ -1607,7 +1630,8 @@ __THEME_SCRIPT_TAGS__
               <option value="medium">medium</option>
               <option value="high">high</option>
             </select>
-            <label class="eyebrow" for="edge-note">Note</label>
+            <!-- PLUGIN_HOOK:privacy_controls -->
+<label class="eyebrow" for="edge-note">Note</label>
             <textarea id="edge-note" rows="3" placeholder="optional review note"></textarea>
             <div class="button-row detail-actions">
               <button id="save-edge" type="button" class="compact">save edits</button>
@@ -2046,13 +2070,90 @@ __THEME_SCRIPT_TAGS__
       return activeWireAspects[edge.predicate] || '';
     }
 
-    function wireLabelText(edge) {
-      const aspect = wireAspectForEdge(edge);
-      if (aspect) {
-        return `${aspect} ${edge.predicate.replaceAll('_', ' ')}`;
-      }
-      return edge.predicate.replaceAll('_', ' ');
-    }
+ // PLUGIN_HOOK:wire_label
+ function wireLabelText(edge) {
+ const emotionalOn = typeof window._etEmotionalStylingOn === 'function' && window._etEmotionalStylingOn();
+ const pluginPreds = (graphConfig.plugin_predicates || {});
+ const predDef = pluginPreds[edge.predicate];
+
+ // Emotional label: "predicate · state_modifiers · note_snippet"
+ if (emotionalOn && predDef) {
+ let parts = [predDef.label || edge.predicate.replaceAll('_', ' ')];
+ if (edge.state_modifiers) {
+ parts = parts.concat(edge.state_modifiers.split(',').map(m => m.trim()));
+ }
+ if (edge.note && edge.privacy !== 'public') {
+ let snippet = edge.note;
+ if (snippet.length > 60) snippet = snippet.substring(0, 57).trim() + '…';
+ parts.push(snippet);
+ } else if (edge.note && edge.privacy === 'public') {
+ // public tier: predicate only, no note
+ }
+ return parts.join(' · ');
+ }
+
+ // When emotional toggle is OFF and this is a plugin predicate,
+ // show generic "relates to" instead of the love spectrum term
+ if (!emotionalOn && predDef && predDef.category === 'love_spectrum') {
+ return 'relates to';
+ }
+
+ // Default: aspect + predicate name
+ const aspect = wireAspectForEdge(edge);
+ if (aspect) {
+ return `${aspect} ${edge.predicate.replaceAll('_', ' ')}`;
+ }
+ return edge.predicate.replaceAll('_', ' ');
+ }
+
+ // Emotional styling: swap edge colors and labels when toggle is on
+ window._cartographerApplyEmotionalStyling = function(enabled) {
+ const pluginPreds = (graphConfig.plugin_predicates || {});
+ const hasPlugins = Object.keys(pluginPreds).length > 0;
+ if (!hasPlugins) return;
+
+ for (const edge of edges) {
+ if (!edge.isWire) continue;
+ const predDef = pluginPreds[edge.predicate];
+
+ if (enabled && predDef) {
+ // Apply plugin predicate color
+ const newColor = new THREE.Color(predDef.color || '#71717a');
+ edge.baseColor = newColor;
+ edge.material.color.copy(newColor);
+ if (edge.markerMaterial) edge.markerMaterial.color.copy(newColor);
+ // Apply thickness (as opacity visual cue since Three.js lines don't have width per-edge easily)
+ edge.material.opacity = Math.min(1.0, 0.5 + (predDef.thickness || 1) * 0.2);
+ } else if (predDef) {
+ // Love spectrum edge with toggle OFF: revert to neutral zinc (same as relates_to_person)
+ const neutralColor = new THREE.Color(predicateColors['relates_to_person'] || '#71717a');
+ edge.baseColor = neutralColor;
+ edge.material.color.copy(neutralColor);
+ if (edge.markerMaterial) edge.markerMaterial.color.copy(neutralColor);
+ edge.material.opacity = edge.isWire ? (usingThemeSigils ? 0.84 : 0.76) : 0.28;
+ } else {
+ // Non-plugin edge: revert to original predicate color
+ const origColor = new THREE.Color(predicateColors[edge.predicate] || '#f0b35f');
+ edge.baseColor = origColor;
+ edge.material.color.copy(origColor);
+ if (edge.markerMaterial) edge.markerMaterial.color.copy(origColor);
+ edge.material.opacity = edge.isWire ? (usingThemeSigils ? 0.84 : 0.76) : 0.28;
+ }
+
+ // Update label text
+ if (edge.labelEl && edge.labelEl.style.display !== 'none') {
+ edge.labelEl.textContent = wireLabelText(edge);
+ // Color the label to match
+ if (enabled && predDef) {
+ edge.labelEl.style.color = predDef.color || '#f7ebc8';
+ edge.labelEl.style.borderColor = (predDef.color || '#71717a') + '30';
+ } else {
+ edge.labelEl.style.color = '';
+ edge.labelEl.style.borderColor = '';
+ }
+ }
+ }
+ };
 
     const storedThemePreset = normalizeThemeName(window.localStorage.getItem(THEME_STORAGE_KEY) || '');
     const requestedThemePreset = storedThemePreset || normalizeThemeName(graphConfig.theme_preset || 'baseline');
@@ -5471,6 +5572,14 @@ __THEME_SCRIPT_TAGS__
 </body>
 </html>
 """
+    # Inject graph-rendering plugins
+    from .graph_plugins import discover_graph_plugins, inject_plugin_hooks
+    if plugin_names:
+        # Only inject explicitly requested plugins
+        graph_plugins = [p for p in discover_graph_plugins() if p.name in plugin_names]
+        if graph_plugins:
+            template = inject_plugin_hooks(template, graph_plugins)
+
     return (
         template
         .replace("__THREE_VENDOR__", vendor_three)

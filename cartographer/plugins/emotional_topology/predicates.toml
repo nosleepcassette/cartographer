@@ -1,0 +1,136 @@
+# ──────────────────────────────────────────────────────────
+# Emotional Topology — Predicate Definitions
+# ──────────────────────────────────────────────────────────
+# Used by graph_extensions.py to determine edge styling
+# (color, thickness, dash pattern) and by wire_label.html
+# for compact label rendering.
+# ──────────────────────────────────────────────────────────
+
+# ── Love Spectrum ──────────────────────────────────────────
+# Ordered by intensity. Position in this list determines
+# default thickness when not explicitly set.
+
+[love_spectrum]
+order = ["crushing_on", "smitten", "in_love", "loves", "loved", "cherishes"]
+
+[love_spectrum.crushing_on]
+label = "crushing on"
+thickness = 1
+color = "violet"
+hex = "#a78bfa"
+description = "Low-key attraction, may not be fully admitted"
+
+[love_spectrum.smitten]
+label = "smitten"
+thickness = 2
+color = "rose"
+hex = "#f43f5e"
+description = "High chemistry, wanting-without-having, active pining"
+
+[love_spectrum.in_love]
+label = "in love"
+thickness = 3
+color = "amber"
+hex = "#f59e0b"
+description = "Deep, established romantic love with history"
+
+[love_spectrum.loves]
+label = "loves"
+thickness = 2
+color = "stone"
+hex = "#78716c"
+description = "Deep affection, may be formerly romantic or platonic, still active"
+
+[love_spectrum.loved]
+label = "loved"
+thickness = 1
+color = "stone-light"
+hex = "#a8a29e"
+description = "Affection that has settled — no bad blood, both moved on, feeling is past-tense"
+
+[love_spectrum.cherishes]
+label = "cherishes"
+thickness = 1
+color = "stone"
+hex = "#78716c"
+description = "Quiet, settled love — no longer active but still held"
+
+# ── Non-Love Person Predicates ─────────────────────────────
+
+[person_predicates]
+
+[person_predicates.works_with]
+label = "works with"
+thickness = 1
+color = "blue"
+hex = "#3b82f6"
+
+[person_predicates.avoids]
+label = "avoids"
+thickness = 1
+color = "red"
+hex = "#ef4444"
+
+[person_predicates.ghosted]
+label = "ghosted"
+thickness = 1
+color = "zinc"
+hex = "#71717a"
+
+[person_predicates.friends_with]
+label = "friends with"
+thickness = 1
+color = "emerald"
+hex = "#10b981"
+
+[person_predicates.family]
+label = "family"
+thickness = 2
+color = "teal"
+hex = "#14b8a6"
+
+[person_predicates.relates_to_person]
+label = "relates to"
+thickness = 1
+color = "zinc"
+hex = "#71717a"
+description = "Fallback — generic person-to-person wire, no richer predicate assigned"
+
+# ── State Modifiers ────────────────────────────────────────
+# Applied on top of a base predicate. Affect label rendering
+# and visual overlay (dot-dash, arrowhead emphasis, etc.)
+
+[state_modifiers]
+
+[state_modifiers.separated]
+suffix = "separated"
+visual = "dot-dash overlay"
+
+[state_modifiers.wants_reunion]
+suffix = "wants reunion"
+visual = "arrowhead emphasis"
+
+[state_modifiers.formerly_romantic]
+suffix = "formerly romantic"
+visual = "faded endpoint"
+
+[state_modifiers.unexplored]
+suffix = "unexplored"
+visual = "question mark at endpoint"
+
+# ── Color Reference ────────────────────────────────────────
+# Mapping from Tailwind-style color names to hex values.
+# Used by graph_extensions.py when building edge style dicts.
+
+[color_reference]
+violet = "#a78bfa"
+rose = "#f43f5e"
+amber = "#f59e0b"
+stone = "#78716c"
+stone-light = "#a8a29e"
+blue = "#3b82f6"
+red = "#ef4444"
+zinc = "#71717a"
+emerald = "#10b981"
+teal = "#14b8a6"
+neutral = "#71717a"   # zinc-500 — used when emotional styling is OFF

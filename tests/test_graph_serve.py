@@ -67,10 +67,11 @@ def test_graph_serve_command_defaults_to_html(tmp_path, monkeypatch) -> None:
 
     captured: dict[str, object] = {}
 
-    def fake_serve_graph(atlas_root_arg: Path, *, port: int, open_in_browser: bool) -> None:
+    def fake_serve_graph(atlas_root_arg: Path, *, port: int, open_in_browser: bool, plugin_names: tuple[str, ...] = ()) -> None:
         captured["atlas_root"] = atlas_root_arg
         captured["port"] = port
         captured["open_in_browser"] = open_in_browser
+        captured["plugin_names"] = plugin_names
 
     monkeypatch.setenv("CARTOGRAPHER_ROOT", str(atlas_root))
     monkeypatch.setattr("cartographer.graph_serve.serve_graph", fake_serve_graph)
@@ -83,6 +84,7 @@ def test_graph_serve_command_defaults_to_html(tmp_path, monkeypatch) -> None:
         "atlas_root": atlas_root,
         "port": 6969,
         "open_in_browser": False,
+        "plugin_names": (),
     }
 
 
@@ -425,6 +427,7 @@ def test_graph_serve_daemon_dispatches_to_background_spawn(tmp_path, monkeypatch
         *,
         port: int,
         open_in_browser: bool,
+        plugin_names: list[str] | None = None,
     ) -> dict[str, object]:
         captured["atlas_root"] = atlas_root_arg
         captured["port"] = port

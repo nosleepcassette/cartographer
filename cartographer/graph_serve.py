@@ -45,6 +45,7 @@ class GraphState:
     node_count: int = 0
     edge_count: int = 0
     last_regen: str = ""
+    plugin_names: tuple[str, ...] = ()
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def update(
@@ -173,6 +174,7 @@ def regenerate_graph(
     *,
     force_rebuild: bool = False,
     announce_rebuild: bool = False,
+    plugin_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Refresh the graph payload and replace the in-memory HTML snapshot."""
 
@@ -184,9 +186,9 @@ def regenerate_graph(
             click.echo("rebuilding index...", err=True)
         index.rebuild()
 
-    payload = load_graph_payload(atlas_root)
+    payload = load_graph_payload(atlas_root, plugin_names=plugin_names)
     state.update(
-        render_graph_html(payload),
+        render_graph_html(payload, plugin_names=plugin_names),
         payload=payload,
         node_count=int(payload["node_count"]),
         edge_count=int(payload["edge_count"]),
@@ -219,7 +221,7 @@ def watch_atlas(
 
         if pending_since is not None and now - pending_since >= debounce:
             try:
-                regenerate_graph(state, atlas_root, force_rebuild=True)
+                regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
             except Exception as exc:
                 click.echo(f"graph regeneration failed: {exc}", err=True)
             pending_since = None
@@ -494,7 +496,7 @@ def _render_wire_comment_from_payload(
 
 def _refresh_graph_after_write(state: GraphState, atlas_root: Path) -> None:
     Atlas(root=atlas_root).refresh_index()
-    regenerate_graph(state, atlas_root, force_rebuild=True)
+    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
 
 
 def _wire_update_api_payload(state: GraphState, atlas_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -670,7 +672,7 @@ def _discover_accept_api_payload(state: GraphState, atlas_root: Path, payload: d
     accepted = accept_bridge_proposals(atlas_root, [proposal])
     if accepted <= 0:
         raise click.ClickException("candidate was not accepted")
-    regenerate_graph(state, atlas_root, force_rebuild=True)
+    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
     return {"accepted": accepted}
 
 
@@ -713,7 +715,7 @@ def _graph_handler_factory(
                 return
             if path == "/reload":
                 try:
-                    regenerate_graph(state, atlas_root, force_rebuild=True)
+                    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
                 except Exception as exc:
                     self._send_json({"error": str(exc)}, status=500)
                     return
@@ -824,10 +826,11 @@ def build_graph_http_server(
 
 
 def spawn_graph_daemon(
-    atlas_root: Path | str,
-    *,
-    port: int = 6969,
-    open_in_browser: bool = False,
+ atlas_root: Path | str,
+ *,
+ port: int = 6969,
+ open_in_browser: bool = False,
+ plugin_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     atlas_root = Path(atlas_root).expanduser()
     pid_path, log_path = daemon_artifact_paths(atlas_root, port=port)
@@ -848,6 +851,8 @@ def spawn_graph_daemon(
     ]
     if open_in_browser:
         command.append("--open")
+    for plugin_name in plugin_names:
+        command.extend(["--plugin", plugin_name])
 
     env = os.environ.copy()
     env["CARTOGRAPHER_ROOT"] = str(atlas_root)
@@ -965,14 +970,16 @@ def serve_graph(
     *,
     port: int = 6969,
     open_in_browser: bool = False,
+    plugin_names: tuple[str, ...] = (),
 ) -> None:
     atlas_root = Path(atlas_root).expanduser()
-    state = GraphState()
+    state = GraphState(plugin_names=plugin_names)
     regenerate_graph(
         state,
         atlas_root,
         force_rebuild=False,
         announce_rebuild=True,
+        plugin_names=plugin_names,
     )
 
     stop_event = threading.Event()

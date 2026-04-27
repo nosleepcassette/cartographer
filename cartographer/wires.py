@@ -35,6 +35,17 @@ VALID_WIRE_PREDICATES = (
     "resistance_against",
     "active-project",
     "core-infrastructure",
+    "crushing_on",
+    "smitten",
+    "in_love",
+    "loves",
+    "loved",
+    "cherishes",
+    "works_with",
+    "avoids",
+    "ghosted",
+    "friends_with",
+    "family",
 )
 
 VALID_EMOTIONAL_VALENCES = ("positive", "negative", "mixed", "neutral")
@@ -50,6 +61,8 @@ VALID_CURRENT_STATES = (
 )
 VALID_WIRE_METHODS = ("manual", "interactive", "agent", "confirmed")
 VALID_WIRE_CONFIDENCE = ("low", "medium", "high")
+VALID_PRIVACY_TIERS = ("public", "inner-circle", "private")
+VALID_STATE_MODIFIERS = ("separated", "wants_reunion", "formerly_romantic", "unexplored")
 
 
 def _parse_bool(value: str | None) -> bool:
@@ -120,11 +133,13 @@ class WireComment:
     review_duration_s: float | None
     confidence: str | None
     note: str | None
-    path: str
-    line: int
-    raw: str
-    start: int
-    end: int
+    privacy: str | None = None
+    state_modifiers: str | None = None
+    path: str = ""
+    line: int = 0
+    raw: str = ""
+    start: int = 0
+    end: int = 0
 
     def payload(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -170,6 +185,8 @@ def render_wire_comment(
     review_duration_s: float | None = None,
     confidence: str | None = None,
     note: str | None = None,
+    privacy: str | None = None,
+    state_modifiers: str | None = None,
 ) -> str:
     target = target_note if target_block is None else f"{target_note}#{target_block}"
     attrs = [f'target="{_quote_attr(target)}"', f'predicate="{_quote_attr(predicate)}"']
@@ -211,6 +228,10 @@ def render_wire_comment(
         attrs.append(f'confidence="{_quote_attr(confidence)}"')
     if note:
         attrs.append(f'note="{_quote_attr(note)}"')
+    if privacy:
+        attrs.append(f'privacy="{_quote_attr(privacy)}"')
+    if state_modifiers:
+        attrs.append(f'state_modifiers="{_quote_attr(state_modifiers)}"')
     return f"<!-- cart:wire {' '.join(attrs)} -->"
 
 
@@ -252,6 +273,8 @@ def parse_wire_comments(
         review_duration_s = _parse_optional_float(attrs.get("review_duration_s"))
         confidence = _normalize_text_attr(attrs.get("confidence"))
         note = _normalize_text_attr(attrs.get("note"))
+        privacy = _normalize_text_attr(attrs.get("privacy"))
+        state_modifiers = _normalize_text_attr(attrs.get("state_modifiers"))
         line = body.count("\n", 0, match.start()) + 1
         if not target_raw:
             issues.append(
@@ -375,6 +398,31 @@ def parse_wire_comments(
                     raw=match.group(0),
                 )
             )
+        if privacy is not None and privacy not in VALID_PRIVACY_TIERS:
+            issues.append(
+                WireIssue(
+                    path=path_text,
+                    line=line,
+                    code="invalid_privacy",
+                    message=f"invalid privacy value: {privacy}",
+                    raw=match.group(0),
+                )
+            )
+        if state_modifiers is not None:
+            invalid_modifiers = [
+                m for m in state_modifiers.split(",")
+                if m.strip() and m.strip() not in VALID_STATE_MODIFIERS
+            ]
+            if invalid_modifiers:
+                issues.append(
+                    WireIssue(
+                        path=path_text,
+                        line=line,
+                        code="invalid_state_modifiers",
+                        message=f"invalid state_modifiers value(s): {', '.join(invalid_modifiers)}",
+                        raw=match.group(0),
+                    )
+                )
         target_note, target_block = parse_link_target(target_raw)
         if not target_note:
             issues.append(
@@ -416,9 +464,11 @@ def parse_wire_comments(
                 reviewed_by=reviewed_by,
                 reviewed_at=reviewed_at,
                 review_duration_s=review_duration_s,
-                confidence=confidence,
-                note=note,
-                path=path_text,
+            confidence=confidence,
+            note=note,
+            privacy=privacy,
+            state_modifiers=state_modifiers,
+            path=path_text,
                 line=line,
                 raw=match.group(0),
                 start=match.start(),

@@ -1,0 +1,26 @@
+[plugin]
+name = "emotional-topology"
+version = "0.1.0"
+description = "Emotional relationship rendering for person-to-person wires — love spectrum predicates, directional edge styling, privacy tiers, and hover-to-expand provenance"
+extends = "emotional-topology"
+author = "wizard, cassette"
+type = "graph-rendering"
+min_cartographer_version = "0.5.0"
+
+[plugin.hooks]
+wire_styling = "templates/wire_styling.html"
+edge_rendering = "templates/wire_styling.html"
+privacy_controls = "templates/privacy_controls.html"
+toolbar = "templates/emotional_toggle.html"
+
+[plugin.provides]
+predicates = "predicates.toml"
+privacy_tiers = ["public", "inner-circle", "private"]
+
+[plugin.config]
+# Threshold for grouping person-wires on a single node
+grouping_threshold = 5
+# Default privacy tier for new person-to-person wires
+default_privacy = "public"
+# Whether emotional styling starts on or off (always overridden by per-session toggle)
+emotional_styling_default = false

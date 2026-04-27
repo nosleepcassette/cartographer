@@ -1,0 +1,14 @@
+<!-- wire_label.html — Hook: wire_label -->
+<!-- Override: renders "{predicate} · {note_snippet}" instead of generic "relates to person" -->
+<!-- The graph renderer replaces {{et_label}} with the formatted label string -->
+<!-- data-plugin-hook attributes for JS interactivity -->
+
+<span class="et-wire-label"
+      data-plugin-hook="wire-label"
+      data-edge-id="{{edge_id}}"
+      data-predicate="{{predicate}}"
+      data-state-modifiers="{{state_modifiers_json}}"
+      data-note-snippet="{{note_snippet}}"
+      onclick="window._etShowExpand && window._etShowExpand(this, {{edge_data_json}})">
+  {{et_label}}
+</span>

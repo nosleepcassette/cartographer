@@ -148,6 +148,43 @@ Four plugins ship with Cartographer:
 | **Avoidance** | Real-time avoidance pattern detection and intervention. Surfaces when you're running instead of engaging. |
 | **Temporal patterns** | Cross-dimensional temporal correlation detection across state transitions, wire activity, and session frequency. |
 
+### Graph-rendering plugins
+
+A second plugin type modifies the graph renderer directly — injecting CSS, JS, and HTML partials into the served page at named hook points. These run at render time and have access to the live graph config.
+
+```zsh
+cart graph --serve --plugin emotional-topology
+```
+
+#### emotional-topology
+
+Person-to-person wires default to a single label: "relates to person." 26 of them, all identical. This plugin fixes that.
+
+```zsh
+cart graph --serve --plugin emotional-topology
+# or with the profile:
+cart profile apply emotional-topology && cart graph --serve
+```
+
+What it adds:
+
+- **Love spectrum predicates** — `in_love`, `smitten`, `loves`, `loved`, `cherishes`, `crushing_on` — each with its own color and thickness
+- **Non-love person predicates** — `friends_with`, `works_with`, `family`, `avoids`, `ghosted`
+- **State modifiers** — `separated`, `wants_reunion`, `formerly_romantic`, `unexplored` — stacked on top of base predicates
+- **Wire labels** — `predicate · state_modifier · note_snippet` (e.g. `in love · separated · wants reunion`)
+- **Three-tier privacy** — `public` (visible, neutral label), `inner-circle` (full label + hover detail), `private` (hidden entirely)
+- **Emotional styling toggle** — `L` key, default OFF. When OFF, all love-spectrum edges render as neutral gray. When ON, full color + thickness kicks in. Per-session, not sticky.
+- **Hover-to-expand** — click any person-wire label for full provenance: author, method, confidence, review status
+
+```zsh
+cart wire add grungler chungus --predicate in_love \
+  --state-modifiers separated,wants_reunion \
+  --privacy inner-circle
+cart wire privacy <wire_id> --tier private
+```
+
+The toggle exists so the graph is safe to share by default. You decide when the emotional layer is visible.
+
 ### The Therapy plugin in detail
 
 A concrete example of what a plugin actually does. The Therapy plugin queries the atlas to surface grounded evidence when a spiral pattern is detected.

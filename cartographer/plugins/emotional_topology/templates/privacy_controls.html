@@ -1,0 +1,37 @@
+<!-- privacy_controls.html — Hook: privacy_controls -->
+<!-- Per-wire privacy tier dropdown, rendered inside the hover-expanded view -->
+<!-- Also includes bulk privacy controls for the toolbar -->
+
+<!-- Single-wire privacy selector (rendered in expand panel) -->
+<div class="et-privacy-control" data-plugin-hook="privacy-controls" data-edge-id="{{edge_id}}">
+  <label class="et-privacy-label">Privacy</label>
+  <select class="et-privacy-select"
+          data-edge-id="{{edge_id}}"
+          onchange="document.dispatchEvent(new CustomEvent('et:privacy-change', {detail: {edgeId: this.dataset.edgeId, newTier: this.value}, bubbles: true}))">
+    <option value="public" {{selected_public}}>Public</option>
+    <option value="inner-circle" {{selected_inner_circle}}>Inner Circle</option>
+    <option value="private" {{selected_private}}>Private</option>
+  </select>
+</div>
+
+<!-- Bulk privacy toolbar (shown in graph controls) -->
+<div class="et-privacy-bulk" data-plugin-hook="privacy-bulk" style="display:none">
+  <span class="et-privacy-bulk-label">Bulk privacy:</span>
+  <select class="et-privacy-select" id="et-bulk-privacy-tier">
+    <option value="public">Public</option>
+    <option value="inner-circle">Inner Circle</option>
+    <option value="private">Private</option>
+  </select>
+  <button onclick="document.dispatchEvent(new CustomEvent('et:bulk-privacy', {detail: {tier: document.getElementById('et-bulk-privacy-tier').value}, bubbles: true}))">
+    Apply
+  </button>
+</div>
+
+<script>
+  // Privacy tier descriptions for tooltips
+  window._etPrivacyDescriptions = {
+    'public': 'Wire visible, styling visible (if toggle on), label = predicate only',
+    'inner-circle': 'Wire visible, full label + hover detail with provenance',
+    'private': 'Wire completely hidden — no rendering at all',
+  };
+</script>

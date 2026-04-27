@@ -105,9 +105,11 @@ CREATE TABLE IF NOT EXISTS wires (
     reviewed_at TEXT,
     review_duration_s REAL,
     confidence TEXT,
-    note TEXT,
-    path TEXT NOT NULL,
-    line INTEGER NOT NULL
+ note TEXT,
+ privacy TEXT DEFAULT 'public',
+ state_modifiers TEXT,
+ path TEXT NOT NULL,
+ line INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS wire_issues (
@@ -202,8 +204,10 @@ WIRE_OPTIONAL_COLUMNS = {
     "reviewed_by": "TEXT",
     "reviewed_at": "TEXT",
     "review_duration_s": "REAL",
-    "confidence": "TEXT",
-    "note": "TEXT",
+ "confidence": "TEXT",
+ "note": "TEXT",
+ "privacy": "TEXT DEFAULT 'public'",
+ "state_modifiers": "TEXT",
 }
 
 NOTE_OPTIONAL_COLUMNS = {
@@ -628,40 +632,44 @@ class Index:
                             reviewed_by,
                             reviewed_at,
                             review_duration_s,
-                            confidence,
-                            note,
-                            path,
-                            line
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            wire.source_note,
-                            wire.source_block,
-                            normalized_target,
-                            wire.target_block,
-                            wire.predicate,
-                            wire.weight,
-                            1 if wire.bidirectional else 0,
-                            wire.relationship,
-                            wire.emotional_valence,
-                            wire.energy_impact,
-                            wire.avoidance_risk,
-                            None if wire.growth_edge is None else (1 if wire.growth_edge else 0),
-                            wire.current_state,
-                            wire.since,
-                            wire.until,
-                            wire.valence_note,
-                            wire.author,
-                            wire.method,
-                            None if wire.reviewed is None else (1 if wire.reviewed else 0),
-                            wire.reviewed_by,
-                            wire.reviewed_at,
-                            wire.review_duration_s,
-                            wire.confidence,
-                            wire.note,
-                            wire.path,
-                            wire.line,
+ confidence,
+ note,
+ privacy,
+ state_modifiers,
+ path,
+ line
+ )
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ """,
+ (
+ wire.source_note,
+ wire.source_block,
+ normalized_target,
+ wire.target_block,
+ wire.predicate,
+ wire.weight,
+ 1 if wire.bidirectional else 0,
+ wire.relationship,
+ wire.emotional_valence,
+ wire.energy_impact,
+ wire.avoidance_risk,
+ None if wire.growth_edge is None else (1 if wire.growth_edge else 0),
+ wire.current_state,
+ wire.since,
+ wire.until,
+ wire.valence_note,
+ wire.author,
+ wire.method,
+ None if wire.reviewed is None else (1 if wire.reviewed else 0),
+ wire.reviewed_by,
+ wire.reviewed_at,
+ wire.review_duration_s,
+ wire.confidence,
+ wire.note,
+ wire.privacy,
+ wire.state_modifiers,
+ wire.path,
+ wire.line,
                         ),
                     )
                     wire_count += 1

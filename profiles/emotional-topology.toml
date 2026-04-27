@@ -3,24 +3,37 @@ description = "A profile for people who need their graph to reflect emotional re
 
 [wires]
 default_predicates = [
-  "relates_to",
-  "supports",
-  "qualifies",
-  "contradicts",
-  "precedes",
-  "follows",
-  "part_of",
-  "depends_on",
-  "grounds",
-  "intensifies_with",
-  "co_occurs_with",
-  "triggered_by",
-  "relates_to_goal",
-  "relates_to_person",
-  "intention_outcome",
-  "resistance_against",
-  "active-project",
-  "core-infrastructure",
+ "relates_to",
+ "supports",
+ "qualifies",
+ "contradicts",
+ "precedes",
+ "follows",
+ "part_of",
+ "depends_on",
+ "grounds",
+ "intensifies_with",
+ "co_occurs_with",
+ "triggered_by",
+ "relates_to_goal",
+ "relates_to_person",
+ "intention_outcome",
+ "resistance_against",
+ "active-project",
+ "core-infrastructure",
+ # love spectrum (from emotional-topology plugin)
+ "crushing_on",
+ "smitten",
+ "in_love",
+ "loves",
+ "loved",
+ "cherishes",
+ # person predicates (from emotional-topology plugin)
+ "works_with",
+ "avoids",
+ "ghosted",
+ "friends_with",
+ "family",
 ]
 metadata_fields = [
   "weight",
@@ -62,6 +75,19 @@ intention_outcome = "#78e2ff"
 resistance_against = "#c8524a"
 active-project = "#f3df9a"
 core-infrastructure = "#9fb4d8"
+# love spectrum
+crushing_on = "#a78bfa"
+smitten = "#f43f5e"
+in_love = "#f59e0b"
+loves = "#78716c"
+loved = "#a8a29e"
+cherishes = "#78716c"
+# person predicates
+works_with = "#3b82f6"
+avoids = "#ef4444"
+ghosted = "#71717a"
+friends_with = "#10b981"
+family = "#14b8a6"
 
 [metadata.weight]
 type = "float"
