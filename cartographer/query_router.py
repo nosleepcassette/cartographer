@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,28 @@ CORPUS_KEYWORDS = {
     "discuss",
     "happened",
     "yesterday",
+}
+
+INTENT_TYPE_BOOSTS = {
+    "procedural": {"ref": 2.0, "guide": 1.5},
+    "emotional": {"daily": 2.0, "therapy": 1.5},
+    "factual": {"ref": 2.0, "entity": 1.5},
+}
+INTENT_TAG_BOOSTS = {
+    "procedural": {"guide": 1.5},
+    "emotional": {"therapy": 1.5, "reflection": 1.5},
+    "factual": {"reference": 1.0},
+}
+RELATIONAL_STOPWORDS = {
+    "who",
+    "is",
+    "are",
+    "my",
+    "the",
+    "a",
+    "an",
+    "with",
+    "relationship",
 }
 
 
@@ -94,6 +118,25 @@ def analyze_query(query: str) -> list[str]:
     return ordered
 
 
+def detect_intent(query: str) -> str:
+    """Returns one of: procedural, emotional, relational, factual, general."""
+    q = query.lower().strip()
+    if q.startswith("how") or any(
+        word in q for word in ("steps", "setup", "install", "configure", "command")
+    ):
+        return "procedural"
+    if any(
+        word in q
+        for word in ("feel", "feeling", "emotion", "why do i", "i keep", "overwhelm")
+    ):
+        return "emotional"
+    if q.startswith("who") or "relationship with" in q or "my relationship" in q:
+        return "relational"
+    if q.startswith("what is") or q.startswith("define") or "definition" in q:
+        return "factual"
+    return "general"
+
+
 def _compact(text: str, limit: int) -> str:
     normalized = " ".join(text.split())
     if len(normalized) <= limit:
@@ -111,6 +154,16 @@ def _term_score(text: str, query: str) -> float:
     score = 0.0
     for token in tokens:
         score += lowered.count(token)
+    return score
+
+
+def _intent_boost(note_type: str, tags: list[str], intent: str) -> float:
+    score = INTENT_TYPE_BOOSTS.get(intent, {}).get(note_type, 0.0)
+    tag_boosts = INTENT_TAG_BOOSTS.get(intent, {})
+    normalized_tags = {tag.lower().strip() for tag in tags}
+    for tag, boost in tag_boosts.items():
+        if tag in normalized_tags:
+            score += boost
     return score
 
 
@@ -189,14 +242,35 @@ def _search_notes(
     allowed_types: set[str],
     budget: int,
     shelf: str,
+    recent_days: int | None = None,
+    intent: str = "general",
 ) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    having_clause = ""
+    if recent_days is not None:
+        cutoff = time.time() - (max(recent_days, 0) * 86400)
+        having_clause = "HAVING MAX(a.accessed_at) >= ?"
+        params.append(cutoff)
     with _connection(atlas_root) as connection:
         rows = connection.execute(
-            """
-            SELECT id, path, title, type, body, modified
-            FROM notes
-            ORDER BY modified DESC
-            """
+            f"""
+            SELECT
+                n.id,
+                n.path,
+                n.title,
+                n.type,
+                n.tags,
+                n.body,
+                n.modified,
+                MAX(a.accessed_at) AS last_accessed,
+                COUNT(a.note_id) AS access_count
+            FROM notes n
+            LEFT JOIN access_log a ON a.note_id = n.id
+            GROUP BY n.id
+            {having_clause}
+            ORDER BY n.modified DESC
+            """,
+            params,
         ).fetchall()
     ranked: list[dict[str, Any]] = []
     for row in rows:
@@ -207,6 +281,21 @@ def _search_notes(
         score = _term_score(text, query)
         if score <= 0:
             continue
+        access_count = int(row["access_count"] or 0)
+        last_accessed = None if row["last_accessed"] is None else float(row["last_accessed"])
+        access_boost = min(access_count, 10) * 0.3
+        recency_boost = 0.0
+        if last_accessed is not None:
+            days_ago = (time.time() - last_accessed) / 86400
+            recency_boost = max(0.0, 2.0 - (days_ago / 30))
+        try:
+            tags = json.loads(str(row["tags"] or "[]"))
+        except json.JSONDecodeError:
+            tags = []
+        if not isinstance(tags, list):
+            tags = []
+        normalized_tags = [str(tag) for tag in tags]
+        score += access_boost + recency_boost + _intent_boost(note_type, normalized_tags, intent)
         ranked.append(
             {
                 "id": str(row["id"]),
@@ -217,6 +306,9 @@ def _search_notes(
                 "text": _compact(text, min(budget, 420)),
                 "path": str(row["path"]),
                 "note_type": note_type,
+                "tags": normalized_tags,
+                "access_count": access_count,
+                "last_accessed": last_accessed,
             }
         )
     ranked.sort(key=lambda item: (item["score"], item["label"]), reverse=True)
@@ -233,24 +325,267 @@ def _search_notes(
     return packed
 
 
-def _retrieve_graph(atlas_root: Path, query: str, budget: int) -> list[dict[str, Any]]:
+def _retrieve_graph(
+    atlas_root: Path,
+    query: str,
+    budget: int,
+    *,
+    recent_days: int | None = None,
+    intent: str = "general",
+) -> list[dict[str, Any]]:
+    if intent == "relational":
+        return _search_wires_by_note_title(atlas_root, query, budget)
     return _search_notes(
         atlas_root,
         query,
         allowed_types={"entity", "project", "note", "index"},
         budget=budget,
         shelf="graph",
+        recent_days=recent_days,
+        intent=intent,
     )
 
 
-def _retrieve_corpus(atlas_root: Path, query: str, budget: int) -> list[dict[str, Any]]:
+def _retrieve_corpus(
+    atlas_root: Path,
+    query: str,
+    budget: int,
+    *,
+    recent_days: int | None = None,
+    intent: str = "general",
+) -> list[dict[str, Any]]:
     return _search_notes(
         atlas_root,
         query,
         allowed_types={"agent-log", "daily", "ref", "task-list", "note"},
         budget=budget,
         shelf="corpus",
+        recent_days=recent_days,
+        intent=intent,
     )
+
+
+def _relational_terms(query: str) -> list[str]:
+    terms = []
+    for token in re.findall(r"[a-z0-9_]+", query.lower()):
+        if len(token) < 3 or token in RELATIONAL_STOPWORDS:
+            continue
+        terms.append(token)
+    return terms
+
+
+def _search_wires_by_note_title(
+    atlas_root: Path,
+    query: str,
+    budget: int,
+) -> list[dict[str, Any]]:
+    terms = _relational_terms(query)
+    if not terms:
+        return []
+    clauses: list[str] = []
+    params: list[Any] = []
+    for term in terms:
+        clauses.append(
+            """
+            (
+                LOWER(COALESCE(sn.title, sn.id, '')) LIKE ?
+                OR LOWER(COALESCE(tn.title, tn.id, '')) LIKE ?
+            )
+            """
+        )
+        params.extend([f"%{term}%", f"%{term}%"])
+    with _connection(atlas_root) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                w.source_note,
+                w.source_block,
+                w.target_note,
+                w.target_block,
+                w.predicate,
+                w.weight,
+                w.bidirectional,
+                w.emotional_valence,
+                w.energy_impact,
+                w.avoidance_risk,
+                w.current_state,
+                w.path,
+                w.line,
+                sn.title AS source_title,
+                sn.path AS source_path,
+                tn.title AS target_title,
+                tn.path AS target_path
+            FROM wires w
+            LEFT JOIN notes sn ON sn.id = w.source_note
+            LEFT JOIN notes tn ON tn.id = w.target_note
+            WHERE {" OR ".join(clauses)}
+            ORDER BY w.path ASC, w.line ASC
+            """,
+            params,
+        ).fetchall()
+
+    results: list[dict[str, Any]] = []
+    remaining = budget
+    for row in rows:
+        if remaining <= 0:
+            break
+        source_label = str(row["source_title"] or row["source_note"])
+        target_label = str(row["target_title"] or row["target_note"])
+        arrow = "<->" if bool(row["bidirectional"]) else f"--{row['predicate']}-->"
+        label = f"{source_label} {arrow} {target_label}"
+        metadata = []
+        for key, rendered in (
+            ("emotional_valence", "valence"),
+            ("energy_impact", "energy"),
+            ("avoidance_risk", "avoidance"),
+            ("current_state", "state"),
+        ):
+            if row[key] is not None:
+                metadata.append(f"{rendered}={row[key]}")
+        text = label
+        if metadata:
+            text += " [" + ", ".join(metadata) + "]"
+        snippet = _compact(text, min(remaining, 320))
+        results.append(
+            {
+                "id": f"{row['source_note']}->{row['target_note']}:{row['predicate']}:{row['line']}",
+                "shelf": "graph",
+                "kind": "wire",
+                "label": label,
+                "score": 20.0 + _term_score(label, query),
+                "text": snippet,
+                "path": str(row["path"]),
+                "source_note": str(row["source_note"]),
+                "source_title": source_label,
+                "source_path": None if row["source_path"] is None else str(row["source_path"]),
+                "target_note": str(row["target_note"]),
+                "target_title": target_label,
+                "target_path": None if row["target_path"] is None else str(row["target_path"]),
+                "predicate": str(row["predicate"]),
+                "bidirectional": bool(row["bidirectional"]),
+                "emotional_valence": None
+                if row["emotional_valence"] is None
+                else str(row["emotional_valence"]),
+                "energy_impact": None if row["energy_impact"] is None else str(row["energy_impact"]),
+                "avoidance_risk": None
+                if row["avoidance_risk"] is None
+                else str(row["avoidance_risk"]),
+                "current_state": None if row["current_state"] is None else str(row["current_state"]),
+            }
+        )
+        remaining -= len(snippet)
+    return results
+
+
+def _seed_notes(
+    connection: sqlite3.Connection,
+    seed_query: str,
+    *,
+    limit: int = 5,
+) -> list[sqlite3.Row]:
+    rows = connection.execute(
+        """
+        SELECT id, title, path, body
+        FROM notes
+        ORDER BY modified DESC
+        """
+    ).fetchall()
+    scored = [
+        (_term_score(f"{row['title'] or row['id']}\n\n{row['body'] or ''}", seed_query), row)
+        for row in rows
+    ]
+    matches = [(score, row) for score, row in scored if score > 0]
+    matches.sort(key=lambda item: (item[0], str(item[1]["title"] or item[1]["id"])), reverse=True)
+    return [row for _score, row in matches[:limit]]
+
+
+def traverse_via(atlas_root: Path | str, seed_query: str, predicate: str) -> list[dict[str, Any]]:
+    atlas_root = Path(atlas_root).expanduser()
+    with _connection(atlas_root) as connection:
+        seed_rows = _seed_notes(connection, seed_query, limit=5)
+        results: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, int]] = set()
+        for seed in seed_rows:
+            seed_id = str(seed["id"])
+            rows = connection.execute(
+                """
+                SELECT
+                    w.source_note,
+                    w.source_block,
+                    w.target_note,
+                    w.target_block,
+                    w.predicate,
+                    w.bidirectional,
+                    w.emotional_valence,
+                    w.energy_impact,
+                    w.avoidance_risk,
+                    w.current_state,
+                    w.path AS wire_path,
+                    w.line,
+                    sn.title AS source_title,
+                    sn.path AS source_path,
+                    tn.title AS target_title,
+                    tn.path AS target_path
+                FROM wires w
+                LEFT JOIN notes sn ON sn.id = w.source_note
+                LEFT JOIN notes tn ON tn.id = w.target_note
+                WHERE (w.source_note = ? OR w.target_note = ?)
+                  AND w.predicate = ?
+                ORDER BY w.path ASC, w.line ASC
+                """,
+                (seed_id, seed_id, predicate),
+            ).fetchall()
+            seed_title = str(seed["title"] or seed_id)
+            for row in rows:
+                direction = "outbound" if str(row["source_note"]) == seed_id else "inbound"
+                connected_id = (
+                    str(row["target_note"]) if direction == "outbound" else str(row["source_note"])
+                )
+                key = (seed_id, connected_id, str(row["predicate"]), int(row["line"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                connected_title = (
+                    str(row["target_title"] or row["target_note"])
+                    if direction == "outbound"
+                    else str(row["source_title"] or row["source_note"])
+                )
+                if direction == "outbound":
+                    connected_path = None if row["target_path"] is None else str(row["target_path"])
+                else:
+                    connected_path = None if row["source_path"] is None else str(row["source_path"])
+                results.append(
+                    {
+                        "id": f"{seed_id}:{connected_id}:{row['predicate']}:{row['line']}",
+                        "seed_id": seed_id,
+                        "seed_title": seed_title,
+                        "seed_path": str(seed["path"]),
+                        "label": connected_title,
+                        "path": connected_path,
+                        "connected_note": connected_id,
+                        "predicate": str(row["predicate"]),
+                        "direction": direction,
+                        "bidirectional": bool(row["bidirectional"]),
+                        "valence": None
+                        if row["emotional_valence"] is None
+                        else str(row["emotional_valence"]),
+                        "emotional_valence": None
+                        if row["emotional_valence"] is None
+                        else str(row["emotional_valence"]),
+                        "energy_impact": None
+                        if row["energy_impact"] is None
+                        else str(row["energy_impact"]),
+                        "avoidance_risk": None
+                        if row["avoidance_risk"] is None
+                        else str(row["avoidance_risk"]),
+                        "current_state": None
+                        if row["current_state"] is None
+                        else str(row["current_state"]),
+                        "wire_path": str(row["wire_path"]),
+                        "line": int(row["line"]),
+                    }
+                )
+    return results
 
 
 def reciprocal_rank_fusion(
@@ -290,10 +625,94 @@ def _pack_budget(items: list[dict[str, Any]], total_budget: int) -> list[dict[st
     return packed
 
 
-def route_query(atlas_root: Path | str, query: str) -> dict[str, Any]:
+def _budget_mode(output_budget: int | None) -> str:
+    if output_budget is None or output_budget >= 2000:
+        return "full"
+    if output_budget >= 500:
+        return "summary"
+    return "title"
+
+
+def _estimated_render_size(item: dict[str, Any], mode: str) -> int:
+    if mode == "title":
+        return len(str(item.get("label") or "")) + 1
+    if mode == "summary":
+        return (
+            len(str(item.get("shelf") or ""))
+            + len(str(item.get("label") or ""))
+            + len(str(item.get("text") or ""))
+            + 8
+        )
+    return (
+        len(str(item.get("shelf") or ""))
+        + len(str(item.get("label") or ""))
+        + len(str(item.get("path") or ""))
+        + len(str(item.get("text") or ""))
+        + 8
+    )
+
+
+def _limit_items_for_budget(
+    items: list[dict[str, Any]],
+    output_budget: int | None,
+    mode: str,
+) -> list[dict[str, Any]]:
+    if output_budget is None:
+        return items
+    packed: list[dict[str, Any]] = []
+    remaining = max(0, output_budget)
+    for item in items:
+        estimated = _estimated_render_size(item, mode)
+        if packed and estimated > remaining:
+            break
+        packed.append(item)
+        remaining -= estimated
+        if remaining <= 0:
+            break
+    return packed
+
+
+def _format_for_budget(
+    items: list[dict[str, Any]],
+    output_budget: int | None,
+) -> list[dict[str, Any]]:
+    mode = _budget_mode(output_budget)
+    if mode == "full":
+        return _limit_items_for_budget(items, output_budget, mode)
+
+    packed: list[dict[str, Any]] = []
+    for item in items:
+        if mode == "summary":
+            payload = dict(item)
+            payload["text"] = _compact(str(payload.get("text") or ""), 120)
+            payload.pop("path", None)
+        else:
+            payload = {
+                "id": item["id"],
+                "label": item["label"],
+                "shelf": item["shelf"],
+            }
+        packed.append(payload)
+    return _limit_items_for_budget(packed, output_budget, mode)
+
+
+def route_query(
+    atlas_root: Path | str,
+    query: str,
+    *,
+    output_budget: int | None = None,
+    recent_days: int | None = None,
+) -> dict[str, Any]:
     atlas_root = Path(atlas_root).expanduser()
     settings = _config(atlas_root)
     routes = analyze_query(query)
+    intent = detect_intent(query)
+    if intent == "relational":
+        routes = ["graph", *[route for route in routes if route != "graph"]]
+    if recent_days is not None:
+        routes = [route for route in routes if route in {"graph", "corpus"}]
+        if not routes:
+            routes = ["graph", "corpus"]
     budgets = {
         "operating-truth": int(settings.get("operating_truth_budget", 500) or 500),
         "profile": int(settings.get("profile_budget", 500) or 500),
@@ -301,6 +720,8 @@ def route_query(atlas_root: Path | str, query: str) -> dict[str, Any]:
         "corpus": int(settings.get("corpus_budget", 1000) or 1000),
     }
     total_budget = int(settings.get("default_total_budget", 4000) or 4000)
+    if output_budget is not None:
+        total_budget = min(total_budget, max(output_budget, 0))
     rrf_k = int(settings.get("rrf_k", 60) or 60)
 
     shelf_results: dict[str, list[dict[str, Any]]] = {}
@@ -310,18 +731,35 @@ def route_query(atlas_root: Path | str, query: str) -> dict[str, Any]:
         elif route == "profile":
             shelf_results[route] = _retrieve_profile(atlas_root, query, budgets[route])
         elif route == "graph":
-            shelf_results[route] = _retrieve_graph(atlas_root, query, budgets[route])
+            shelf_results[route] = _retrieve_graph(
+                atlas_root,
+                query,
+                budgets[route],
+                recent_days=recent_days,
+                intent=intent,
+            )
         elif route == "corpus":
-            shelf_results[route] = _retrieve_corpus(atlas_root, query, budgets[route])
+            shelf_results[route] = _retrieve_corpus(
+                atlas_root,
+                query,
+                budgets[route],
+                recent_days=recent_days,
+                intent=intent,
+            )
         else:
             shelf_results[route] = []
 
     merged = reciprocal_rank_fusion(shelf_results, k=rrf_k)
     packed = _pack_budget(merged, total_budget)
+    formatted = _format_for_budget(packed, output_budget)
     return {
         "query": query,
         "routes": routes,
         "budgets": budgets,
         "total_budget": total_budget,
-        "results": packed,
+        "output_budget": output_budget,
+        "output_mode": _budget_mode(output_budget),
+        "recent_days": recent_days,
+        "intent": intent,
+        "results": formatted,
     }

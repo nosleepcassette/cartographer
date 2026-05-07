@@ -4,9 +4,15 @@ import argparse
 import copy
 from dataclasses import asdict
 import json
+import os
+import re
 import shlex
+import shutil
+import sqlite3
+import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,7 +28,7 @@ from .agent_memory import (
     pending_learning_blocks,
     reject_learnings,
 )
-from .atlas import Atlas
+from .atlas import Atlas, slugify
 from .config import save_config
 from .integrations import qmd
 from .daily_brief import build_daily_brief
@@ -391,18 +397,60 @@ def _embedding_query_paths(atlas: Atlas, expr: str) -> list[str]:
     return semantic_query_paths(atlas.root, expr, top_k=20)
 
 
-def resolve_query_paths(atlas: Atlas, expr: str) -> list[str]:
+def _filter_recent_paths(
+    atlas: Atlas,
+    paths: list[str],
+    *,
+    recent_days: int | None,
+) -> list[str]:
+    if recent_days is None:
+        return paths
+    if not paths:
+        return []
+    if not atlas.index_db_path.exists():
+        return []
+    cutoff = time.time() - (max(recent_days, 0) * 86400)
+    with sqlite3.connect(str(atlas.index_db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT n.path, MAX(a.accessed_at) AS last_accessed
+            FROM notes n
+            JOIN access_log a ON a.note_id = n.id
+            GROUP BY n.id
+            HAVING last_accessed >= ?
+            """,
+            (cutoff,),
+        ).fetchall()
+    recent_paths = {str(row["path"]) for row in rows}
+    return [path for path in paths if path in recent_paths]
+
+
+def resolve_query_paths(
+    atlas: Atlas,
+    expr: str,
+    *,
+    recent_days: int | None = None,
+) -> list[str]:
     if "type:task" in expr or any(
         token in expr for token in ("priority:", "project:", "due:")
     ):
-        return sorted({str(task.path) for task in query_tasks(atlas.root, expr)})
+        return _filter_recent_paths(
+            atlas,
+            sorted({str(task.path) for task in query_tasks(atlas.root, expr)}),
+            recent_days=recent_days,
+        )
     qmd_paths = _qmd_query_paths(atlas, expr)
     if qmd_paths:
-        return qmd_paths
+        return _filter_recent_paths(atlas, qmd_paths, recent_days=recent_days)
     embedding_paths = _embedding_query_paths(atlas, expr)
     if embedding_paths:
-        return embedding_paths
-    return ensure_index_current(atlas).query(expr)
+        return _filter_recent_paths(atlas, embedding_paths, recent_days=recent_days)
+    return _filter_recent_paths(
+        atlas,
+        ensure_index_current(atlas).query(expr),
+        recent_days=recent_days,
+    )
 
 
 def load_note_payload(path: Path) -> dict[str, object]:
@@ -1053,6 +1101,15 @@ def edit(note_id: str) -> None:
 
 
 def _render_routed_results(payload: dict[str, Any]) -> None:
+    output_mode = str(payload.get("output_mode") or "full")
+    if output_mode == "title":
+        for item in payload["results"]:
+            click.echo(item["label"])
+        return
+    if output_mode == "summary":
+        for item in payload["results"]:
+            click.echo(f"[{item['shelf']}] {item['label']} - {item.get('text') or ''}")
+        return
     click.echo(f"routes: {', '.join(payload['routes'])}")
     click.echo("")
     for item in payload["results"]:
@@ -1062,11 +1119,46 @@ def _render_routed_results(payload: dict[str, Any]) -> None:
         click.echo("")
 
 
+def _render_via_results(seed_query: str, predicate: str, results: list[dict[str, Any]]) -> None:
+    if not results:
+        click.echo(f"no notes connected to {seed_query!r} via {predicate}")
+        return
+    for item in results:
+        seed_title = str(item.get("seed_title") or seed_query)
+        label = str(item.get("label") or item.get("connected_note") or "(untitled)")
+        if item.get("direction") == "outbound":
+            line = f"{seed_title} --{predicate}--> {label}"
+        else:
+            line = f"{seed_title} <--{predicate}-- {label}"
+        metadata = []
+        if item.get("valence"):
+            metadata.append(f"valence={item['valence']}")
+        if item.get("energy_impact"):
+            metadata.append(f"energy={item['energy_impact']}")
+        if item.get("avoidance_risk"):
+            metadata.append(f"avoidance={item['avoidance_risk']}")
+        if item.get("current_state"):
+            metadata.append(f"state={item['current_state']}")
+        if metadata:
+            line += "  [" + ", ".join(metadata) + "]"
+        click.echo(line)
+
+
 @main.command()
 @click.argument("expression", nargs=-1, required=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 @click.option("--route", "route_mode", is_flag=True, help="Route the query across operating-truth/profile/graph/corpus shelves.")
-def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
+@click.option("--budget", "output_budget", default=None, type=int, help="Max output characters. Adjusts format: full/summary/title-only.")
+@click.option("--recent", "recent_days", default=None, type=int, help="Only notes accessed in the last N days.")
+@click.option("--via", "via_predicate", default=None, help="Traverse wires by predicate. e.g. --via triggered_by")
+def query(
+    expression: tuple[str, ...],
+    as_json: bool,
+    route_mode: bool,
+    output_budget: int | None,
+    recent_days: int | None,
+    via_predicate: str | None,
+) -> None:
     """Query atlas notes by structured tokens or plain text.
 
     Use structured queries like: type:project tag:urgent
@@ -1074,10 +1166,62 @@ def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
     """
     atlas = get_atlas()
     expr = " ".join(expression)
+    if output_budget is not None and output_budget < 0:
+        raise click.ClickException("--budget must be non-negative")
+    if recent_days is not None and recent_days < 0:
+        raise click.ClickException("--recent must be non-negative")
+    if via_predicate:
+        predicate = via_predicate.strip()
+        if predicate not in VALID_WIRE_PREDICATES:
+            payload = {
+                "expression": expr,
+                "via": predicate,
+                "error": f"invalid wire predicate: {predicate}",
+                "valid_predicates": list(VALID_WIRE_PREDICATES),
+            }
+            if as_json:
+                _emit_json(_with_schema(payload, surface="query.via"))
+            else:
+                click.echo(f"invalid wire predicate: {predicate}")
+                click.echo("valid predicates:")
+                for valid_predicate in VALID_WIRE_PREDICATES:
+                    click.echo(f"  {valid_predicate}")
+            raise click.exceptions.Exit(1)
+        from .query_router import traverse_via
+
+        results = traverse_via(atlas.root, expr, predicate)
+        _record_path_accesses(
+            atlas,
+            [
+                str(item.get("path"))
+                for item in results
+                if isinstance(item, dict) and item.get("path")
+            ],
+            access_type="query-via",
+        )
+        if as_json:
+            _emit_json(
+                _with_schema(
+                    {
+                        "expression": expr,
+                        "via": predicate,
+                        "results": results,
+                    },
+                    surface="query.via",
+                )
+            )
+            return
+        _render_via_results(expr, predicate, results)
+        return
     if route_mode:
         from .query_router import route_query
 
-        payload = route_query(atlas.root, expr)
+        payload = route_query(
+            atlas.root,
+            expr,
+            output_budget=output_budget,
+            recent_days=recent_days,
+        )
         _record_path_accesses(
             atlas,
             [
@@ -1088,25 +1232,41 @@ def query(expression: tuple[str, ...], as_json: bool, route_mode: bool) -> None:
             access_type="query-route",
         )
         if as_json:
+            if output_budget is not None and output_budget < 500:
+                json_payload = {
+                    "expression": expr,
+                    "route": True,
+                    "output_budget": output_budget,
+                    "output_mode": payload.get("output_mode"),
+                    "results": payload.get("results", []),
+                }
+            else:
+                json_payload = {
+                    "expression": expr,
+                    "route": True,
+                    "recent_days": recent_days,
+                    **payload,
+                }
             _emit_json(
                 _with_schema(
-                    {
-                        "expression": expr,
-                        "route": True,
-                        **payload,
-                    },
+                    json_payload,
                     surface="query",
                 )
             )
             return
         _render_routed_results(payload)
         return
-    results = resolve_query_paths(atlas, expr)
+    results = resolve_query_paths(atlas, expr, recent_days=recent_days)
     _record_path_accesses(atlas, results, access_type="query")
     if as_json:
         _emit_json(
             _with_schema(
-                {"expression": expr, "results": results, "route": False},
+                {
+                    "expression": expr,
+                    "results": results,
+                    "route": False,
+                    "recent_days": recent_days,
+                },
                 surface="query",
             )
         )
@@ -1625,11 +1785,72 @@ def embed_command(force: bool, model: str | None) -> None:
     )
 
 
+def _access_stats(atlas: Atlas, *, limit: int = 20) -> dict[str, Any]:
+    with sqlite3.connect(str(atlas.index_db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                n.id,
+                n.title,
+                n.path,
+                COUNT(a.note_id) AS hits,
+                MAX(a.accessed_at) AS last_seen
+            FROM access_log a
+            JOIN notes n ON n.id = a.note_id
+            GROUP BY a.note_id
+            ORDER BY hits DESC, last_seen DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        "limit": limit,
+        "notes": [
+            {
+                "rank": index,
+                "id": str(row["id"]),
+                "title": str(row["title"] or row["id"]),
+                "path": str(row["path"]),
+                "hits": int(row["hits"] or 0),
+                "last_seen": None if row["last_seen"] is None else float(row["last_seen"]),
+                "last_seen_text": _format_timestamp(
+                    None if row["last_seen"] is None else float(row["last_seen"])
+                ),
+            }
+            for index, row in enumerate(rows, start=1)
+        ],
+    }
+
+
+def _render_access_stats(payload: dict[str, Any]) -> str:
+    lines = ["rank | title | hits | last accessed"]
+    for item in payload["notes"]:
+        lines.append(
+            f"{item['rank']:>4} | {item['title']} | {item['hits']} | {item['last_seen_text']}"
+        )
+    if len(lines) == 1:
+        lines.append("no access log entries")
+    return "\n".join(lines) + "\n"
+
+
 @main.command("stats")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def stats_command(as_json: bool) -> None:
+@click.option("--access", "access_mode", is_flag=True, help="Show most-accessed notes.")
+def stats_command(as_json: bool, access_mode: bool) -> None:
     """Atlas health dashboard - growth, connectivity, topology, warnings."""
     atlas = get_atlas()
+    if access_mode:
+        if not atlas.index_db_path.exists():
+            raise click.ClickException(
+                "atlas index does not exist yet; run `cart index rebuild`"
+            )
+        payload = _access_stats(atlas)
+        if as_json:
+            _emit_json(_with_schema(payload, surface="stats.access"))
+            return
+        click.echo(_render_access_stats(payload), nl=False)
+        return
     ensure_index_current(atlas)
     from .stats import atlas_stats, render_stats_text
 
@@ -1638,6 +1859,556 @@ def stats_command(as_json: bool) -> None:
         _emit_json(_with_schema(payload, surface="stats"))
         return
     click.echo(render_stats_text(payload), nl=False)
+
+
+def _mesa_prune_candidates(atlas: Atlas, *, days: int) -> list[dict[str, Any]]:
+    cutoff = time.time() - (max(days, 0) * 86400)
+    with sqlite3.connect(str(atlas.index_db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            WITH wire_counts AS (
+                SELECT note_id, COUNT(*) AS wire_count
+                FROM (
+                    SELECT source_note AS note_id FROM wires
+                    UNION ALL
+                    SELECT target_note AS note_id FROM wires
+                )
+                GROUP BY note_id
+            )
+            SELECT
+                n.id,
+                n.path,
+                n.title,
+                n.word_count,
+                MAX(a.accessed_at) AS last_accessed,
+                COALESCE(wire_counts.wire_count, 0) AS wire_count
+            FROM notes n
+            LEFT JOIN access_log a ON a.note_id = n.id
+            LEFT JOIN wire_counts ON wire_counts.note_id = n.id
+            GROUP BY n.id
+            HAVING (
+                (last_accessed IS NULL OR last_accessed < ?)
+                AND COALESCE(n.word_count, 0) < 500
+            )
+            OR (
+                COALESCE(wire_count, 0) = 0
+                AND COALESCE(n.word_count, 0) < 50
+            )
+            ORDER BY last_accessed IS NOT NULL ASC, last_accessed ASC, n.path ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        last_accessed = None if row["last_accessed"] is None else float(row["last_accessed"])
+        word_count = int(row["word_count"] or 0)
+        wire_count = int(row["wire_count"] or 0)
+        reasons = []
+        if (last_accessed is None or last_accessed < cutoff) and word_count < 500:
+            reasons.append("never accessed" if last_accessed is None else f"not accessed in {days} days")
+        if wire_count == 0 and word_count < 50:
+            reasons.append("orphan stub")
+        candidates.append(
+            {
+                "id": str(row["id"]),
+                "path": str(row["path"]),
+                "title": str(row["title"] or row["id"]),
+                "last_accessed": last_accessed,
+                "last_accessed_text": _format_timestamp(last_accessed),
+                "word_count": word_count,
+                "wire_count": wire_count,
+                "reason": ", ".join(reasons),
+            }
+        )
+    return candidates
+
+
+def _render_mesa_prune(payload: dict[str, Any]) -> str:
+    lines = ["path | last accessed | words | reason"]
+    for item in payload["candidates"]:
+        lines.append(
+            f"{item['path']} | {item['last_accessed_text']} | {item['word_count']} | {item['reason']}"
+        )
+    if len(lines) == 1:
+        lines.append("no stale candidates")
+    elif not payload["write"]:
+        lines.append("")
+        lines.append("dry run; rerun with `cart mesa prune --write` to mark status: stale")
+    return "\n".join(lines) + "\n"
+
+
+def _mesa_stale_notes(atlas: Atlas) -> list[dict[str, Any]]:
+    index = Index(atlas.root)
+    note_ids: list[str] = []
+    items: list[dict[str, Any]] = []
+    for path in index.iter_note_paths():
+        try:
+            note = Note.from_file(path)
+        except Exception:
+            continue
+        if str(note.frontmatter.get("status") or "").strip().lower() != "stale":
+            continue
+        note_id = str(note.frontmatter.get("id") or path.stem)
+        note_ids.append(note_id)
+        items.append(
+            {
+                "id": note_id,
+                "path": str(path),
+                "title": str(note.frontmatter.get("title") or path.stem),
+                "word_count": len(note.body.split()),
+                "last_accessed": None,
+                "last_accessed_text": "never",
+            }
+        )
+    if not note_ids or not atlas.index_db_path.exists():
+        return items
+    placeholders = ",".join("?" for _ in note_ids)
+    with sqlite3.connect(str(atlas.index_db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT note_id, MAX(accessed_at) AS last_accessed
+            FROM access_log
+            WHERE note_id IN ({placeholders})
+            GROUP BY note_id
+            """,
+            note_ids,
+        ).fetchall()
+    access_by_id = {
+        str(row["note_id"]): None if row["last_accessed"] is None else float(row["last_accessed"])
+        for row in rows
+    }
+    for item in items:
+        last_accessed = access_by_id.get(str(item["id"]))
+        item["last_accessed"] = last_accessed
+        item["last_accessed_text"] = _format_timestamp(last_accessed)
+    return items
+
+
+def _resolve_mesa_note_path(atlas: Atlas, value: str) -> Path:
+    candidate = Path(value).expanduser()
+    if candidate.exists():
+        return candidate
+    atlas_relative = atlas.root / value
+    if atlas_relative.exists():
+        return atlas_relative
+    index = Index(atlas.root)
+    canonical = index.canonicalize_note_ref(value)
+    if canonical is not None:
+        resolved = index.find_note_path(canonical)
+        if resolved is not None:
+            return resolved
+    raise click.ClickException(f"note not found: {value}")
+
+
+def _unique_note_path(directory: Path, filename: str) -> Path:
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    counter = 2
+    while True:
+        next_candidate = directory / f"{stem}-{counter}{suffix}"
+        if not next_candidate.exists():
+            return next_candidate
+        counter += 1
+
+
+def _synthesis_prompt(notes: list[dict[str, Any]]) -> str:
+    parts = [
+        "Synthesize these notes into one cohesive note. Preserve all distinct ideas.",
+        "Output only the body of the new note in plain markdown.",
+    ]
+    for index, item in enumerate(notes, start=1):
+        parts.extend(
+            [
+                "",
+                f"--- NOTE {index}: {item['title']} ---",
+                str(item["body"]).strip(),
+            ]
+        )
+    return "\n".join(parts).strip()
+
+
+def _run_synthesis_command(atlas: Atlas, prompt: str) -> str | None:
+    settings = atlas.config.get("mesa", {})
+    configured = ""
+    if isinstance(settings, dict):
+        configured = str(settings.get("synthesize_command") or "").strip()
+    configured = os.environ.get("CARTOGRAPHER_MESA_SYNTH_CMD", configured).strip()
+    try:
+        if configured:
+            if "{prompt}" in configured:
+                command = shlex.split(configured.format(prompt=prompt))
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
+                )
+            else:
+                result = subprocess.run(
+                    shlex.split(configured),
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
+                )
+        elif shutil.which("hermes"):
+            result = subprocess.run(
+                ["hermes", "--oneshot", prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        else:
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.strip()
+    if result.returncode != 0 or not output:
+        return None
+    return output
+
+
+def _fallback_synthesis_body(notes: list[dict[str, Any]], title: str) -> str:
+    seen: set[str] = set()
+    paragraphs: list[str] = []
+    for item in notes:
+        for paragraph in re.split(r"\n\s*\n", str(item["body"]).strip()):
+            compact = " ".join(paragraph.split())
+            if not compact or compact.lower() in seen:
+                continue
+            seen.add(compact.lower())
+            paragraphs.append(paragraph.strip())
+    lines = [f"# {title}", "", "## Synthesis", ""]
+    lines.extend(paragraphs or ["No source body content was available."])
+    lines.extend(["", "## Source Notes"])
+    lines.extend(f"- {item['title']} ({item['path']})" for item in notes)
+    return "\n\n".join(lines).strip() + "\n"
+
+
+def _synthesize_notes(
+    atlas: Atlas,
+    note_paths: tuple[str, ...],
+    *,
+    title: str | None,
+) -> dict[str, Any]:
+    if len(note_paths) < 2:
+        raise click.ClickException("mesa synthesize requires at least two notes")
+    loaded: list[dict[str, Any]] = []
+    merged_tags: list[str] = []
+    for raw_path in note_paths:
+        path = _resolve_mesa_note_path(atlas, raw_path)
+        note = Note.from_file(path)
+        note_title = str(note.frontmatter.get("title") or path.stem)
+        tags = note.frontmatter.get("tags") or []
+        if isinstance(tags, list):
+            for tag in tags:
+                tag_text = str(tag)
+                if tag_text not in merged_tags:
+                    merged_tags.append(tag_text)
+        loaded.append(
+            {
+                "path": str(path),
+                "title": note_title,
+                "body": note.body,
+            }
+        )
+    resolved_title = title or f"Synthesis - {loaded[0]['title']}"
+    prompt = _synthesis_prompt(loaded)
+    llm_body = _run_synthesis_command(atlas, prompt)
+    synthesis_method = "hermes" if llm_body is not None else "fallback"
+    body = llm_body.strip() + "\n" if llm_body is not None else _fallback_synthesis_body(loaded, resolved_title)
+    today = datetime.now().date().isoformat()
+    directory = atlas.root / "synthesis"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = _unique_note_path(directory, f"{today}-{slugify(resolved_title)}.md")
+    note = Note(
+        path=path,
+        frontmatter={
+            "id": f"synthesis-{today}-{slugify(resolved_title)}",
+            "title": resolved_title,
+            "type": "synthesis",
+            "source_notes": [item["path"] for item in loaded],
+            "created": today,
+            "tags": merged_tags,
+        },
+        body=body,
+    )
+    note.write()
+    atlas.refresh_index()
+    return {
+        "path": str(path),
+        "title": resolved_title,
+        "source_notes": [item["path"] for item in loaded],
+        "tags": merged_tags,
+        "method": synthesis_method,
+    }
+
+
+@main.group("mesa")
+def mesa_group() -> None:
+    """Controlled cleanup and synthesis commands."""
+
+
+@mesa_group.command("prune")
+@click.option("--days", default=90, type=int, show_default=True, help="Flag notes not accessed in N days.")
+@click.option("--write", "do_write", is_flag=True, help="Write status: stale to flagged notes.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def mesa_prune(days: int, do_write: bool, as_json: bool) -> None:
+    if days < 0:
+        raise click.ClickException("--days must be non-negative")
+    atlas = get_atlas()
+    if not atlas.index_db_path.exists():
+        raise click.ClickException("atlas index does not exist yet; run `cart index rebuild`")
+    candidates = _mesa_prune_candidates(atlas, days=days)
+    write_count = 0
+    if do_write:
+        for item in candidates:
+            path = Path(str(item["path"]))
+            if not path.exists():
+                continue
+            note = Note.from_file(path)
+            if note.frontmatter.get("status") != "stale":
+                note.frontmatter["status"] = "stale"
+                note.write()
+                write_count += 1
+        if write_count:
+            atlas.refresh_index()
+    payload = {
+        "days": days,
+        "write": do_write,
+        "count": len(candidates),
+        "write_count": write_count,
+        "candidates": candidates,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="mesa.prune"))
+        return
+    click.echo(_render_mesa_prune(payload), nl=False)
+
+
+@mesa_group.command("synthesize")
+@click.argument("notes", nargs=-1, required=True)
+@click.option("--title", default=None, help="Title for the new synthesis note.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def mesa_synthesize(notes: tuple[str, ...], title: str | None, as_json: bool) -> None:
+    atlas = get_atlas()
+    payload = _synthesize_notes(atlas, notes, title=title)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="mesa.synthesize"))
+        return
+    click.echo(f"synthesis created: {payload['path']}")
+    click.echo(f"method: {payload['method']}")
+
+
+@mesa_group.command("clean")
+@click.option("--confirm", "do_delete", is_flag=True, help="Actually delete stale notes.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def mesa_clean(do_delete: bool, as_json: bool) -> None:
+    atlas = get_atlas()
+    stale_notes = _mesa_stale_notes(atlas)
+    deleted: list[str] = []
+    if do_delete:
+        for item in stale_notes:
+            path = Path(str(item["path"]))
+            if path.exists():
+                path.unlink()
+                deleted.append(str(path))
+        if deleted:
+            atlas.refresh_index()
+    payload = {
+        "confirm": do_delete,
+        "dry_run": not do_delete,
+        "count": len(stale_notes),
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "notes": stale_notes,
+    }
+    if as_json:
+        _emit_json(_with_schema(payload, surface="mesa.clean"))
+        return
+    if not stale_notes:
+        click.echo("no stale notes found")
+        return
+    click.echo(f"Found {len(stale_notes)} stale notes. Delete them? {'yes' if do_delete else 'dry run'}")
+    for item in stale_notes:
+        access = (
+            "never accessed"
+            if item["last_accessed"] is None
+            else f"last accessed {item['last_accessed_text']}"
+        )
+        click.echo(f"  - {item['path']} ({access}, {item['word_count']} words)")
+    if not do_delete:
+        click.echo("rerun with `cart mesa clean --confirm` to delete")
+    else:
+        click.echo(f"deleted {len(deleted)} stale note(s)")
+
+
+def _is_url(source: str) -> bool:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(source)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _strip_html(raw: str) -> str:
+    from html import unescape
+
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def _html_title(raw: str) -> str | None:
+    from html import unescape
+
+    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw)
+    if not match:
+        return None
+    title = _strip_html(match.group(1))
+    return unescape(title).strip() or None
+
+
+def _fetch_url_content(source: str) -> dict[str, str | None]:
+    try:
+        import httpx
+
+        response = httpx.get(source, timeout=15, follow_redirects=True)
+        response.raise_for_status()
+        raw = response.text
+        content_type = response.headers.get("content-type", "")
+    except ImportError:
+        from urllib import request
+
+        try:
+            req = request.Request(source, headers={"User-Agent": "cartographer/0.1"})
+            with request.urlopen(req, timeout=15) as response:
+                content_type = response.headers.get("content-type", "")
+                charset = response.headers.get_content_charset() or "utf-8"
+                raw = response.read().decode(charset, errors="replace")
+        except Exception as exc:
+            raise click.ClickException(f"failed to fetch URL: {exc}") from exc
+    except Exception as exc:
+        raise click.ClickException(f"failed to fetch URL: {exc}") from exc
+
+    is_html = "html" in content_type.lower() or bool(re.search(r"(?is)<html|<title", raw[:1000]))
+    return {
+        "title": _html_title(raw) if is_html else None,
+        "text": _strip_html(raw) if is_html else raw.strip(),
+        "content_type": content_type,
+    }
+
+
+def _local_file_content(source_path: Path) -> dict[str, str | None]:
+    suffix = source_path.suffix.lower()
+    if suffix in {".md", ".txt"}:
+        text = source_path.read_text(encoding="utf-8")
+    elif suffix == ".pdf":
+        try:
+            from pdfminer.high_level import extract_text
+        except ImportError as exc:
+            raise click.ClickException("install pdfminer.six for PDF support") from exc
+        text = extract_text(str(source_path))
+    else:
+        raise click.ClickException(f"unsupported ingest file type: {suffix or '(none)'}")
+    inferred_title = re.sub(r"[-_]+", " ", source_path.stem).strip().title()
+    return {
+        "title": inferred_title or source_path.stem,
+        "text": text.strip(),
+        "content_type": None,
+    }
+
+
+def _parse_tags(raw_tags: str | None) -> list[str]:
+    if raw_tags is None:
+        return []
+    tags = [tag.strip() for tag in raw_tags.split(",")]
+    return [tag for tag in tags if tag]
+
+
+def _ingest_source(
+    atlas: Atlas,
+    source: str,
+    *,
+    title: str | None,
+    tags: str | None,
+    note_type: str,
+) -> dict[str, Any]:
+    if _is_url(source):
+        content = _fetch_url_content(source)
+        source_text = source
+    else:
+        source_path = Path(source).expanduser()
+        if not source_path.exists():
+            raise click.ClickException(f"source not found: {source_path}")
+        content = _local_file_content(source_path)
+        source_text = str(source_path)
+
+    resolved_title = title or str(content.get("title") or "").strip() or "Ingested Reference"
+    parsed_tags = _parse_tags(tags)
+    body_text = str(content.get("text") or "").strip()
+    truncated = len(body_text) > 4000
+    if truncated:
+        body_text = body_text[:4000].rstrip()
+    body = f"{body_text}\n\n---\n*Ingested from: {source_text}*\n"
+    today = datetime.now().date().isoformat()
+    directory = atlas.root / "ref"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = _unique_note_path(directory, f"{today}-{slugify(resolved_title)}.md")
+    frontmatter: dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "title": resolved_title,
+        "type": note_type,
+        "source": source_text,
+        "ingested": today,
+    }
+    if parsed_tags:
+        frontmatter["tags"] = parsed_tags
+    note = Note(path=path, frontmatter=frontmatter, body=body)
+    note.write()
+    indexed = True
+    index_error = None
+    try:
+        atlas.refresh_index()
+    except Exception as exc:
+        indexed = False
+        index_error = str(exc)
+    return {
+        "path": str(path),
+        "title": resolved_title,
+        "type": note_type,
+        "source": source_text,
+        "tags": parsed_tags,
+        "truncated": truncated,
+        "indexed": indexed,
+        "index_error": index_error,
+        "content_type": content.get("content_type"),
+    }
+
+
+@main.command("ingest")
+@click.argument("source")
+@click.option("--title", default=None, help="Override the inferred title.")
+@click.option("--tags", default=None, help="Comma-separated tags.")
+@click.option("--type", "note_type", default="ref", show_default=True, help="Note type.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def ingest(source: str, title: str | None, tags: str | None, note_type: str, as_json: bool) -> None:
+    """Ingest a URL or local file into the atlas as a ref note."""
+    atlas = get_atlas()
+    payload = _ingest_source(atlas, source, title=title, tags=tags, note_type=note_type)
+    if as_json:
+        _emit_json(_with_schema(payload, surface="ingest"))
+        return
+    click.echo(f"ingested: {payload['path']}")
+    if not payload["indexed"]:
+        click.echo(f"warning: index refresh failed: {payload['index_error']}", err=True)
 
 
 @main.command("temporal-patterns")
@@ -4203,6 +4974,45 @@ def summary(emotional: bool, as_json: bool) -> None:
     click.echo(f"emotional distribution:")
     for val, count in sorted(valences.items(), key=lambda x: -x[1]):
         click.echo(f"  {val}: {count}")
+
+
+@main.group("nota", invoke_without_command=True)
+@click.pass_context
+def nota_group(ctx: click.Context) -> None:
+    """Passthrough to nota CLI. cart nota next / cart nota list / etc."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@nota_group.command("next")
+@click.option("--limit", default=10, type=int, show_default=True)
+def nota_next(limit: int) -> None:
+    """Show most urgent nota tasks."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("nota"):
+        click.echo("nota not found in PATH", err=True)
+        raise SystemExit(1)
+    r = subprocess.run(["nota", "next", "--limit", str(limit)])
+    raise SystemExit(r.returncode)
+
+
+@nota_group.command("list")
+@click.option("--project", default=None)
+def nota_list(project: str | None) -> None:
+    """List nota tasks, optionally filtered by project."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("nota"):
+        click.echo("nota not found in PATH", err=True)
+        raise SystemExit(1)
+    cmd = ["nota", "list"]
+    if project:
+        cmd += ["--project", project]
+    r = subprocess.run(cmd)
+    raise SystemExit(r.returncode)
 
 
 if __name__ == "__main__":

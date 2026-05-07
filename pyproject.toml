@@ -15,6 +15,12 @@ dependencies = [
     "textual>=0.50.0",
     "fastembed>=0.5.1,<0.8.0",
     "onnxruntime>=1.20.0,<1.24.0",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "pdfminer.six>=20231228",
 ]
 
 [project.scripts]

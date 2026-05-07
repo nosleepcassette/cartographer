@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import json as _json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -106,6 +109,57 @@ def _temporal_pattern_lines(
     return lines
 
 
+def _nota_next_block() -> list[str]:
+    """Call nota and return lines for the daily brief. Returns [] if nota not found."""
+    if not shutil.which("nota"):
+        return []
+    lines = []
+    try:
+        r = subprocess.run(
+            ["nota", "next", "--limit", "10"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            lines.append("## nota: urgent")
+            for line in r.stdout.strip().splitlines():
+                if line.startswith("⟡ inbox:"):
+                    continue
+                lines.append(line)
+    except Exception:
+        pass
+
+    try:
+        r = subprocess.run(
+            ["task", "project:inbox", "status:pending", "export"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        inbox = _json.loads(r.stdout or "[]")
+        if inbox:
+            lines.append(f"\n⟡ inbox: {len(inbox)} unprocessed  →  nota triage")
+    except Exception:
+        pass
+
+    try:
+        r = subprocess.run(["nota", "habits"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            unlogged = [
+                line
+                for line in r.stdout.splitlines()
+                if "·" not in line and line.strip() and not line.startswith("──")
+            ]
+            if unlogged:
+                lines.append(f"\n⟡ habits: {len(unlogged)} unlogged today  →  nota bene (t)")
+        return lines
+    except Exception:
+        pass
+
+    return lines
+
+
 def build_daily_brief(
     root: Path,
     *,
@@ -150,6 +204,7 @@ def build_daily_brief(
             open_questions_lines = [line if line.startswith("- ") else f"- {line}" for line in extracted[:8]]
 
     temporal_lines = _temporal_pattern_lines(root, include_temporal=include_temporal)
+    nota_lines = _nota_next_block()
 
     sections = [
         f"# atlas brief — {date.today().isoformat()}",
@@ -170,6 +225,13 @@ def build_daily_brief(
             "## open tasks (P0-P1)",
             *task_lines,
             "",
+        ]
+    )
+    if nota_lines:
+        sections.append("\n".join(nota_lines))
+        sections.append("")
+    sections.extend(
+        [
             "## active arcs",
             *_active_arcs_lines(root),
             "",

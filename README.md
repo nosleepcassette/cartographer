@@ -14,7 +14,14 @@ cart discover --interactive → review candidates one by one with predicate + we
 cart trace grungler → trace weighted graph paths out from one note
 cart graph --serve → live graph at localhost:6969, auto-regenerates on file change
 cart stats → 557 notes · 234 wires · 23 orphans · 78% embedding coverage
+cart stats --access → top 20 notes by access frequency
 cart query 'relationship drift with grungler' → semantic match, not keyword grep
+cart query --route --budget 400 → compressed output for agent context windows
+cart query --recent 7 → only notes accessed in the last 7 days
+cart query 'grief' --via triggered_by → traverse wires by predicate
+cart ingest https://example.com → capture URL or local file as a ref note
+cart mesa prune → flag stale notes not accessed in 90 days
+cart mesa synthesize note1.md note2.md → merge notes via LLM synthesis
 cart operating-truth → active work, open decisions, commitments, next steps
 ```
 
@@ -101,6 +108,13 @@ https://github.com/user-attachments/assets/bf92d69a-15ea-47bb-a6af-386eae3f5ef1
 
 Every note gets auto-embedded at write time (FastEmbed, ONNX, CPU, no GPU needed). `cart query 'relationship drift'` finds the note you meant even when it never uses those exact words. Falls back to SQLite full-text search when embeddings aren't available. `cart query --route` analyzes intent, routes across operating-truth/profile/graph/corpus shelves, and merges with reciprocal-rank fusion.
 
+Query flags:
+- `--budget N` — caps output size and switches format: `≥2000` full, `500–1999` summary (title + snippet), `<500` title-only. Built for agent context windows.
+- `--recent N` — returns only notes accessed in the last N days. Useful when you want recent context, not full-history recall.
+- `--via PREDICATE` — bypasses text search and walks the wire graph. `cart query 'grief' --via triggered_by` returns every note connected to grief through that predicate, with direction, valence, and energy-impact metadata.
+
+Search now boosts results by access frequency and recency — notes you've read 20 times this week rank above ones you last touched six months ago. Intent detection (`how do I...` → procedural, `why do I feel...` → emotional, `who is...` → relational) adjusts shelf weights and routing automatically.
+
 ### Operational truth
 
 `cart operating-truth` tracks active work, open decisions, commitments, and next steps — the things you need at session start, not just a narrative summary. `cart daily-brief` leads with operating truth.
@@ -112,6 +126,38 @@ Facts go stale. `cart supersede old-note new-note` records that one note replace
 ### Temporal pattern detection
 
 `cart temporal-patterns` detects cross-dimensional correlations across your atlas: does social isolation predict longer recovery? Do connection events feed creative output 2-3 days later? Pure Python — Pearson correlation + permutation significance testing, no scipy needed. Output is pattern reports, not interventions. The data surfaces. You decide.
+
+### Atlas maintenance — `cart mesa`
+
+Three-command cleanup cycle for a graph that grows over time:
+
+```zsh
+cart mesa prune            # flag notes not accessed in 90 days + orphan stubs
+cart mesa prune --write    # stamp flagged notes with status: stale
+cart mesa clean            # show stale notes (dry-run)
+cart mesa clean --confirm  # delete them
+cart mesa synthesize note1.md note2.md --title "Combined"  # merge via LLM
+```
+
+`prune` looks at access history and wire count, not just file age. A note you've re-read 30 times doesn't get flagged even if it hasn't changed in a year. `synthesize` creates a new note at `~/atlas/synthesis/` with `source_notes` provenance — it doesn't delete the originals, that's `clean`'s job.
+
+### Reference capture — `cart ingest`
+
+```zsh
+cart ingest https://some-article.com          # fetch and save as ref note
+cart ingest ~/Downloads/notes.pdf --tags research,2026
+cart ingest ~/Documents/meeting.md --type note
+```
+
+Creates a note at `~/atlas/ref/YYYY-MM-DD-[slug].md`, extracts title automatically, truncates body at 4000 chars, re-indexes immediately. URL fetching works with or without `httpx` installed (falls back to stdlib `urllib`). PDF support via `pdfminer.six` (`pip install cartographer[pdf]`).
+
+### Access stats
+
+```zsh
+cart stats --access   # top 20 most-read notes: rank, title, hit count, last accessed
+```
+
+The access log has existed since v0.4. This is the first surface that lets you see it.
 
 ### Deletion with blast radius
 
