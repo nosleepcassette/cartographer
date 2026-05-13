@@ -3,8 +3,10 @@ from __future__ import annotations
 import http.client
 import http.server
 import json
+import mimetypes
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -20,11 +22,17 @@ import click
 
 from .atlas import Atlas
 from .config import load_config
+from .daily_brief import build_daily_brief
+from .delete import delete_impact, delete_note
 from .graph_export import load_graph_payload, render_graph_html
 from .index import Index
 from .notes import Note
 from .profiles import profile_payload
 from .wires import (
+    VALID_AVOIDANCE_RISKS,
+    VALID_CURRENT_STATES,
+    VALID_EMOTIONAL_VALENCES,
+    VALID_ENERGY_IMPACTS,
     delete_wire_comment,
     find_wire_comment,
     insert_wire_comment,
@@ -34,6 +42,9 @@ from .wires import (
 
 
 EXTRA_IGNORED_TOP_LEVEL_DIRS = {"readings", "shared"}
+WEB_DIR = Path(__file__).parent / "web"
+_REFRESH_LOCKS: dict[str, threading.Lock] = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
 
 
 @dataclass
@@ -72,6 +83,52 @@ class GraphState:
                 "edge_count": self.edge_count,
                 "last_regen": self.last_regen,
             }
+
+
+def kill_port(port: int, *, timeout: float = 3.0) -> bool:
+    """Kill whatever process is listening on port. Returns True if anything was killed."""
+    import socket
+
+    # Quick check first — is anything on this port?
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
+        if s.connect_ex(("localhost", port)) != 0:
+            return False
+
+    # Try lsof to find the PID (macOS + Linux).
+    killed = False
+    try:
+        output = subprocess.check_output(
+            ["lsof", "-ti", f":{port}"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        for pid_str in output.splitlines():
+            try:
+                pid = int(pid_str.strip())
+            except ValueError:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed = True
+            except (ProcessLookupError, PermissionError):
+                pass
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    if not killed:
+        return False
+
+    # Wait for the port to clear.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("localhost", port)) != 0:
+                return True
+        time.sleep(0.1)
+
+    return True
 
 
 def daemon_artifact_paths(atlas_root: Path | str, *, port: int) -> tuple[Path, Path]:
@@ -187,6 +244,13 @@ def regenerate_graph(
         index.rebuild()
 
     payload = load_graph_payload(atlas_root, plugin_names=plugin_names)
+    snapshot = state.snapshot()
+    state.update(
+        str(snapshot.get("html") or ""),
+        payload=payload,
+        node_count=int(payload["node_count"]),
+        edge_count=int(payload["edge_count"]),
+    )
     state.update(
         render_graph_html(payload, plugin_names=plugin_names),
         payload=payload,
@@ -216,8 +280,24 @@ def watch_atlas(
         now = time.monotonic()
 
         if current_snapshot != previous_snapshot:
+            count_delta = len(current_snapshot) - len(previous_snapshot)
             previous_snapshot = current_snapshot
             pending_since = now
+            if count_delta:
+                snapshot = state.snapshot()
+                payload = dict(snapshot.get("payload") or {})
+                estimated_node_count = max(
+                    0,
+                    int(snapshot.get("node_count") or 0) + count_delta,
+                )
+                if payload:
+                    payload["node_count"] = estimated_node_count
+                state.update(
+                    str(snapshot.get("html") or ""),
+                    payload=payload,
+                    node_count=estimated_node_count,
+                    edge_count=int(snapshot.get("edge_count") or 0),
+                )
 
         if pending_since is not None and now - pending_since >= debounce:
             try:
@@ -234,6 +314,43 @@ def _first_query_value(parsed: urllib.parse.SplitResult, name: str, default: str
     if not values:
         return default
     return str(values[0])
+
+
+def _query_bool(parsed: urllib.parse.SplitResult, name: str, *, default: bool = False) -> bool:
+    raw = _first_query_value(parsed, name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _query_int(
+    parsed: urllib.parse.SplitResult,
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = _first_query_value(parsed, name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(item) for item in value]
+    return value
 
 
 def _canonical_note_query(index: Index, atlas_root: Path, raw: str) -> str:
@@ -253,6 +370,520 @@ def _predicate_api_payload(atlas_root: Path) -> list[dict[str, str]]:
     from .profiles import predicate_palette_payload
 
     return predicate_palette_payload(atlas_root, config=load_config(root=atlas_root))
+
+
+def _ensure_index(atlas_root: Path) -> Index:
+    index = Index(atlas_root)
+    if not index.db_path.exists() or index.last_rebuild() is None:
+        index.rebuild()
+    return index
+
+
+def _parse_json_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    try:
+        parsed = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed]
+
+
+def _note_summary_from_row(row: sqlite3.Row, atlas_root: Path) -> dict[str, Any]:
+    modified = None if row["modified"] is None else float(row["modified"])
+    try:
+        relative_path = Path(str(row["path"])).resolve().relative_to(atlas_root.resolve()).as_posix()
+    except ValueError:
+        relative_path = str(row["path"])
+    return {
+        "id": str(row["id"]),
+        "title": str(row["title"] or row["id"]),
+        "type": str(row["type"] or "note"),
+        "status": None if row["status"] is None else str(row["status"]),
+        "path": str(row["path"]),
+        "relative_path": relative_path,
+        "modified": modified,
+        "modified_iso": None
+        if modified is None
+        else datetime.fromtimestamp(modified).astimezone().replace(microsecond=0).isoformat(),
+        "tags": _parse_json_list(row["tags"]),
+        "word_count": int(row["word_count"] or 0),
+    }
+
+
+def _note_summary_for_path(atlas_root: Path, path: Path) -> dict[str, Any]:
+    note = Note.from_file(path)
+    index = _ensure_index(atlas_root)
+    canonical = index.canonicalize_note_ref(str(note.frontmatter.get("id") or path.stem)) or str(
+        note.frontmatter.get("id") or path.stem
+    )
+    stat = path.stat()
+    try:
+        relative_path = path.resolve().relative_to(atlas_root.resolve()).as_posix()
+    except ValueError:
+        relative_path = str(path)
+    tags = note.frontmatter.get("tags") or []
+    if not isinstance(tags, list):
+        tags = []
+    return {
+        "id": canonical,
+        "title": str(note.frontmatter.get("title") or canonical),
+        "type": str(note.frontmatter.get("type") or "note"),
+        "status": None if note.frontmatter.get("status") is None else str(note.frontmatter.get("status")),
+        "path": str(path),
+        "relative_path": relative_path,
+        "modified": stat.st_mtime,
+        "modified_iso": datetime.fromtimestamp(stat.st_mtime).astimezone().replace(microsecond=0).isoformat(),
+        "tags": [str(tag) for tag in tags],
+        "word_count": len(note.body.split()),
+    }
+
+
+def _notes_api_payload(atlas_root: Path, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
+    index = _ensure_index(atlas_root)
+    query = (_first_query_value(parsed, "q", "") or "").strip().lower()
+    note_type = (_first_query_value(parsed, "type", "") or "").strip()
+    page = _query_int(parsed, "page", default=1, minimum=1, maximum=10_000)
+    limit = _query_int(parsed, "limit", default=80, minimum=1, maximum=300)
+    offset = (page - 1) * limit
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    if note_type:
+        clauses.append("type = ?")
+        params.append(note_type)
+    if query:
+        like = f"%{query}%"
+        clauses.append("(LOWER(id) LIKE ? OR LOWER(title) LIKE ? OR LOWER(body) LIKE ? OR LOWER(path) LIKE ?)")
+        params.extend([like, like, like, like])
+
+    where = "" if not clauses else "WHERE " + " AND ".join(clauses)
+    with index._connection() as connection:
+        total_row = connection.execute(
+            f"SELECT COUNT(*) AS count FROM notes {where}",
+            params,
+        ).fetchone()
+        rows = connection.execute(
+            f"""
+            SELECT id, path, title, type, status, tags, modified, word_count
+            FROM notes
+            {where}
+            ORDER BY modified DESC, path ASC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+    notes = [_note_summary_from_row(row, atlas_root) for row in rows]
+    return {
+        "q": query,
+        "type": note_type or None,
+        "page": page,
+        "limit": limit,
+        "total": 0 if total_row is None else int(total_row["count"]),
+        "notes": notes,
+    }
+
+
+def _resolve_note_api_ref(atlas_root: Path, raw_note_id: str) -> tuple[Index, str, Path]:
+    index = _ensure_index(atlas_root)
+    note_id = urllib.parse.unquote(raw_note_id).strip("/")
+    if not note_id:
+        raise click.ClickException("missing note id")
+    canonical = index.canonicalize_note_ref(note_id) or note_id
+    path = index.find_note_path(canonical)
+    if path is None:
+        raise click.ClickException(f"note not found: {note_id}")
+    return index, canonical, path
+
+
+def _note_api_payload(atlas_root: Path, raw_note_id: str) -> dict[str, Any]:
+    index, canonical, path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    note = Note.from_file(path)
+    summary = _note_summary_for_path(atlas_root, path)
+    summary["id"] = canonical
+    return {
+        "note": summary,
+        "frontmatter": note.frontmatter,
+        "body": note.body,
+        "wires": index.query_wires(note_id=canonical),
+        "backlinks": index.backlinks(canonical),
+    }
+
+
+def _save_note_api_payload(state: GraphState, atlas_root: Path, raw_note_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    _index, canonical, path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    note = Note.from_file(path)
+    if "body" in payload:
+        note.body = str(payload.get("body") or "")
+    frontmatter = payload.get("frontmatter")
+    if isinstance(frontmatter, dict):
+        note.frontmatter = dict(frontmatter)
+    note.frontmatter.setdefault("id", canonical)
+    note.frontmatter["modified"] = date.today().isoformat()
+    note.write(ensure_blocks=True)
+    _refresh_graph_after_write(state, atlas_root)
+    return {"saved": True, **_note_api_payload(atlas_root, canonical)}
+
+
+def _new_note_api_payload(state: GraphState, atlas_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    title = _optional_text(payload.get("title")) or "Untitled note"
+    note_type = _optional_text(payload.get("type")) or "note"
+    body = _optional_text(payload.get("body"))
+    tags = payload.get("tags") or []
+    if isinstance(tags, str):
+        tags = [item.strip() for item in tags.split(",") if item.strip()]
+    if not isinstance(tags, list):
+        tags = []
+
+    atlas = Atlas(root=atlas_root)
+    try:
+        path = atlas.create_note(note_type, title, body_override=None)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    note = Note.from_file(path)
+    if body is not None:
+        note.body = body if body.endswith("\n") else body + "\n"
+    note.frontmatter["title"] = title
+    note.frontmatter["type"] = note_type
+    note.frontmatter["tags"] = [str(tag) for tag in tags]
+    note.frontmatter["modified"] = date.today().isoformat()
+    note.write(ensure_blocks=True)
+    _refresh_graph_after_write(state, atlas_root)
+    canonical = Index(atlas_root).canonicalize_note_ref(str(note.frontmatter.get("id") or path.stem)) or str(
+        note.frontmatter.get("id") or path.stem
+    )
+    return {"created": True, **_note_api_payload(atlas_root, canonical)}
+
+
+def _delete_note_api_payload(
+    state: GraphState,
+    atlas_root: Path,
+    raw_note_id: str,
+    parsed: urllib.parse.SplitResult,
+) -> tuple[dict[str, Any], int]:
+    _index, canonical, _path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    impact = delete_impact(atlas_root, canonical)
+    requires_confirmation = any(
+        int(impact.get(key, 0) or 0) > 0
+        for key in (
+            "incoming_wires",
+            "outgoing_wires",
+            "block_refs",
+            "frontmatter_links",
+            "embeddings",
+            "operating_truth_refs",
+        )
+    )
+    if requires_confirmation and not _query_bool(parsed, "confirm"):
+        return {
+            "deleted": False,
+            "requires_confirmation": True,
+            "impact": impact,
+        }, 409
+    result = delete_note(atlas_root, canonical, cascade=True, archive=_query_bool(parsed, "archive"))
+    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
+    return result, 200
+
+
+def _query_api_payload(atlas_root: Path, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
+    query = (_first_query_value(parsed, "q", "") or "").strip()
+    if _query_bool(parsed, "route", default=False):
+        from .query_router import route_query
+
+        budget_raw = _first_query_value(parsed, "budget")
+        recent_raw = _first_query_value(parsed, "recent_days")
+        return route_query(
+            atlas_root,
+            query,
+            output_budget=None if budget_raw is None else int(budget_raw),
+            recent_days=None if recent_raw is None else int(recent_raw),
+        )
+    note_paths = Index(atlas_root).query(query) if query else Index(atlas_root).iter_note_paths()
+    notes = [_note_summary_for_path(atlas_root, Path(path)) for path in note_paths[:100]]
+    return {"query": query, "count": len(note_paths), "notes": notes}
+
+
+def _markdown_sections(markdown: str) -> list[dict[str, str]]:
+    sections: list[dict[str, str]] = []
+    current_title = "brief"
+    current_lines: list[str] = []
+    for line in markdown.splitlines():
+        if line.startswith("#"):
+            if current_lines:
+                sections.append({"title": current_title, "markdown": "\n".join(current_lines).strip()})
+            current_title = line.lstrip("#").strip() or "brief"
+            current_lines = []
+            continue
+        current_lines.append(line)
+    if current_lines or not sections:
+        sections.append({"title": current_title, "markdown": "\n".join(current_lines).strip()})
+    return sections
+
+
+def _daily_brief_api_payload(atlas_root: Path) -> dict[str, Any]:
+    markdown = build_daily_brief(atlas_root)
+    return {
+        "markdown": markdown,
+        "sections": _markdown_sections(markdown),
+    }
+
+
+def _stats_api_payload(atlas_root: Path, state: GraphState) -> dict[str, Any]:
+    index = _ensure_index(atlas_root)
+    snapshot = state.snapshot()
+    return {
+        "root": str(atlas_root),
+        "index": index.status(),
+        "graph": {
+            "node_count": snapshot["node_count"],
+            "edge_count": snapshot["edge_count"],
+            "last_regen": snapshot["last_regen"],
+        },
+    }
+
+
+def _note_wires_api_payload(atlas_root: Path, raw_note_id: str) -> dict[str, Any]:
+    index, canonical, _path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    return {
+        "note_id": canonical,
+        "wires": index.query_wires(note_id=canonical),
+    }
+
+
+def _ego_graph_payload(atlas_root: Path, raw_note_id: str, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
+    index, canonical, _path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    depth = _query_int(parsed, "depth", default=1, minimum=1, maximum=3)
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    edges_by_key: dict[tuple[str, str | None, str, str | None, str, int], dict[str, Any]] = {}
+    visited: set[tuple[str, int]] = set()
+
+    with index._connection() as connection:
+        note_rows = {
+            str(row["id"]): row
+            for row in connection.execute(
+                "SELECT id, title, type FROM notes ORDER BY id ASC"
+            ).fetchall()
+        }
+    adjacency: dict[str, list[dict[str, Any]]] = {}
+    for wire in index.query_wires():
+        source = str(wire.get("source_note") or "")
+        target = str(wire.get("target_note") or "")
+        if not source or not target:
+            continue
+        adjacency.setdefault(source, []).append(wire)
+        adjacency.setdefault(target, []).append(wire)
+
+    def add_node(note_id: str) -> None:
+        if note_id in nodes_by_id:
+            return
+        row = note_rows.get(note_id)
+        if row is None:
+            nodes_by_id[note_id] = {"id": note_id, "title": note_id, "type": "missing"}
+            return
+        nodes_by_id[note_id] = {
+            "id": note_id,
+            "title": str(row["title"] or note_id),
+            "type": str(row["type"] or "note"),
+        }
+
+    def walk(note_id: str, current_depth: int) -> None:
+        key = (note_id, current_depth)
+        if key in visited or current_depth > depth:
+            return
+        visited.add(key)
+        add_node(note_id)
+        for wire in adjacency.get(note_id, []):
+            line = int(wire.get("line") or 0)
+            edge_key = (
+                str(wire.get("source_note") or ""),
+                wire.get("source_block"),
+                str(wire.get("target_note") or ""),
+                wire.get("target_block"),
+                str(wire.get("predicate") or ""),
+                line,
+            )
+            edges_by_key[edge_key] = wire
+            source = str(wire.get("source_note") or "")
+            target = str(wire.get("target_note") or "")
+            neighbor = target if source == note_id else source
+            if neighbor:
+                add_node(neighbor)
+                if current_depth < depth:
+                    walk(neighbor, current_depth + 1)
+
+    walk(canonical, 0)
+    return {
+        "center": canonical,
+        "depth": depth,
+        "nodes": list(nodes_by_id.values()),
+        "edges": list(edges_by_key.values()),
+    }
+
+
+def _wires_api_payload(atlas_root: Path, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
+    index = _ensure_index(atlas_root)
+    note = _first_query_value(parsed, "note")
+    predicate = _first_query_value(parsed, "predicate")
+    limit = _query_int(parsed, "limit", default=80, minimum=1, maximum=300)
+    canonical = None
+    if note:
+        canonical = index.canonicalize_note_ref(note) or note
+    wires = index.query_wires(note_id=canonical, predicate=predicate)[:limit]
+    return {
+        "note": canonical,
+        "predicate": predicate,
+        "limit": limit,
+        "wires": wires,
+    }
+
+
+def _metadata_api_payload() -> dict[str, Any]:
+    return {
+        "emotional_valences": list(VALID_EMOTIONAL_VALENCES),
+        "energy_impacts": list(VALID_ENERGY_IMPACTS),
+        "avoidance_risks": list(VALID_AVOIDANCE_RISKS),
+        "current_states": list(VALID_CURRENT_STATES),
+    }
+
+
+def _attention_api_payload(atlas_root: Path) -> dict[str, Any]:
+    index = _ensure_index(atlas_root)
+    stale_cutoff = time.time() - 30 * 86400
+    recent_cutoff = time.time() - 7 * 86400
+
+    with index._connection() as connection:
+        orphans = connection.execute(
+            """
+            SELECT n.id, n.title, n.type, n.modified
+            FROM notes n
+            WHERE n.id NOT IN (SELECT source_note FROM wires)
+              AND n.id NOT IN (SELECT target_note FROM wires)
+            ORDER BY n.modified DESC
+            LIMIT 10
+            """
+        ).fetchall()
+        stale = connection.execute(
+            """
+            SELECT id, title, type, modified
+            FROM notes
+            WHERE modified < ?
+            ORDER BY modified ASC
+            LIMIT 10
+            """,
+            (stale_cutoff,),
+        ).fetchall()
+        broken = connection.execute(
+            """
+            SELECT w.source_note, w.target_note, w.predicate, w.path, w.line
+            FROM wires w
+            WHERE w.source_note NOT IN (SELECT id FROM notes)
+               OR w.target_note NOT IN (SELECT id FROM notes)
+            ORDER BY w.path ASC, w.line ASC
+            LIMIT 10
+            """
+        ).fetchall()
+        recent = connection.execute(
+            """
+            SELECT
+                a.note_id AS id,
+                COALESCE(n.title, a.note_id) AS title,
+                COALESCE(n.type, 'note') AS type,
+                COUNT(*) AS access_count,
+                MAX(a.accessed_at) AS last_accessed
+            FROM access_log a
+            LEFT JOIN notes n ON n.id = a.note_id
+            WHERE a.accessed_at > ?
+            GROUP BY a.note_id
+            ORDER BY access_count DESC, last_accessed DESC
+            LIMIT 5
+            """,
+            (recent_cutoff,),
+        ).fetchall()
+
+    def note_row(row: sqlite3.Row) -> dict[str, Any]:
+        modified = float(row["modified"] or 0)
+        return {
+            "id": str(row["id"]),
+            "title": str(row["title"] or row["id"]),
+            "type": str(row["type"] or "note"),
+            "modified": modified,
+            "modified_iso": None
+            if not modified
+            else datetime.fromtimestamp(modified).astimezone().replace(microsecond=0).isoformat(),
+        }
+
+    stale_payload = []
+    for row in stale:
+        item = note_row(row)
+        item["days_since"] = max(0, int((time.time() - float(row["modified"] or 0)) / 86400))
+        stale_payload.append(item)
+
+    return {
+        "orphans": [note_row(row) for row in orphans],
+        "stale": stale_payload,
+        "broken_wires": [
+            {
+                "source": str(row["source_note"]),
+                "target": str(row["target_note"]),
+                "predicate": str(row["predicate"]),
+                "path": str(row["path"]),
+                "line": int(row["line"] or 0),
+                "issue": "source or target note missing",
+            }
+            for row in broken
+        ],
+        "recent_access": [
+            {
+                "id": str(row["id"]),
+                "title": str(row["title"] or row["id"]),
+                "type": str(row["type"] or "note"),
+                "access_count": int(row["access_count"] or 0),
+                "last_accessed": None if row["last_accessed"] is None else float(row["last_accessed"]),
+                "last_accessed_iso": None
+                if row["last_accessed"] is None
+                else datetime.fromtimestamp(float(row["last_accessed"])).astimezone().replace(microsecond=0).isoformat(),
+            }
+            for row in recent
+        ],
+    }
+
+
+def _similar_notes_payload(atlas_root: Path, raw_note_id: str, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
+    _index, canonical, path = _resolve_note_api_ref(atlas_root, raw_note_id)
+    note = Note.from_file(path)
+    title = str(note.frontmatter.get("title") or canonical)
+    query = f"{title}\n{note.body[:200]}"
+    limit = _query_int(parsed, "limit", default=5, minimum=1, maximum=20)
+    from .query_router import _search_notes
+
+    results = _search_notes(
+        atlas_root,
+        query,
+        allowed_types=set(),
+        budget=2600,
+        shelf="similar",
+        intent="general",
+    )
+    similar = []
+    for item in results:
+        if str(item.get("id")) == canonical:
+            continue
+        similar.append(
+            {
+                "id": str(item.get("id")),
+                "title": str(item.get("label") or item.get("id")),
+                "type": str(item.get("note_type") or "note"),
+                "score": float(item.get("score") or 0.0),
+                "path": item.get("path"),
+            }
+        )
+        if len(similar) >= limit:
+            break
+    return {"note_id": canonical, "similar": similar}
 
 
 def _trace_api_payload(atlas_root: Path, parsed: urllib.parse.SplitResult) -> dict[str, Any]:
@@ -494,9 +1125,36 @@ def _render_wire_comment_from_payload(
     return comment, output
 
 
+def _regenerate_graph_async(
+    state: GraphState,
+    atlas_root: Path,
+    *,
+    rebuild_index: bool = False,
+) -> None:
+    root_key = str(atlas_root.resolve())
+    plugin_names = state.plugin_names
+
+    def run() -> None:
+        try:
+            with _REFRESH_LOCKS_GUARD:
+                refresh_lock = _REFRESH_LOCKS.setdefault(root_key, threading.Lock())
+            with refresh_lock:
+                if rebuild_index:
+                    Index(atlas_root).rebuild()
+                regenerate_graph(state, atlas_root, plugin_names=plugin_names)
+        except Exception as exc:
+            click.echo(f"graph refresh failed: {exc}", err=True)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _refresh_graph_after_write(state: GraphState, atlas_root: Path) -> None:
-    Atlas(root=atlas_root).refresh_index()
-    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
+    Index(atlas_root).rebuild()
+    _regenerate_graph_async(state, atlas_root)
+
+
+def _refresh_graph_after_wire_write(state: GraphState, atlas_root: Path) -> None:
+    _regenerate_graph_async(state, atlas_root, rebuild_index=True)
 
 
 def _wire_update_api_payload(state: GraphState, atlas_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -529,7 +1187,7 @@ def _wire_update_api_payload(state: GraphState, atlas_root: Path, payload: dict[
         raise click.ClickException("wire not found")
     note.frontmatter["modified"] = date.today().isoformat()
     note.write()
-    _refresh_graph_after_write(state, atlas_root)
+    _refresh_graph_after_wire_write(state, atlas_root)
     return {"updated": True, "edge": updated}
 
 
@@ -557,7 +1215,7 @@ def _wire_delete_api_payload(state: GraphState, atlas_root: Path, payload: dict[
         raise click.ClickException("wire not found")
     note.frontmatter["modified"] = date.today().isoformat()
     note.write()
-    _refresh_graph_after_write(state, atlas_root)
+    _refresh_graph_after_wire_write(state, atlas_root)
     return {"deleted": True}
 
 
@@ -641,7 +1299,7 @@ def _wire_create_api_payload(state: GraphState, atlas_root: Path, payload: dict[
         created = True
     note.frontmatter["modified"] = date.today().isoformat()
     note.write()
-    _refresh_graph_after_write(state, atlas_root)
+    _refresh_graph_after_wire_write(state, atlas_root)
     return {"created": created, "updated": updated, "edge": created_edge}
 
 
@@ -669,16 +1327,18 @@ def _discover_accept_api_payload(state: GraphState, atlas_root: Path, payload: d
     }
     if not proposal["left_id"] or not proposal["right_id"]:
         raise click.ClickException("discover accept requires left_id and right_id")
-    accepted = accept_bridge_proposals(atlas_root, [proposal])
+    accepted = accept_bridge_proposals(atlas_root, [proposal], refresh_index=False)
     if accepted <= 0:
         raise click.ClickException("candidate was not accepted")
-    regenerate_graph(state, atlas_root, force_rebuild=True, plugin_names=state.plugin_names)
+    _refresh_graph_after_wire_write(state, atlas_root)
     return {"accepted": accepted}
 
 
 def _graph_handler_factory(
     atlas_root: Path,
     state: GraphState,
+    *,
+    full_ui: bool = False,
 ) -> type[http.server.BaseHTTPRequestHandler]:
     class GraphHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -686,7 +1346,16 @@ def _graph_handler_factory(
             path = parsed.path or "/"
 
             if path == "/":
-                self._send_html()
+                if full_ui:
+                    self._send_full_ui_html()
+                else:
+                    self._send_graph_html()
+                return
+            if path in {"/graph", "/graph/"}:
+                self._send_graph_html()
+                return
+            if path.startswith("/static/"):
+                self._send_static(path)
                 return
             if path == "/status":
                 snapshot = state.snapshot()
@@ -697,6 +1366,73 @@ def _graph_handler_factory(
                         "last_regen": snapshot["last_regen"],
                     }
                 )
+                return
+            if path == "/api/notes":
+                try:
+                    self._send_json(_notes_api_payload(atlas_root, parsed))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path.startswith("/api/note/") and path.endswith("/ego"):
+                try:
+                    raw_note_id = path.removeprefix("/api/note/").removesuffix("/ego")
+                    self._send_json(_ego_graph_payload(atlas_root, raw_note_id, parsed))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path.startswith("/api/note/") and path.endswith("/similar"):
+                try:
+                    raw_note_id = path.removeprefix("/api/note/").removesuffix("/similar")
+                    self._send_json(_similar_notes_payload(atlas_root, raw_note_id, parsed))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path.startswith("/api/note/") and path.endswith("/wires"):
+                try:
+                    raw_note_id = path.removeprefix("/api/note/").removesuffix("/wires")
+                    self._send_json(_note_wires_api_payload(atlas_root, raw_note_id))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path.startswith("/api/note/"):
+                try:
+                    raw_note_id = path.removeprefix("/api/note/")
+                    self._send_json(_note_api_payload(atlas_root, raw_note_id))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=404)
+                return
+            if path == "/api/query":
+                try:
+                    self._send_json(_query_api_payload(atlas_root, parsed))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path == "/api/daily-brief":
+                try:
+                    self._send_json(_daily_brief_api_payload(atlas_root))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                return
+            if path == "/api/stats":
+                try:
+                    self._send_json(_stats_api_payload(atlas_root, state))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                return
+            if path == "/api/wires":
+                try:
+                    self._send_json(_wires_api_payload(atlas_root, parsed))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            if path == "/api/metadata":
+                self._send_json(_metadata_api_payload())
+                return
+            if path == "/api/attention":
+                try:
+                    self._send_json(_attention_api_payload(atlas_root))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
                 return
             if path == "/api/predicates":
                 self._send_json(_predicate_api_payload(atlas_root))
@@ -734,6 +1470,13 @@ def _graph_handler_factory(
             path = parsed.path or "/"
             try:
                 payload = self._read_json_body()
+                if path == "/api/note/new":
+                    self._send_json(_new_note_api_payload(state, atlas_root, payload))
+                    return
+                if path.startswith("/api/note/"):
+                    raw_note_id = path.removeprefix("/api/note/")
+                    self._send_json(_save_note_api_payload(state, atlas_root, raw_note_id, payload))
+                    return
                 if path == "/api/wire/create":
                     self._send_json(_wire_create_api_payload(state, atlas_root, payload))
                     return
@@ -754,15 +1497,62 @@ def _graph_handler_factory(
                 return
             self.send_error(404)
 
-        def _send_html(self) -> None:
+        def do_DELETE(self) -> None:  # noqa: N802
+            parsed = urllib.parse.urlsplit(self.path)
+            path = parsed.path or "/"
+            if path.startswith("/api/note/"):
+                try:
+                    raw_note_id = path.removeprefix("/api/note/")
+                    payload, status = _delete_note_api_payload(state, atlas_root, raw_note_id, parsed)
+                    self._send_json(payload, status=status)
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                return
+            self.send_error(404)
+
+        def _send_graph_html(self) -> None:
             html = str(state.snapshot()["html"])
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(html.encode("utf-8"))
 
+        def _send_full_ui_html(self) -> None:
+            try:
+                html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+            except OSError:
+                self.send_error(500, "web UI assets are missing")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(html.encode("utf-8"))
+
+        def _send_static(self, request_path: str) -> None:
+            relative = urllib.parse.unquote(request_path.removeprefix("/static/"))
+            requested = Path(relative)
+            if requested.is_absolute() or ".." in requested.parts:
+                self.send_error(404)
+                return
+            asset_path = WEB_DIR / requested
+            if not asset_path.exists() or not asset_path.is_file():
+                self.send_error(404)
+                return
+            try:
+                content = asset_path.read_bytes()
+            except OSError:
+                self.send_error(404)
+                return
+            mime_type = mimetypes.guess_type(str(asset_path))[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
+
         def _send_json(self, payload: Any, *, status: int = 200) -> None:
-            body = json.dumps(payload).encode("utf-8")
+            body = json.dumps(_jsonable(payload), ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
@@ -817,11 +1607,12 @@ def build_graph_http_server(
     *,
     host: str = "localhost",
     port: int = 6969,
+    full_ui: bool = False,
 ) -> http.server.ThreadingHTTPServer:
     atlas_root = Path(atlas_root).expanduser()
     return http.server.ThreadingHTTPServer(
         (host, port),
-        _graph_handler_factory(atlas_root, state),
+        _graph_handler_factory(atlas_root, state, full_ui=full_ui),
     )
 
 
@@ -831,6 +1622,7 @@ def spawn_graph_daemon(
  port: int = 6969,
  open_in_browser: bool = False,
  plugin_names: tuple[str, ...] = (),
+ full_ui: bool = False,
 ) -> dict[str, Any]:
     atlas_root = Path(atlas_root).expanduser()
     pid_path, log_path = daemon_artifact_paths(atlas_root, port=port)
@@ -844,12 +1636,12 @@ def spawn_graph_daemon(
         sys.executable,
         "-m",
         "cartographer.cli",
-        "graph",
-        "--serve",
-        "--port",
-        str(port),
+        "serve" if full_ui else "graph",
     ]
-    if open_in_browser:
+    if not full_ui:
+        command.append("--serve")
+    command.extend(["--port", str(port)])
+    if open_in_browser and not full_ui:
         command.append("--open")
     for plugin_name in plugin_names:
         command.extend(["--plugin", plugin_name])
@@ -971,6 +1763,7 @@ def serve_graph(
     port: int = 6969,
     open_in_browser: bool = False,
     plugin_names: tuple[str, ...] = (),
+    full_ui: bool = False,
 ) -> None:
     atlas_root = Path(atlas_root).expanduser()
     state = GraphState(plugin_names=plugin_names)
@@ -992,10 +1785,11 @@ def serve_graph(
         },
         daemon=True,
     )
-    server = build_graph_http_server(atlas_root, state, port=port)
+    server = build_graph_http_server(atlas_root, state, port=port, full_ui=full_ui)
     url = f"http://localhost:{server.server_port}"
 
-    click.echo(f"serving atlas graph at {url}")
+    label = "web UI" if full_ui else "graph"
+    click.echo(f"serving atlas {label} at {url}")
     watcher.start()
 
     if open_in_browser:
@@ -1009,3 +1803,28 @@ def serve_graph(
         stop_event.set()
         server.server_close()
         watcher.join(timeout=2.0)
+
+
+def start_live_server(
+    *,
+    atlas: Atlas,
+    port: int = 6969,
+    daemon: bool = False,
+    plugin_names: tuple[str, ...] = (),
+    full_ui: bool = False,
+) -> None:
+    if daemon:
+        daemon_payload = spawn_graph_daemon(
+            atlas.root,
+            port=port,
+            plugin_names=plugin_names,
+            full_ui=full_ui,
+        )
+        label = "web UI daemon" if full_ui else "graph daemon"
+        click.echo(
+            f"{label} started: pid {daemon_payload['pid']} serving {daemon_payload['url']}"
+        )
+        click.echo(f"log: {daemon_payload['log_path']}")
+        click.echo(f"pid file: {daemon_payload['pid_path']}")
+        return
+    serve_graph(atlas.root, port=port, plugin_names=plugin_names, full_ui=full_ui)

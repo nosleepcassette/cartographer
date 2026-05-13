@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>cartographer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/app.js" defer></script>
+    <script src="/static/editor.js" defer></script>
+    <script src="/static/wiring.js" defer></script>
+    <script src="/static/ego-graph.js" defer></script>
+  </head>
+  <body>
+    <div class="crt" aria-hidden="true"></div>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>CARTOGRAPHER</h1>
+            <p>maps / cassette.help / MIT</p>
+          </div>
+        </div>
+        <form class="global-search" id="global-search">
+          <input id="global-search-input" type="search" placeholder="search atlas">
+          <button type="submit">SEARCH</button>
+        </form>
+        <button class="icon-button" id="shortcut-help" type="button" title="Keyboard shortcuts">?</button>
+        <button class="icon-button" id="theme-toggle" type="button" title="Toggle dim mode">CRT</button>
+      </header>
+
+      <nav class="tabs" aria-label="cartographer sections">
+        <button class="tab" data-tab="home" type="button">home</button>
+        <button class="tab" data-tab="notes" type="button">notes</button>
+        <button class="tab is-active" data-tab="graph" type="button">graph</button>
+        <button class="tab" data-tab="wires" type="button">wires</button>
+      </nav>
+
+      <main class="surface">
+        <section class="tab-panel" id="tab-home" data-panel="home">
+          <div class="home-grid">
+            <section class="brief-panel">
+              <div class="panel-heading">
+                <h2>daily brief</h2>
+                <button class="small-button" data-refresh="home" type="button">refresh</button>
+              </div>
+              <div class="quick-add">
+                <input id="quick-add-input" type="text" placeholder="create a note...">
+              </div>
+              <div id="brief-output" class="markdown-output"></div>
+              <section class="attention-section">
+                <h2>needs attention</h2>
+                <div id="attention-output" class="attention-grid"></div>
+              </section>
+            </section>
+            <aside class="stats-rail">
+              <h2>atlas signal</h2>
+              <dl id="stats-output" class="stat-list"></dl>
+              <div id="query-output" class="query-output"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-notes" data-panel="notes">
+          <div class="notes-layout">
+            <aside class="note-sidebar">
+              <div class="sidebar-controls">
+                <input id="note-search" type="search" placeholder="filter notes">
+                <select id="note-type-filter" aria-label="Filter note type">
+                  <option value="">all types</option>
+                  <option value="daily">daily</option>
+                  <option value="project">project</option>
+                  <option value="note">note</option>
+                  <option value="entity">entity</option>
+                  <option value="task">task</option>
+                  <option value="ref">ref</option>
+                  <option value="agent-log">agent-log</option>
+                </select>
+              </div>
+              <div id="note-list" class="note-list"></div>
+              <button id="new-note" class="primary-button" type="button">+ new note</button>
+            </aside>
+
+            <section class="editor-panel">
+              <div class="editor-header">
+                <div>
+                  <h2 id="editor-title">select a note</h2>
+                  <p id="editor-meta">no note loaded</p>
+                </div>
+                <div class="editor-actions">
+                  <button id="wire-from-note" class="small-button" type="button">wire -></button>
+                  <button id="trace-from-note" class="small-button" type="button">trace</button>
+                  <button id="toggle-ego" class="small-button" type="button">graph</button>
+                  <button id="toggle-frontmatter" class="small-button" type="button">frontmatter</button>
+                  <button id="delete-note" class="danger-button" type="button">delete</button>
+                  <button id="save-note" class="primary-button" type="button">save</button>
+                </div>
+              </div>
+
+              <div id="frontmatter-panel" class="frontmatter-panel" hidden>
+                <label>title <input data-frontmatter="title" type="text"></label>
+                <label>type <input data-frontmatter="type" type="text"></label>
+                <label>tags <input data-frontmatter="tags" type="text" placeholder="comma separated"></label>
+                <label>status <input data-frontmatter="status" type="text"></label>
+              </div>
+
+              <div class="toolbar" aria-label="Markdown toolbar">
+                <button type="button" data-md="bold">B</button>
+                <button type="button" data-md="italic">I</button>
+                <button type="button" data-md="heading">H</button>
+                <button type="button" data-md="rule">--</button>
+                <button type="button" data-md="link">link</button>
+                <button type="button" data-md="code">code</button>
+                <button type="button" data-md="list">list</button>
+                <button type="button" data-md="wire-selection">wire</button>
+                <div class="view-modes">
+                  <button data-view="edit" type="button">edit</button>
+                  <button data-view="split" type="button" class="is-active">split</button>
+                  <button data-view="preview" type="button">preview</button>
+                </div>
+              </div>
+
+              <div class="editor-split" data-mode="split">
+                <textarea id="note-editor" spellcheck="true" placeholder="markdown"></textarea>
+                <div id="note-preview" class="markdown-output preview"></div>
+              </div>
+              <div id="word-count" class="word-count"></div>
+
+              <div class="note-wires-strip">
+                <h3>wires touching this note</h3>
+                <div id="note-wires"></div>
+              </div>
+              <div id="inline-wire-popover" class="wire-popover" hidden>
+                <label>wire to <input id="inline-wire-target" type="search" autocomplete="off"></label>
+                <div id="inline-wire-results" class="autocomplete-results"></div>
+                <label>predicate <select id="inline-wire-predicate"></select></label>
+                <div class="modal-actions">
+                  <button id="inline-wire-cancel" class="small-button" type="button">cancel</button>
+                  <button id="inline-wire-create" class="primary-button" type="button">create</button>
+                </div>
+              </div>
+              <section class="ego-panel" id="ego-panel" hidden>
+                <div class="panel-heading">
+                  <h3>note graph</h3>
+                  <button id="expand-ego" class="small-button" type="button">expand</button>
+                </div>
+                <div id="ego-graph" class="ego-graph"></div>
+              </section>
+            </section>
+          </div>
+          <aside class="similar-panel">
+            <details open>
+              <summary>related notes</summary>
+              <div id="similar-notes"></div>
+            </details>
+          </aside>
+        </section>
+
+        <section class="tab-panel graph-panel" id="tab-graph" data-panel="graph">
+          <div class="graph-workspace">
+            <iframe id="graph-frame" title="cartographer graph"></iframe>
+            <aside class="graph-sidebar" id="graph-sidebar">
+              <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Toggle sidebar">›</button>
+              <div class="sidebar-body">
+                <section class="sidebar-note-preview">
+                  <div class="sidebar-preview-head">
+                    <div>
+                      <h3 id="sidebar-note-title">—</h3>
+                      <p id="sidebar-note-meta" class="muted"></p>
+                    </div>
+                    <div class="sidebar-preview-actions">
+                      <button id="sidebar-open-editor" class="small-button" type="button" hidden>edit ↗</button>
+                      <button id="sidebar-trace-note" class="small-button" type="button" hidden>trace</button>
+                    </div>
+                  </div>
+                  <div id="sidebar-note-content" class="sidebar-note-content markdown-output">
+                    <p class="muted">click a node to preview</p>
+                  </div>
+                </section>
+
+                <details class="sidebar-section" id="sidebar-trace-section">
+                  <summary>trace</summary>
+                  <div class="trace-controls">
+                    <input id="trace-note" type="search" placeholder="source note id">
+                    <select id="trace-predicate"></select>
+                    <input id="trace-depth" type="number" min="1" max="5" value="3" aria-label="Trace depth">
+                    <button id="run-trace" class="small-button" type="button">trace</button>
+                  </div>
+                  <div id="trace-output" class="trace-output"></div>
+                </details>
+
+                <details class="sidebar-section" open>
+                  <summary>atlas</summary>
+                  <div class="sidebar-nav">
+                    <button class="sidebar-nav-item" data-tab="home" type="button">home</button>
+                    <button class="sidebar-nav-item" data-tab="notes" type="button">notes</button>
+                    <button class="sidebar-nav-item" data-tab="wires" type="button">wires</button>
+                  </div>
+                </details>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-wires" data-panel="wires">
+          <div class="wiring-layout">
+            <section class="wire-form">
+              <div class="panel-heading">
+                <h2>wire notes</h2>
+                <button id="discover-wire" class="small-button" type="button">what should I wire?</button>
+              </div>
+
+              <div class="wire-search-row">
+                <label>source
+                  <input id="wire-source-input" type="search" autocomplete="off" placeholder="search source note">
+                </label>
+                <label>target
+                  <input id="wire-target-input" type="search" autocomplete="off" placeholder="search target note">
+                </label>
+              </div>
+              <div class="autocomplete-row">
+                <div id="wire-source-results" class="autocomplete-results"></div>
+                <div id="wire-target-results" class="autocomplete-results"></div>
+              </div>
+
+              <div class="predicate-section">
+                <h3>predicate</h3>
+                <div id="predicate-picker" class="predicate-picker"></div>
+              </div>
+
+              <label class="checkbox-row">
+                <input id="wire-bidirectional" type="checkbox">
+                bidirectional
+              </label>
+
+              <details class="metadata-box">
+                <summary>emotional metadata</summary>
+                <div class="metadata-grid">
+                  <label>valence <select id="wire-valence"></select></label>
+                  <label>energy impact <select id="wire-energy"></select></label>
+                  <label>avoidance risk <select id="wire-avoidance"></select></label>
+                  <label>current state <select id="wire-state"></select></label>
+                  <label class="checkbox-row"><input id="wire-growth" type="checkbox"> growth edge</label>
+                </div>
+              </details>
+
+              <button id="create-wire" class="primary-button wire-submit" type="button">create wire</button>
+              <div id="wire-message" class="message-line"></div>
+            </section>
+
+            <aside class="recent-wires">
+              <h2>recent wires</h2>
+              <div id="discover-output" class="discover-output"></div>
+              <div id="recent-wires"></div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog id="new-note-dialog" class="modal">
+      <form method="dialog">
+        <h2>new note</h2>
+        <label>title <input id="nn-title" type="text" required></label>
+        <label>type
+          <select id="nn-type">
+            <option value="note">note</option>
+            <option value="daily">daily</option>
+            <option value="project">project</option>
+            <option value="entity">entity</option>
+            <option value="task">task</option>
+            <option value="ref">ref</option>
+          </select>
+        </label>
+        <label>tags <input id="nn-tags" type="text" placeholder="comma separated"></label>
+        <label>template
+          <select id="nn-template">
+            <option value="blank">blank</option>
+            <option value="daily">daily template</option>
+            <option value="project">project template</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="small-button" id="nn-cancel">cancel</button>
+          <button type="submit" class="primary-button">create</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="shortcut-dialog" class="modal">
+      <form method="dialog">
+        <h2>shortcuts</h2>
+        <dl class="shortcut-list" id="shortcut-list"></dl>
+        <div class="modal-actions">
+          <button type="submit" class="primary-button">close</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

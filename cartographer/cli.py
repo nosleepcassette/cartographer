@@ -790,7 +790,18 @@ def main() -> None:
     default=None,
     help="Profile to apply at init time: default, emotional-topology, or a custom TOML path.",
 )
-def init(path: str, no_vimwiki: bool, no_obsidian: bool, profile_ref: str | None) -> None:
+@click.option("--guided", is_flag=True, help="Run the guided first-run onboarding flow.")
+def init(path: str, no_vimwiki: bool, no_obsidian: bool, profile_ref: str | None, guided: bool) -> None:
+    if guided:
+        from .onboarding import run_guided_init
+
+        run_guided_init(
+            path=path,
+            setup_vimwiki=not no_vimwiki,
+            setup_obsidian=not no_obsidian,
+            profile_ref=profile_ref,
+        )
+        return
     atlas = Atlas(root=path)
     selected_profile = profile_ref
     if selected_profile is None and sys.stdin.isatty():
@@ -1006,6 +1017,38 @@ def backup() -> None:
     atlas = get_atlas()
     destination = atlas.backup()
     click.echo(f"backup: {destination}")
+
+
+@main.command("serve")
+@click.option("--port", default=6969, type=int, show_default=True)
+@click.option("--daemon", is_flag=True, help="Run the cartographer web UI in the background.")
+@click.option("--force", is_flag=True, help="Kill any process already on the port before starting.")
+@click.option("--plugin", "plugin_names", multiple=True, help="Load a graph-rendering plugin by name.")
+def serve(port: int, daemon: bool, force: bool, plugin_names: tuple[str, ...]) -> None:
+    """Start the cartographer web UI."""
+    from .graph_serve import start_live_server, kill_port
+
+    if force:
+        killed = kill_port(port)
+        if killed:
+            click.echo(f"killed existing process on port {port}")
+
+    start_live_server(
+        atlas=get_atlas(),
+        port=port,
+        daemon=daemon,
+        plugin_names=plugin_names,
+        full_ui=True,
+    )
+
+
+@main.command("watch")
+@click.option("--daemon", is_flag=True, help="Run the watcher in daemon mode.")
+def watch(daemon: bool) -> None:
+    """Auto-reindex the atlas when markdown files change."""
+    from .watcher import watch_atlas_files
+
+    watch_atlas_files(get_atlas().root, daemon=daemon)
 
 
 @main.command()
